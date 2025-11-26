@@ -33,6 +33,10 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
+# Add Python builtins to Jinja2 environment
+app.jinja_env.globals['max'] = max
+app.jinja_env.globals['min'] = min
+
 # Global state
 collection_state = {
     'running': False,
