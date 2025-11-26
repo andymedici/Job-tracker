@@ -629,18 +629,45 @@ class JobIntelCollector:
                 if greenhouse:
                     self.stats.greenhouse_found += 1
                     self.stats.total_jobs += greenhouse.job_count
-                    self.db.upsert_company(greenhouse)
-                    self.db.create_monthly_snapshot(greenhouse)
+                    # Convert JobBoard dataclass to dict for database
+                    company_data = {
+                        'id': f"{greenhouse.ats_type}:{greenhouse.token}",
+                        'ats_type': greenhouse.ats_type,
+                        'token': greenhouse.token,
+                        'company_name': greenhouse.company_name,
+                        'job_count': greenhouse.job_count,
+                        'remote_count': greenhouse.remote_count,
+                        'hybrid_count': greenhouse.hybrid_count,
+                        'onsite_count': greenhouse.onsite_count,
+                        'locations': greenhouse.locations,
+                        'departments': greenhouse.departments
+                    }
+                    self.db.upsert_company(company_data)
                 
                 if lever:
                     self.stats.lever_found += 1
                     self.stats.total_jobs += lever.job_count
-                    self.db.upsert_company(lever)
-                    self.db.create_monthly_snapshot(lever)
+                    # Convert JobBoard dataclass to dict for database
+                    company_data = {
+                        'id': f"{lever.ats_type}:{lever.token}",
+                        'ats_type': lever.ats_type,
+                        'token': lever.token,
+                        'company_name': lever.company_name,
+                        'job_count': lever.job_count,
+                        'remote_count': lever.remote_count,
+                        'hybrid_count': lever.hybrid_count,
+                        'onsite_count': lever.onsite_count,
+                        'locations': lever.locations,
+                        'departments': lever.departments
+                    }
+                    self.db.upsert_company(company_data)
             
             # Progress logging
             progress = (i + len(batch)) / len(companies) * 100
             logger.info(f"📊 Progress: {progress:.1f}% | Found: {self.stats.greenhouse_found} GH, {self.stats.lever_found} LV | Jobs: {self.stats.total_jobs:,}")
+        
+        # Create monthly snapshot once at end of collection
+        self.db.create_monthly_snapshot()
         
         await self.client.close()
         self._running = False
