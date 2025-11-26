@@ -180,13 +180,16 @@ def run_tier2_expansion():
 
 def start_scheduler():
     """Start background scheduler."""
-    # Schedule collection every 6 hours
-    schedule.every(6).hours.do(lambda: threading.Thread(target=run_collection_sync).start())
+    # Schedule REFRESH every 6 hours (update existing companies)
+    schedule.every(6).hours.do(lambda: threading.Thread(target=run_refresh_scheduled).start())
     
-    # Also run daily at specific times
-    schedule.every().day.at("06:00").do(lambda: threading.Thread(target=run_collection_sync).start())
-    schedule.every().day.at("12:00").do(lambda: threading.Thread(target=run_collection_sync).start())
-    schedule.every().day.at("18:00").do(lambda: threading.Thread(target=run_collection_sync).start())
+    # Also refresh at specific times daily
+    schedule.every().day.at("06:00").do(lambda: threading.Thread(target=run_refresh_scheduled).start())
+    schedule.every().day.at("12:00").do(lambda: threading.Thread(target=run_refresh_scheduled).start())
+    schedule.every().day.at("18:00").do(lambda: threading.Thread(target=run_refresh_scheduled).start())
+    
+    # Schedule DISCOVERY weekly (find new companies) - Sunday night
+    schedule.every().sunday.at("02:00").do(lambda: threading.Thread(target=run_collection_sync).start())
     
     # Weekly email report on Mondays at 9 AM
     schedule.every().monday.at("09:00").do(lambda: threading.Thread(target=run_weekly_email).start())
@@ -201,11 +204,21 @@ def start_scheduler():
         if datetime.utcnow().day == 1 else None
     )
     
-    # Run initial collection after startup delay
+    logger.info("=" * 60)
+    logger.info("SCHEDULER STARTED")
+    logger.info("=" * 60)
+    logger.info("  🔄 Refresh existing: every 6 hours + 6am/12pm/6pm")
+    logger.info("  🔍 Discover new:     Sundays at 2am")
+    logger.info("  🌱 Tier 1 expansion: Sundays at 3am")
+    logger.info("  🌱 Tier 2 expansion: 1st of month at 4am")
+    logger.info("  📧 Weekly email:     Mondays at 9am")
+    logger.info("=" * 60)
+    
+    # Run initial refresh after startup delay
     def initial_run():
         time.sleep(30)  # Wait for app to stabilize
         if not collection_state['running']:
-            threading.Thread(target=run_collection_sync).start()
+            threading.Thread(target=run_refresh_scheduled).start()
     
     threading.Thread(target=initial_run, daemon=True).start()
     
@@ -213,6 +226,49 @@ def start_scheduler():
     while True:
         schedule.run_pending()
         time.sleep(60)
+
+
+def run_refresh_scheduled():
+    """Run scheduled refresh of existing companies."""
+    global collection_state
+    
+    if collection_state['running']:
+        logger.info("Collection already running, skipping refresh")
+        return
+    
+    try:
+        collection_state['running'] = True
+        collection_state['error'] = None
+        collection_state['last_run'] = datetime.utcnow().isoformat()
+        
+        logger.info("🔄 Starting scheduled refresh of existing companies...")
+        
+        from collector import JobIntelCollector
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            collector = JobIntelCollector()
+            result = loop.run_until_complete(collector.run_refresh(hours_since_update=6))
+            collection_state['last_stats'] = result
+            logger.info(f"Refresh completed: {result}")
+            
+            # Run market intelligence after refresh
+            logger.info("Running market intelligence analysis...")
+            from market_intel import run_daily_maintenance
+            
+            intel_results = run_daily_maintenance()
+            collection_state['last_intel'] = intel_results
+            logger.info(f"Intelligence analysis complete: {intel_results}")
+            
+        finally:
+            loop.close()
+        
+    except Exception as e:
+        logger.error(f"Refresh failed: {e}")
+        collection_state['error'] = str(e)
+    finally:
+        collection_state['running'] = False
 
 
 
@@ -297,6 +353,55 @@ def api_collect():
     return jsonify({
         'status': 'success',
         'message': 'Collection started'
+    })
+
+
+@app.route('/api/refresh', methods=['POST'])
+def api_refresh():
+    """Trigger a refresh of existing companies."""
+    global collection_state
+    
+    if collection_state['running']:
+        return jsonify({
+            'status': 'error',
+            'message': 'Collection already in progress'
+        }), 409
+    
+    data = request.get_json(silent=True) or {}
+    hours = data.get('hours', 6)
+    
+    def run_refresh_sync():
+        global collection_state
+        collection_state['running'] = True
+        collection_state['error'] = None
+        
+        try:
+            import asyncio
+            from collector import JobIntelCollector
+            
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            collector = JobIntelCollector()
+            result = loop.run_until_complete(collector.run_refresh(hours_since_update=hours))
+            
+            collection_state['last_run'] = datetime.now().strftime('%Y-%m-%d %H:%M')
+            collection_state['last_stats'] = result
+            
+            logger.info(f"Refresh completed: {result}")
+            
+        except Exception as e:
+            collection_state['error'] = str(e)
+            logger.error(f"Refresh error: {e}")
+        finally:
+            collection_state['running'] = False
+    
+    thread = threading.Thread(target=run_refresh_sync, daemon=True)
+    thread.start()
+    
+    return jsonify({
+        'status': 'success',
+        'message': f'Refresh started (checking companies not updated in {hours}+ hours)'
     })
 
 
@@ -563,25 +668,44 @@ def api_trends():
     """Get job market trends."""
     try:
         db = get_db()
+        days = request.args.get('days', 7, type=int)
+        
+        # Get granular market trends (6-hourly data for short term)
+        market_trends = db.get_market_trends(days=days)
+        
+        # Get monthly snapshots for long-term view
         with db.get_cursor() as cursor:
-            # Get monthly snapshots
             cursor.execute("""
                 SELECT 
                     year, month,
                     COUNT(DISTINCT company_id) as companies,
                     COALESCE(SUM(job_count), 0) as total_jobs,
-                    COALESCE(SUM(remote_count), 0) as remote_jobs
+                    COALESCE(SUM(remote_count), 0) as remote_jobs,
+                    COALESCE(SUM(hybrid_count), 0) as hybrid_jobs,
+                    COALESCE(SUM(onsite_count), 0) as onsite_jobs
                 FROM monthly_snapshots
                 GROUP BY year, month
                 ORDER BY year DESC, month DESC
                 LIMIT 12
             """)
-            
-            trends = [dict(row) for row in cursor]
-            
-            return jsonify({
-                'trends': trends
-            })
+            monthly_trends = [dict(row) for row in cursor]
+        
+        return jsonify({
+            'granular': market_trends,  # 6-hourly data
+            'monthly': monthly_trends    # Monthly aggregates
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/trends/company/<company_id>')
+def api_company_trends(company_id):
+    """Get trends for a specific company."""
+    try:
+        db = get_db()
+        days = request.args.get('days', 7, type=int)
+        trends = db.get_company_trends(company_id, days=days)
+        return jsonify({'company_id': company_id, 'trends': trends})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -620,7 +744,7 @@ def api_seeds():
         
         if request.method == 'POST':
             # Add new seed companies
-            data = request.get_json()
+            data = request.get_json(silent=True) or {}
             companies = data.get('companies', [])
             source = data.get('source', 'api')
             
