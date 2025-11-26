@@ -402,7 +402,11 @@
         async function expandSeeds() {
             if (confirm('Expand seed database from YC, GitHub, and other sources? This fetches 2000+ new company names.')) {
                 try {
-                    const response = await fetch('/api/expand-seeds', { method: 'POST' });
+                    const response = await fetch('/api/expand-seeds', { 
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ tier: 'all' })
+                    });
                     const data = await response.json();
                     alert(data.message || 'Seed expansion started!');
                 } catch (e) {
