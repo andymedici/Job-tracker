@@ -669,7 +669,7 @@ def api_expand_seeds():
             'message': 'Collection already running'
         }), 409
     
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     tier = data.get('tier', 'all')  # 'tier1', 'tier2', or 'all'
     
     def run_expansion():
