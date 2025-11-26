@@ -44,6 +44,26 @@
             font-size: 1.1em;
         }
         
+        .nav-links {
+            margin-top: 15px;
+        }
+        
+        .nav-links a {
+            display: inline-block;
+            padding: 10px 24px;
+            background: linear-gradient(90deg, #00d4ff, #7b2cbf);
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 500;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .nav-links a:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 20px rgba(0,212,255,0.3);
+        }
+        
         .status-bar {
             background: rgba(255,255,255,0.05);
             border-radius: 12px;
@@ -237,6 +257,9 @@
         <header>
             <h1>🔍 Job Intelligence Dashboard</h1>
             <p>Real-time job market monitoring across ATS platforms</p>
+            <div class="nav-links">
+                <a href="/analytics">📊 Full Analytics Dashboard</a>
+            </div>
         </header>
         
         <div class="status-bar {{ 'running' if state.running else 'error' if state.error else '' }}">
