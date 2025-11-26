@@ -1,0 +1,16 @@
+# Core dependencies
+flask==3.0.0
+aiohttp==3.9.1
+requests==2.31.0
+beautifulsoup4==4.12.2
+python-dotenv==1.0.0
+schedule==1.2.1
+
+# PostgreSQL
+psycopg2-binary==2.9.9
+
+# Production server
+gunicorn==21.2.0
+
+# Async support
+asyncio-throttle==1.0.2
