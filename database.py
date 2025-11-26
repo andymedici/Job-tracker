@@ -5,6 +5,12 @@ Handles all database operations with PostgreSQL for Railway deployment.
 
 Railway automatically provides DATABASE_URL environment variable when you
 add a PostgreSQL plugin to your project.
+
+Includes:
+- Connection pooling
+- Schema management
+- Seed company priority system
+- Source hit rate tracking
 """
 
 import os
@@ -98,21 +104,20 @@ class Database:
                     remote_count INTEGER DEFAULT 0,
                     hybrid_count INTEGER DEFAULT 0,
                     onsite_count INTEGER DEFAULT 0,
-                    locations JSONB DEFAULT '[]'::jsonb,
-                    departments JSONB DEFAULT '[]'::jsonb,
-                    source TEXT,
+                    last_job_count INTEGER DEFAULT 0,
+                    locations JSONB,
+                    departments JSONB,
                     first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    last_job_count INTEGER DEFAULT 0,
-                    UNIQUE(ats_type, token)
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
             
-            # Jobs table for detailed tracking
+            # Individual jobs table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS jobs (
                     id TEXT PRIMARY KEY,
-                    company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+                    company_id TEXT REFERENCES companies(id) ON DELETE CASCADE,
                     title TEXT NOT NULL,
                     location TEXT,
                     department TEXT,
@@ -123,7 +128,7 @@ class Database:
                 )
             """)
             
-            # Monthly snapshots for historical tracking
+            # Monthly snapshots for trends
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS monthly_snapshots (
                     id SERIAL PRIMARY KEY,
@@ -139,16 +144,36 @@ class Database:
                 )
             """)
             
-            # Seed companies for discovery
+            # Seed companies with priority system
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS seed_companies (
                     name TEXT PRIMARY KEY,
                     source TEXT,
+                    source_tier INTEGER DEFAULT 2,
+                    priority INTEGER DEFAULT 50,
                     category TEXT,
                     discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     tested BOOLEAN DEFAULT FALSE,
+                    tested_at TIMESTAMP,
                     has_greenhouse BOOLEAN,
                     has_lever BOOLEAN
+                )
+            """)
+            
+            # Source hit rate tracking
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS source_stats (
+                    source TEXT PRIMARY KEY,
+                    tier INTEGER DEFAULT 2,
+                    total_seeds INTEGER DEFAULT 0,
+                    seeds_tested INTEGER DEFAULT 0,
+                    seeds_found INTEGER DEFAULT 0,
+                    greenhouse_found INTEGER DEFAULT 0,
+                    lever_found INTEGER DEFAULT 0,
+                    hit_rate REAL DEFAULT 0.0,
+                    last_fetch TIMESTAMP,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    enabled BOOLEAN DEFAULT TRUE
                 )
             """)
             
@@ -248,83 +273,84 @@ class Database:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_company ON monthly_snapshots(company_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_failed_lookups_date ON failed_lookups(failed_at)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_loc_exp_date ON location_expansions(detected_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_seeds_priority ON seed_companies(priority DESC)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_seeds_tested ON seed_companies(tested)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_seeds_source ON seed_companies(source)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_location_exp_company ON location_expansions(company_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_location_exp_date ON location_expansions(detected_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_job_changes_company ON job_count_changes(company_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_job_changes_date ON job_count_changes(detected_at)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_archive_company ON job_history_archive(company_id)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_weekly_stats_week ON weekly_stats(week_start)")
             
             conn.commit()
-            logger.info("PostgreSQL schema initialized successfully")
+            logger.info("Database schema initialized")
     
-    def upsert_company(self, board) -> bool:
+    def upsert_company(self, company_data: Dict) -> bool:
         """Insert or update a company."""
         try:
-            company_id = f"{board.ats_type}:{board.token}"
-            
             with self.get_cursor() as cursor:
-                # Get previous job count for change detection
-                cursor.execute(
-                    "SELECT job_count FROM companies WHERE id = %s", 
-                    (company_id,)
-                )
-                row = cursor.fetchone()
-                last_job_count = row['job_count'] if row else 0
-                
                 cursor.execute("""
                     INSERT INTO companies (
                         id, ats_type, token, company_name, job_count,
-                        remote_count, hybrid_count, onsite_count,
-                        locations, departments, source, last_seen, last_job_count
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        remote_count, hybrid_count, onsite_count, last_job_count,
+                        locations, departments, first_seen, last_seen, last_updated
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    )
                     ON CONFLICT (id) DO UPDATE SET
                         company_name = EXCLUDED.company_name,
+                        last_job_count = companies.job_count,
                         job_count = EXCLUDED.job_count,
                         remote_count = EXCLUDED.remote_count,
                         hybrid_count = EXCLUDED.hybrid_count,
                         onsite_count = EXCLUDED.onsite_count,
                         locations = EXCLUDED.locations,
                         departments = EXCLUDED.departments,
-                        last_seen = EXCLUDED.last_seen,
-                        last_job_count = companies.job_count
+                        last_seen = CURRENT_TIMESTAMP,
+                        last_updated = CURRENT_TIMESTAMP
                 """, (
-                    company_id, board.ats_type, board.token, board.company_name,
-                    board.job_count, board.remote_count, board.hybrid_count, board.onsite_count,
-                    json.dumps(board.locations), json.dumps(board.departments),
-                    board.source, datetime.utcnow(), last_job_count
+                    company_data['id'],
+                    company_data['ats_type'],
+                    company_data['token'],
+                    company_data['company_name'],
+                    company_data.get('job_count', 0),
+                    company_data.get('remote_count', 0),
+                    company_data.get('hybrid_count', 0),
+                    company_data.get('onsite_count', 0),
+                    company_data.get('job_count', 0),
+                    json.dumps(company_data.get('locations', [])),
+                    json.dumps(company_data.get('departments', []))
                 ))
-                
                 return True
         except Exception as e:
-            logger.error(f"Error upserting company {board.token}: {e}")
+            logger.error(f"Error upserting company: {e}")
             return False
     
-    def create_monthly_snapshot(self, board):
-        """Create monthly snapshot for trend tracking."""
+    def create_monthly_snapshot(self):
+        """Create monthly snapshots for all companies."""
+        now = datetime.utcnow()
+        year, month = now.year, now.month
+        
         try:
-            now = datetime.utcnow()
-            company_id = f"{board.ats_type}:{board.token}"
-            
             with self.get_cursor() as cursor:
                 cursor.execute("""
-                    INSERT INTO monthly_snapshots (
-                        company_id, year, month, job_count,
-                        remote_count, hybrid_count, onsite_count
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO monthly_snapshots 
+                    (company_id, year, month, job_count, remote_count, hybrid_count, onsite_count)
+                    SELECT id, %s, %s, job_count, remote_count, hybrid_count, onsite_count
+                    FROM companies
                     ON CONFLICT (company_id, year, month) DO UPDATE SET
                         job_count = EXCLUDED.job_count,
                         remote_count = EXCLUDED.remote_count,
                         hybrid_count = EXCLUDED.hybrid_count,
                         onsite_count = EXCLUDED.onsite_count,
                         snapshot_date = CURRENT_TIMESTAMP
-                """, (
-                    company_id, now.year, now.month,
-                    board.job_count, board.remote_count, board.hybrid_count, board.onsite_count
-                ))
+                """, (year, month))
+                logger.info(f"Created monthly snapshots for {year}-{month:02d}")
         except Exception as e:
-            logger.error(f"Error creating snapshot: {e}")
+            logger.error(f"Error creating monthly snapshot: {e}")
     
     def is_recently_failed(self, token: str, ats_type: str, days: int = 7) -> bool:
-        """Check if token was recently tested and failed."""
+        """Check if a token failed recently (negative cache)."""
         try:
             with self.get_cursor() as cursor:
                 cursor.execute("""
@@ -336,13 +362,13 @@ class Database:
         except:
             return False
     
-    def record_failed_lookup(self, token: str, ats_type: str, reason: str = ""):
-        """Record a failed lookup for caching."""
+    def record_failed_lookup(self, token: str, ats_type: str, reason: str = None):
+        """Record a failed lookup for negative caching."""
         try:
             with self.get_cursor() as cursor:
                 cursor.execute("""
-                    INSERT INTO failed_lookups (token, ats_type, reason, failed_at)
-                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+                    INSERT INTO failed_lookups (token, ats_type, reason)
+                    VALUES (%s, %s, %s)
                     ON CONFLICT (token, ats_type) DO UPDATE SET
                         failed_at = CURRENT_TIMESTAMP,
                         reason = EXCLUDED.reason
@@ -378,27 +404,46 @@ class Database:
                 stats['total_companies'] = row['count']
                 stats['total_jobs'] = int(row['jobs'])
                 
+                # Seed stats
+                cursor.execute("SELECT COUNT(*) as total, SUM(CASE WHEN tested THEN 1 ELSE 0 END) as tested FROM seed_companies")
+                seed_row = cursor.fetchone()
+                stats['total_seeds'] = seed_row['total'] or 0
+                stats['seeds_tested'] = int(seed_row['tested'] or 0)
+                
                 return stats
         except Exception as e:
             logger.error(f"Error getting stats: {e}")
             return {'total_companies': 0, 'total_jobs': 0, 'error': str(e)}
     
-    def get_seed_companies(self, limit: int = 2000) -> List[str]:
-        """Get seed companies that haven't been tested."""
+    def get_seed_companies(self, limit: int = 2000, by_priority: bool = True) -> List[str]:
+        """Get seed companies that haven't been tested, optionally by priority."""
         try:
             with self.get_cursor() as cursor:
-                cursor.execute("""
-                    SELECT name FROM seed_companies 
-                    WHERE tested = FALSE 
-                    ORDER BY discovered_at DESC
-                    LIMIT %s
-                """, (limit,))
+                if by_priority:
+                    cursor.execute("""
+                        SELECT name FROM seed_companies 
+                        WHERE tested = FALSE 
+                        ORDER BY priority DESC, discovered_at DESC
+                        LIMIT %s
+                    """, (limit,))
+                else:
+                    cursor.execute("""
+                        SELECT name FROM seed_companies 
+                        WHERE tested = FALSE 
+                        ORDER BY discovered_at DESC
+                        LIMIT %s
+                    """, (limit,))
                 return [row['name'] for row in cursor]
         except:
             return []
     
-    def save_seed_companies(self, companies: List[str], source: str) -> int:
-        """Save seed companies to database."""
+    def save_seed_companies(self, companies: List[str], source: str, 
+                           tier: int = 2, priority: int = None) -> int:
+        """Save seed companies to database with priority."""
+        # Default priorities by tier
+        if priority is None:
+            priority = {1: 80, 2: 50, 3: 30}.get(tier, 50)
+        
         added = 0
         try:
             with self.get_cursor() as cursor:
@@ -406,18 +451,106 @@ class Database:
                     if company and len(company) >= 2:
                         try:
                             cursor.execute("""
-                                INSERT INTO seed_companies (name, source)
-                                VALUES (%s, %s)
-                                ON CONFLICT (name) DO NOTHING
-                            """, (company.strip(), source))
+                                INSERT INTO seed_companies (name, source, source_tier, priority)
+                                VALUES (%s, %s, %s, %s)
+                                ON CONFLICT (name) DO UPDATE SET
+                                    priority = GREATEST(seed_companies.priority, EXCLUDED.priority)
+                            """, (company.strip(), source, tier, priority))
                             if cursor.rowcount > 0:
                                 added += 1
                         except:
                             pass
-            logger.info(f"Saved {added} new seed companies from {source}")
+                
+                # Update source stats
+                cursor.execute("""
+                    INSERT INTO source_stats (source, tier, total_seeds, last_fetch, last_updated)
+                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT (source) DO UPDATE SET
+                        total_seeds = source_stats.total_seeds + %s,
+                        last_fetch = CURRENT_TIMESTAMP,
+                        last_updated = CURRENT_TIMESTAMP
+                """, (source, tier, added, added))
+                
+            logger.info(f"Saved {added} new seed companies from {source} (tier {tier}, priority {priority})")
         except Exception as e:
             logger.error(f"Error saving seed companies: {e}")
         return added
+    
+    def mark_seed_tested(self, name: str, has_greenhouse: bool = False, has_lever: bool = False):
+        """Mark a seed company as tested and record results."""
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("""
+                    UPDATE seed_companies 
+                    SET tested = TRUE, 
+                        tested_at = CURRENT_TIMESTAMP,
+                        has_greenhouse = %s, 
+                        has_lever = %s
+                    WHERE name = %s
+                    RETURNING source
+                """, (has_greenhouse, has_lever, name))
+                
+                row = cursor.fetchone()
+                if row and row['source']:
+                    # Update source stats
+                    found = 1 if (has_greenhouse or has_lever) else 0
+                    gh_found = 1 if has_greenhouse else 0
+                    lv_found = 1 if has_lever else 0
+                    
+                    cursor.execute("""
+                        UPDATE source_stats 
+                        SET seeds_tested = seeds_tested + 1,
+                            seeds_found = seeds_found + %s,
+                            greenhouse_found = greenhouse_found + %s,
+                            lever_found = lever_found + %s,
+                            hit_rate = CASE 
+                                WHEN seeds_tested + 1 > 0 
+                                THEN (seeds_found + %s)::REAL / (seeds_tested + 1) 
+                                ELSE 0 
+                            END,
+                            last_updated = CURRENT_TIMESTAMP
+                        WHERE source = %s
+                    """, (found, gh_found, lv_found, found, row['source']))
+        except Exception as e:
+            logger.error(f"Error marking seed tested: {e}")
+    
+    def get_source_stats(self) -> List[Dict]:
+        """Get hit rate statistics for all sources."""
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("""
+                    SELECT source, tier, total_seeds, seeds_tested, seeds_found,
+                           greenhouse_found, lever_found, hit_rate, enabled, last_fetch
+                    FROM source_stats
+                    ORDER BY tier ASC, hit_rate DESC
+                """)
+                return [dict(row) for row in cursor]
+        except:
+            return []
+    
+    def get_high_performing_sources(self, min_tested: int = 100, min_hit_rate: float = 0.01) -> List[str]:
+        """Get sources with good hit rates."""
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("""
+                    SELECT source FROM source_stats
+                    WHERE seeds_tested >= %s AND hit_rate >= %s AND enabled = TRUE
+                    ORDER BY hit_rate DESC
+                """, (min_tested, min_hit_rate))
+                return [row['source'] for row in cursor]
+        except:
+            return []
+    
+    def disable_low_performing_source(self, source: str):
+        """Disable a source with poor hit rate."""
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("""
+                    UPDATE source_stats SET enabled = FALSE WHERE source = %s
+                """, (source,))
+                logger.info(f"Disabled low-performing source: {source}")
+        except Exception as e:
+            logger.error(f"Error disabling source: {e}")
     
     def close(self):
         """Close all connections."""
