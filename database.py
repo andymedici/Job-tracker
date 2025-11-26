@@ -312,6 +312,11 @@ class Database:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_job_changes_company ON job_count_changes(company_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_job_changes_date ON job_count_changes(detected_at)")
             
+            # Indexes for granular snapshot tables
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_6h_company ON snapshots_6h(company_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_6h_time ON snapshots_6h(snapshot_time DESC)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_market_snapshots_time ON market_snapshots(snapshot_time DESC)")
+            
             conn.commit()
             logger.info("Database schema initialized")
     
