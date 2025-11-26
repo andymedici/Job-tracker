@@ -219,7 +219,7 @@ class Database:
                 )
             """)
             
-            # Historical job data archive
+            # Historical job data archive (DAILY - one per day)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS job_history_archive (
                     id SERIAL PRIMARY KEY,
@@ -232,6 +232,37 @@ class Database:
                     locations_json JSONB,
                     departments_json JSONB,
                     UNIQUE(company_id, archive_date)
+                )
+            """)
+            
+            # Granular snapshots (every 6 hours for short-term analysis)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS snapshots_6h (
+                    id SERIAL PRIMARY KEY,
+                    company_id TEXT NOT NULL,
+                    snapshot_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    job_count INTEGER,
+                    remote_count INTEGER,
+                    hybrid_count INTEGER,
+                    onsite_count INTEGER,
+                    UNIQUE(company_id, snapshot_time)
+                )
+            """)
+            
+            # Market-wide hourly totals (for trend charts)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS market_snapshots (
+                    id SERIAL PRIMARY KEY,
+                    snapshot_time TIMESTAMP NOT NULL UNIQUE DEFAULT CURRENT_TIMESTAMP,
+                    total_companies INTEGER,
+                    total_jobs INTEGER,
+                    total_remote INTEGER,
+                    total_hybrid INTEGER,
+                    total_onsite INTEGER,
+                    greenhouse_companies INTEGER,
+                    greenhouse_jobs INTEGER,
+                    lever_companies INTEGER,
+                    lever_jobs INTEGER
                 )
             """)
             
@@ -349,6 +380,128 @@ class Database:
         except Exception as e:
             logger.error(f"Error creating monthly snapshot: {e}")
     
+    def create_6h_snapshots(self):
+        """Create 6-hourly snapshots for granular trend tracking."""
+        try:
+            with self.get_cursor() as cursor:
+                # Round to nearest 6-hour block
+                now = datetime.utcnow()
+                hour_block = (now.hour // 6) * 6
+                snapshot_time = now.replace(hour=hour_block, minute=0, second=0, microsecond=0)
+                
+                # Insert snapshots for all companies
+                cursor.execute("""
+                    INSERT INTO snapshots_6h 
+                    (company_id, snapshot_time, job_count, remote_count, hybrid_count, onsite_count)
+                    SELECT id, %s, job_count, remote_count, hybrid_count, onsite_count
+                    FROM companies
+                    ON CONFLICT (company_id, snapshot_time) DO UPDATE SET
+                        job_count = EXCLUDED.job_count,
+                        remote_count = EXCLUDED.remote_count,
+                        hybrid_count = EXCLUDED.hybrid_count,
+                        onsite_count = EXCLUDED.onsite_count
+                """, (snapshot_time,))
+                
+                count = cursor.rowcount
+                logger.info(f"📸 Created 6h snapshots for {count} companies at {snapshot_time}")
+                
+                # Clean up old 6h snapshots (keep 7 days = 28 snapshots per company)
+                cutoff = now - timedelta(days=7)
+                cursor.execute("DELETE FROM snapshots_6h WHERE snapshot_time < %s", (cutoff,))
+                deleted = cursor.rowcount
+                if deleted > 0:
+                    logger.info(f"🗑️ Cleaned up {deleted} old 6h snapshots")
+                    
+        except Exception as e:
+            logger.error(f"Error creating 6h snapshots: {e}")
+    
+    def create_market_snapshot(self):
+        """Create a market-wide snapshot for overall trend tracking."""
+        try:
+            with self.get_cursor() as cursor:
+                # Get current market totals
+                cursor.execute("""
+                    SELECT 
+                        COUNT(*) as total_companies,
+                        COALESCE(SUM(job_count), 0) as total_jobs,
+                        COALESCE(SUM(remote_count), 0) as total_remote,
+                        COALESCE(SUM(hybrid_count), 0) as total_hybrid,
+                        COALESCE(SUM(onsite_count), 0) as total_onsite,
+                        COUNT(*) FILTER (WHERE ats_type = 'greenhouse') as greenhouse_companies,
+                        COALESCE(SUM(job_count) FILTER (WHERE ats_type = 'greenhouse'), 0) as greenhouse_jobs,
+                        COUNT(*) FILTER (WHERE ats_type = 'lever') as lever_companies,
+                        COALESCE(SUM(job_count) FILTER (WHERE ats_type = 'lever'), 0) as lever_jobs
+                    FROM companies
+                """)
+                stats = dict(cursor.fetchone())
+                
+                # Round to nearest hour
+                now = datetime.utcnow()
+                snapshot_time = now.replace(minute=0, second=0, microsecond=0)
+                
+                cursor.execute("""
+                    INSERT INTO market_snapshots 
+                    (snapshot_time, total_companies, total_jobs, total_remote, total_hybrid, total_onsite,
+                     greenhouse_companies, greenhouse_jobs, lever_companies, lever_jobs)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (snapshot_time) DO UPDATE SET
+                        total_companies = EXCLUDED.total_companies,
+                        total_jobs = EXCLUDED.total_jobs,
+                        total_remote = EXCLUDED.total_remote,
+                        total_hybrid = EXCLUDED.total_hybrid,
+                        total_onsite = EXCLUDED.total_onsite,
+                        greenhouse_companies = EXCLUDED.greenhouse_companies,
+                        greenhouse_jobs = EXCLUDED.greenhouse_jobs,
+                        lever_companies = EXCLUDED.lever_companies,
+                        lever_jobs = EXCLUDED.lever_jobs
+                """, (snapshot_time, stats['total_companies'], stats['total_jobs'],
+                      stats['total_remote'], stats['total_hybrid'], stats['total_onsite'],
+                      stats['greenhouse_companies'], stats['greenhouse_jobs'],
+                      stats['lever_companies'], stats['lever_jobs']))
+                
+                logger.info(f"📊 Market snapshot: {stats['total_companies']} companies, {stats['total_jobs']} jobs")
+                
+                # Clean up old market snapshots (keep 30 days)
+                cutoff = now - timedelta(days=30)
+                cursor.execute("DELETE FROM market_snapshots WHERE snapshot_time < %s", (cutoff,))
+                
+        except Exception as e:
+            logger.error(f"Error creating market snapshot: {e}")
+    
+    def get_market_trends(self, days: int = 7) -> List[Dict]:
+        """Get market-wide trends for charting."""
+        try:
+            with self.get_cursor() as cursor:
+                cutoff = datetime.utcnow() - timedelta(days=days)
+                cursor.execute("""
+                    SELECT snapshot_time, total_companies, total_jobs, 
+                           total_remote, total_hybrid, total_onsite,
+                           greenhouse_jobs, lever_jobs
+                    FROM market_snapshots
+                    WHERE snapshot_time > %s
+                    ORDER BY snapshot_time ASC
+                """, (cutoff,))
+                return [dict(row) for row in cursor]
+        except Exception as e:
+            logger.error(f"Error getting market trends: {e}")
+            return []
+    
+    def get_company_trends(self, company_id: str, days: int = 7) -> List[Dict]:
+        """Get trend data for a specific company."""
+        try:
+            with self.get_cursor() as cursor:
+                cutoff = datetime.utcnow() - timedelta(days=days)
+                cursor.execute("""
+                    SELECT snapshot_time, job_count, remote_count, hybrid_count, onsite_count
+                    FROM snapshots_6h
+                    WHERE company_id = %s AND snapshot_time > %s
+                    ORDER BY snapshot_time ASC
+                """, (company_id, cutoff))
+                return [dict(row) for row in cursor]
+        except Exception as e:
+            logger.error(f"Error getting company trends: {e}")
+            return []
+
     def is_recently_failed(self, token: str, ats_type: str, days: int = 7) -> bool:
         """Check if a token failed recently (negative cache)."""
         try:
@@ -435,6 +588,37 @@ class Database:
                     """, (limit,))
                 return [row['name'] for row in cursor]
         except:
+            return []
+    
+    def get_companies_for_refresh(self, hours_since_update: int = 6, limit: int = 500) -> List[Dict]:
+        """Get existing companies that need refreshing based on last update time."""
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("""
+                    SELECT id, ats_type, token, company_name, job_count, 
+                           remote_count, hybrid_count, onsite_count
+                    FROM companies 
+                    WHERE last_updated < NOW() - INTERVAL '%s hours'
+                    ORDER BY last_updated ASC
+                    LIMIT %s
+                """, (hours_since_update, limit))
+                return [dict(row) for row in cursor]
+        except Exception as e:
+            logger.error(f"Error getting companies for refresh: {e}")
+            return []
+    
+    def get_all_tracked_companies(self) -> List[Dict]:
+        """Get all tracked companies with their ATS info for refresh."""
+        try:
+            with self.get_cursor() as cursor:
+                cursor.execute("""
+                    SELECT id, ats_type, token, company_name
+                    FROM companies 
+                    ORDER BY job_count DESC
+                """)
+                return [dict(row) for row in cursor]
+        except Exception as e:
+            logger.error(f"Error getting all companies: {e}")
             return []
     
     def save_seed_companies(self, companies: List[str], source: str, 
