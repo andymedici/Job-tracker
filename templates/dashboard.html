@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Job Intelligence Dashboard</title>
+    <meta http-equiv="refresh" content="30">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            color: #fff;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        
+        header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            background: linear-gradient(90deg, #00d4ff, #7b2cbf);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        header p {
+            color: #8892b0;
+            font-size: 1.1em;
+        }
+        
+        .status-bar {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 30px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .status-bar.running {
+            border-color: #ffd93d;
+            background: rgba(255,217,61,0.1);
+        }
+        
+        .status-bar.error {
+            border-color: #ff6b6b;
+            background: rgba(255,107,107,0.1);
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 10px;
+            animation: pulse 2s infinite;
+        }
+        
+        .status-indicator.idle { background: #4ade80; }
+        .status-indicator.running { background: #ffd93d; }
+        .status-indicator.error { background: #ff6b6b; }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .metric-card {
+            background: rgba(255,255,255,0.05);
+            border-radius: 16px;
+            padding: 25px;
+            text-align: center;
+            border: 1px solid rgba(255,255,255,0.1);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .metric-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+        
+        .metric-value {
+            font-size: 3em;
+            font-weight: 700;
+            background: linear-gradient(90deg, #00d4ff, #7b2cbf);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .metric-label {
+            color: #8892b0;
+            margin-top: 10px;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .platform-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .platform-card {
+            background: rgba(255,255,255,0.05);
+            border-radius: 16px;
+            padding: 25px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .platform-card.greenhouse {
+            border-left: 4px solid #4ade80;
+        }
+        
+        .platform-card.lever {
+            border-left: 4px solid #f97316;
+        }
+        
+        .platform-card h3 {
+            font-size: 1.3em;
+            margin-bottom: 15px;
+        }
+        
+        .platform-stat {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        
+        .platform-stat:last-child {
+            border-bottom: none;
+        }
+        
+        .actions {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin-bottom: 30px;
+        }
+        
+        .btn {
+            padding: 12px 30px;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: 600;
+            transition: all 0.2s;
+            text-decoration: none;
+            display: inline-block;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(90deg, #00d4ff, #7b2cbf);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: scale(1.05);
+            box-shadow: 0 5px 20px rgba(0,212,255,0.4);
+        }
+        
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .btn-secondary {
+            background: rgba(255,255,255,0.1);
+            color: white;
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+        
+        .btn-secondary:hover {
+            background: rgba(255,255,255,0.2);
+        }
+        
+        .footer {
+            text-align: center;
+            color: #8892b0;
+            font-size: 0.9em;
+            padding: 20px;
+        }
+        
+        .footer a {
+            color: #00d4ff;
+            text-decoration: none;
+        }
+        
+        .recent-info {
+            background: rgba(255,255,255,0.03);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .recent-info h3 {
+            margin-bottom: 15px;
+            color: #8892b0;
+        }
+        
+        @media (max-width: 768px) {
+            header h1 { font-size: 1.8em; }
+            .metric-value { font-size: 2em; }
+            .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔍 Job Intelligence Dashboard</h1>
+            <p>Real-time job market monitoring across ATS platforms</p>
+        </header>
+        
+        <div class="status-bar {{ 'running' if state.running else 'error' if state.error else '' }}">
+            <span class="status-indicator {{ 'running' if state.running else 'error' if state.error else 'idle' }}"></span>
+            <strong>Status:</strong> 
+            {% if state.running %}
+                Collection in progress...
+            {% elif state.error %}
+                Error: {{ state.error }}
+            {% else %}
+                Idle - Ready for collection
+            {% endif %}
+            
+            {% if state.last_run %}
+                <span style="float: right; color: #8892b0;">
+                    Last run: {{ state.last_run }}
+                </span>
+            {% endif %}
+        </div>
+        
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <div class="metric-value">{{ "{:,}".format(stats.total_companies or 0) }}</div>
+                <div class="metric-label">Total Companies</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value">{{ "{:,}".format(stats.total_jobs or 0) }}</div>
+                <div class="metric-label">Total Jobs</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value">{{ stats.greenhouse_companies or 0 }}</div>
+                <div class="metric-label">Greenhouse</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value">{{ stats.lever_companies or 0 }}</div>
+                <div class="metric-label">Lever</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value">{{ stats.updated_last_24h or 0 }}</div>
+                <div class="metric-label">Updated (24h)</div>
+            </div>
+        </div>
+        
+        <div class="platform-cards">
+            <div class="platform-card greenhouse">
+                <h3>🌱 Greenhouse Platform</h3>
+                <div class="platform-stat">
+                    <span>Companies</span>
+                    <strong>{{ stats.greenhouse_companies or 0 }}</strong>
+                </div>
+                <div class="platform-stat">
+                    <span>Job Openings</span>
+                    <strong>{{ "{:,}".format(stats.greenhouse_jobs or 0) }}</strong>
+                </div>
+                <div class="platform-stat">
+                    <span>Avg Jobs/Company</span>
+                    <strong>{{ "%.1f"|format((stats.greenhouse_jobs or 0) / max(stats.greenhouse_companies or 1, 1)) }}</strong>
+                </div>
+            </div>
+            
+            <div class="platform-card lever">
+                <h3>🔧 Lever Platform</h3>
+                <div class="platform-stat">
+                    <span>Companies</span>
+                    <strong>{{ stats.lever_companies or 0 }}</strong>
+                </div>
+                <div class="platform-stat">
+                    <span>Job Openings</span>
+                    <strong>{{ "{:,}".format(stats.lever_jobs or 0) }}</strong>
+                </div>
+                <div class="platform-stat">
+                    <span>Avg Jobs/Company</span>
+                    <strong>{{ "%.1f"|format((stats.lever_jobs or 0) / max(stats.lever_companies or 1, 1)) }}</strong>
+                </div>
+            </div>
+        </div>
+        
+        <div class="actions">
+            <button class="btn btn-primary" onclick="triggerCollection()" {{ 'disabled' if state.running }}>
+                {{ '⏳ Running...' if state.running else '🚀 Run Collection' }}
+            </button>
+            <button class="btn btn-secondary" onclick="expandSeeds()">🌱 Expand Seeds</button>
+            <a href="/api/stats" class="btn btn-secondary">📊 API Stats</a>
+            <a href="/api/companies" class="btn btn-secondary">🏢 Companies</a>
+            <a href="/api/seeds" class="btn btn-secondary">🌱 Seeds</a>
+        </div>
+        
+        {% if state.last_stats %}
+        <div class="recent-info">
+            <h3>📈 Last Collection Results</h3>
+            <p>Duration: {{ "%.1f"|format(state.last_stats.duration_minutes or 0) }} minutes</p>
+            <p>Companies Tested: {{ state.last_stats.companies_tested or 0 }}</p>
+            <p>New Greenhouse: {{ state.last_stats.greenhouse_found or 0 }}</p>
+            <p>New Lever: {{ state.last_stats.lever_found or 0 }}</p>
+            <p>Discovery Rate: {{ state.last_stats.discovery_rate or 'N/A' }}</p>
+        </div>
+        {% endif %}
+        
+        {% if state.last_intel %}
+        <div class="recent-info" style="border-left: 4px solid #f97316;">
+            <h3>🔍 Market Intelligence</h3>
+            <p>📍 Location Expansions: {{ state.last_intel.expansions or 0 }} detected</p>
+            <p>📈 Hiring Surges: {{ state.last_intel.surges or 0 }} companies</p>
+            <p>📉 Hiring Declines: {{ state.last_intel.declines or 0 }} companies</p>
+            <p style="margin-top: 10px;">
+                <a href="/api/intelligence" style="color: #00d4ff;">View Full Report →</a> |
+                <a href="/api/expansions" style="color: #00d4ff;">Expansions</a> |
+                <a href="/api/changes?type=surge" style="color: #00d4ff;">Surges</a> |
+                <a href="/api/changes?type=decline" style="color: #00d4ff;">Declines</a>
+            </p>
+        </div>
+        {% endif %}
+        
+        <div class="footer">
+            <p>Auto-refresh every 30 seconds | Last updated: {{ stats.last_updated }}</p>
+            <p><a href="/health">Health Check</a> | <a href="/api/companies?limit=100">Export Data</a></p>
+        </div>
+    </div>
+    
+    <script>
+        async function triggerCollection() {
+            if (confirm('Start a new collection run? This may take several minutes.')) {
+                const btn = document.querySelector('.btn-primary');
+                btn.disabled = true;
+                btn.textContent = '⏳ Starting...';
+                
+                try {
+                    const response = await fetch('/api/collect', { method: 'POST' });
+                    const data = await response.json();
+                    alert(data.message || 'Collection started!');
+                    setTimeout(() => location.reload(), 2000);
+                } catch (e) {
+                    alert('Error starting collection: ' + e.message);
+                    btn.disabled = false;
+                    btn.textContent = '🚀 Run Collection';
+                }
+            }
+        }
+        
+        async function expandSeeds() {
+            if (confirm('Expand seed database from YC, GitHub, and other sources? This fetches 2000+ new company names.')) {
+                try {
+                    const response = await fetch('/api/expand-seeds', { method: 'POST' });
+                    const data = await response.json();
+                    alert(data.message || 'Seed expansion started!');
+                } catch (e) {
+                    alert('Error: ' + e.message);
+                }
+            }
+        }
+    </script>
+</body>
+</html>
