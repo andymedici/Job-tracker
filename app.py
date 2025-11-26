@@ -227,6 +227,12 @@ def dashboard():
     )
 
 
+@app.route('/analytics')
+def analytics():
+    """Comprehensive analytics dashboard."""
+    return render_template("analytics.html")
+
+
 @app.route('/api/stats')
 def api_stats():
     """API endpoint for statistics."""
