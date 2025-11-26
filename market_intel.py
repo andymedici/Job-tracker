@@ -792,18 +792,28 @@ class MarketIntelligence:
 # ==================== MAINTENANCE TASKS ====================
 
 def run_daily_maintenance(db: Database = None):
-    """Run all daily maintenance tasks."""
+    """Run all maintenance tasks (called every 6 hours despite the name)."""
     intel = MarketIntelligence(db)
     
-    logger.info("🔧 Running daily maintenance...")
+    logger.info("🔧 Running maintenance tasks...")
     
     # Detect changes
     expansions = intel.detect_location_expansions()
     surges, declines = intel.detect_job_count_changes()
     
-    # Create archives
+    # Create granular snapshots (every 6 hours)
+    intel.db.create_6h_snapshots()
+    intel.db.create_market_snapshot()
+    
+    # Create daily archive (will update if already exists for today)
     intel.archive_daily_snapshot()
+    
+    # Create weekly aggregate
     intel.create_weekly_aggregate()
+    
+    # Create monthly snapshot on first run of the month
+    if datetime.utcnow().day == 1 and datetime.utcnow().hour < 6:
+        intel.db.create_monthly_snapshot()
     
     # Purge old data
     intel.purge_old_job_details(days_to_keep=30)
