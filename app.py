@@ -120,6 +120,60 @@ def run_weekly_email():
         logger.error(f"Failed to send weekly report: {e}")
 
 
+def run_tier1_expansion():
+    """Run Tier 1 seed expansion (weekly - high quality sources)."""
+    global collection_state
+    
+    if collection_state['running']:
+        logger.info("Collection running, skipping Tier 1 expansion")
+        return
+    
+    try:
+        logger.info("🚀 Starting Tier 1 seed expansion...")
+        import asyncio
+        from seed_expander import run_tier1_expansion
+        
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            results = loop.run_until_complete(run_tier1_expansion())
+            total = sum(len(c) for c in results.values() if isinstance(c, list))
+            logger.info(f"✅ Tier 1 expansion complete: {total} companies discovered")
+        finally:
+            loop.close()
+            
+    except Exception as e:
+        logger.error(f"Tier 1 expansion failed: {e}")
+
+
+def run_tier2_expansion():
+    """Run Tier 2 seed expansion (monthly - broader sources)."""
+    global collection_state
+    
+    if collection_state['running']:
+        logger.info("Collection running, skipping Tier 2 expansion")
+        return
+    
+    try:
+        logger.info("🚀 Starting Tier 2 seed expansion...")
+        import asyncio
+        from seed_expander import run_tier2_expansion
+        
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            results = loop.run_until_complete(run_tier2_expansion())
+            total = sum(len(c) for c in results.values() if isinstance(c, list))
+            logger.info(f"✅ Tier 2 expansion complete: {total} companies discovered")
+        finally:
+            loop.close()
+            
+    except Exception as e:
+        logger.error(f"Tier 2 expansion failed: {e}")
+
+
 def start_scheduler():
     """Start background scheduler."""
     # Schedule collection every 6 hours
@@ -132,6 +186,16 @@ def start_scheduler():
     
     # Weekly email report on Mondays at 9 AM
     schedule.every().monday.at("09:00").do(lambda: threading.Thread(target=run_weekly_email).start())
+    
+    # SEED EXPANSION SCHEDULES
+    # Tier 1 expansion weekly (Sundays at 3 AM) - high quality tech sources
+    schedule.every().sunday.at("03:00").do(lambda: threading.Thread(target=run_tier1_expansion).start())
+    
+    # Tier 2 expansion monthly (1st of month at 4 AM) - broader sources
+    schedule.every().day.at("04:00").do(
+        lambda: threading.Thread(target=run_tier2_expansion).start() 
+        if datetime.utcnow().day == 1 else None
+    )
     
     # Run initial collection after startup delay
     def initial_run():
@@ -586,7 +650,7 @@ def api_seeds():
 
 @app.route('/api/expand-seeds', methods=['POST'])
 def api_expand_seeds():
-    """Trigger seed expansion from all sources."""
+    """Trigger seed expansion from specified tier(s)."""
     global collection_state
     
     if collection_state['running']:
@@ -595,24 +659,26 @@ def api_expand_seeds():
             'message': 'Collection already running'
         }), 409
     
+    data = request.get_json() or {}
+    tier = data.get('tier', 'all')  # 'tier1', 'tier2', or 'all'
+    
     def run_expansion():
         import asyncio
-        from seed_expander import SeedExpander
+        from seed_expander import run_tier1_expansion, run_tier2_expansion, run_full_expansion
         
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
         try:
-            expander = SeedExpander()
-            results = loop.run_until_complete(expander.expand_all())
-            
-            # Save to database
-            for source, companies in results.items():
-                if source != 'total_unique' and companies:
-                    expander.save_to_db(companies, source)
-            
-            loop.run_until_complete(expander.close())
-            logger.info(f"Seed expansion complete: {len(results.get('total_unique', []))} unique companies")
+            if tier == 'tier1':
+                results = loop.run_until_complete(run_tier1_expansion())
+                logger.info(f"Tier 1 expansion complete")
+            elif tier == 'tier2':
+                results = loop.run_until_complete(run_tier2_expansion())
+                logger.info(f"Tier 2 expansion complete")
+            else:
+                results = loop.run_until_complete(run_full_expansion())
+                logger.info(f"Full expansion complete: {len(results.get('total_unique', []))} unique companies")
         finally:
             loop.close()
     
@@ -621,8 +687,27 @@ def api_expand_seeds():
     
     return jsonify({
         'status': 'success',
-        'message': 'Seed expansion started in background'
+        'message': f'Seed expansion ({tier}) started in background'
     })
+
+
+@app.route('/api/source-stats')
+def api_source_stats():
+    """Get hit rate statistics for all seed sources."""
+    try:
+        db = get_db()
+        stats = db.get_source_stats()
+        
+        # Also get summary
+        high_performers = db.get_high_performing_sources(min_tested=50, min_hit_rate=0.01)
+        
+        return jsonify({
+            'sources': stats,
+            'high_performers': high_performers,
+            'total_sources': len(stats)
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 def main():
