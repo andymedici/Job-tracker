@@ -293,7 +293,11 @@ def analytics():
 def api_stats():
     """API endpoint for statistics."""
     stats = get_stats()
-    stats['collection_state'] = collection_state
+    stats['collection_running'] = collection_state.get('running', False)
+    stats['last_run'] = collection_state.get('last_run')
+    stats['last_error'] = collection_state.get('error')
+    stats['last_stats'] = collection_state.get('last_stats')
+    stats['last_intel'] = collection_state.get('last_intel')
     return jsonify(stats)
 
 
