@@ -1,15 +1,16 @@
 """
 Market Intelligence Module
 ==========================
-Advanced analytics and tracking for job market intelligence:
+Advanced analytics and tracking for job market intelligence.
 
+Features:
 - Location expansion detection (new cities/regions)
-- Job count change alerts (significant increases/decreases)
-- Historical data archival and purging
+- Job count change alerts (surges/declines)
+- Historical data archival
+- 6-hourly snapshot creation
+- Market-wide snapshot creation
 - Trend analysis and reporting
 - Email notifications
-
-Uses PostgreSQL for Railway deployment.
 """
 
 import json
@@ -86,8 +87,8 @@ class MarketIntelligence:
     """Advanced market intelligence and analytics."""
     
     # Thresholds for alerts
-    SURGE_THRESHOLD = 0.20  # 20% increase
-    DECLINE_THRESHOLD = -0.20  # 20% decrease
+    SURGE_THRESHOLD = 0.50  # 50% increase
+    DECLINE_THRESHOLD = -0.30  # 30% decrease
     MIN_JOBS_FOR_ALERT = 5  # Minimum jobs to trigger alerts
     
     # Locations to ignore (too generic)
@@ -109,7 +110,6 @@ class MarketIntelligence:
         
         try:
             with self.db.get_cursor() as cursor:
-                # Get current company data
                 cursor.execute("""
                     SELECT id, company_name, ats_type, locations, job_count
                     FROM companies
@@ -122,7 +122,6 @@ class MarketIntelligence:
                 current_locations = set()
                 
                 try:
-                    # JSONB is already parsed in PostgreSQL
                     locations_list = row['locations'] if isinstance(row['locations'], list) else []
                     current_locations = {
                         loc.lower().strip() 
@@ -165,7 +164,8 @@ class MarketIntelligence:
                     with self.db.get_cursor() as cursor:
                         cursor.execute("""
                             SELECT 1 FROM location_expansions
-                            WHERE company_id = %s AND new_location = %s AND detected_at > NOW() - INTERVAL '7 days'
+                            WHERE company_id = %s AND new_location = %s 
+                            AND detected_at > NOW() - INTERVAL '7 days'
                         """, (company_id, new_loc.title()))
                         if cursor.fetchone():
                             continue
@@ -179,8 +179,6 @@ class MarketIntelligence:
                         job_count_at_detection=row['job_count']
                     )
                     expansions.append(expansion)
-                    
-                    # Record the new expansion
                     self._record_location_expansion(expansion)
             
             return expansions
@@ -219,8 +217,6 @@ class MarketIntelligence:
         
         try:
             with self.db.get_cursor() as cursor:
-                # Select companies where job count has changed and last_job_count > 0 
-                # and current job count is above the minimum threshold.
                 cursor.execute("""
                     SELECT id, company_name, ats_type, job_count, last_job_count
                     FROM companies
@@ -236,7 +232,6 @@ class MarketIntelligence:
                     current = row['job_count']
                     previous = row['last_job_count']
                     
-                    # Prevent division by zero if last_job_count somehow remained 0 despite filter
                     if previous == 0:
                         continue
                         
@@ -289,48 +284,62 @@ class MarketIntelligence:
 
     # ==================== ARCHIVAL AND PURGING ====================
     
-    def archive_job_history(self):
-        """Archive job count, locations, and departments for all companies."""
+    def archive_daily_snapshot(self):
+        """Archive current job count, locations, and departments for all companies."""
         try:
             with self.db.get_cursor() as cursor:
-                # Select the latest state for all companies
                 cursor.execute("""
-                    INSERT INTO job_history_archive (company_id, job_count, locations_json, departments_json)
-                    SELECT id, job_count, locations, departments FROM companies
-                    ON CONFLICT (company_id, archive_date) DO NOTHING
+                    INSERT INTO job_history_archive (company_id, archive_date, job_count, locations_json, departments_json)
+                    SELECT id, CURRENT_DATE, job_count, locations, departments FROM companies
+                    ON CONFLICT (company_id, archive_date) DO UPDATE SET
+                        job_count = EXCLUDED.job_count,
+                        locations_json = EXCLUDED.locations_json,
+                        departments_json = EXCLUDED.departments_json
                 """)
+                logger.info("Daily snapshot archived")
         except Exception as e:
-            logger.error(f"Error archiving job history: {e}")
+            logger.error(f"Error archiving daily snapshot: {e}")
+
+    def archive_job_history(self):
+        """Alias for archive_daily_snapshot for backwards compatibility."""
+        self.archive_daily_snapshot()
             
-    def purge_old_job_details(self, days_to_keep: int):
+    def purge_old_job_details(self, days_to_keep: int = 30):
         """Delete old job detail records to save space."""
         try:
             cutoff = datetime.utcnow() - timedelta(days=days_to_keep)
             with self.db.get_cursor() as cursor:
-                cursor.execute("""
-                    DELETE FROM jobs WHERE last_seen < %s
-                """, (cutoff,))
-                logger.info(f"Purged {cursor.rowcount} stale job records (older than {days_to_keep} days).")
+                cursor.execute("DELETE FROM jobs WHERE last_seen < %s", (cutoff,))
+                logger.info(f"Purged {cursor.rowcount} stale job records (older than {days_to_keep} days)")
         except Exception as e:
             logger.error(f"Error purging old job details: {e}")
 
-    def purge_stale_companies(self, days_stale: int):
-        """Delete companies that haven't been seen/updated recently and have 0 jobs."""
+    def purge_stale_companies(self, days_stale: int = 90):
+        """Delete companies that haven't been seen recently and have 0 jobs."""
         try:
             cutoff = datetime.utcnow() - timedelta(days=days_stale)
             with self.db.get_cursor() as cursor:
-                # Companies not seen in N days AND have 0 jobs
                 cursor.execute("""
                     DELETE FROM companies 
                     WHERE last_seen < %s AND job_count = 0
                 """, (cutoff,))
-                logger.info(f"Purged {cursor.rowcount} stale companies (not seen in {days_stale} days and 0 jobs).")
+                logger.info(f"Purged {cursor.rowcount} stale companies (not seen in {days_stale} days and 0 jobs)")
         except Exception as e:
             logger.error(f"Error purging stale companies: {e}")
 
+    def purge_old_archives(self, days_to_keep: int = 90):
+        """Purge old job history archives."""
+        try:
+            cutoff = datetime.utcnow() - timedelta(days=days_to_keep)
+            with self.db.get_cursor() as cursor:
+                cursor.execute("DELETE FROM job_history_archive WHERE archive_date < %s", (cutoff.date(),))
+                logger.info(f"Purged {cursor.rowcount} old archive records")
+        except Exception as e:
+            logger.error(f"Error purging old archives: {e}")
+
     # ==================== REPORT GENERATION ====================
     
-    def generate_report(self, days: int) -> MarketIntelReport:
+    def generate_report(self, days: int = 7) -> MarketIntelReport:
         """Generate a comprehensive market intelligence report."""
         report = MarketIntelReport(
             generated_at=datetime.utcnow(),
@@ -338,15 +347,14 @@ class MarketIntelligence:
             period_end=datetime.utcnow()
         )
         
-        # 1. Fetch current summary stats
+        # Fetch current summary stats
         stats = self.db.get_stats()
         report.total_companies = stats.get('total_companies', 0)
         report.total_jobs = stats.get('total_jobs', 0)
-        report.remote_jobs = stats.get('total_remote', 0)
-        report.hybrid_jobs = stats.get('total_hybrid', 0)
-        report.onsite_jobs = stats.get('total_onsite', 0)
+        report.remote_jobs = stats.get('remote_jobs', 0)
+        report.hybrid_jobs = stats.get('hybrid_jobs', 0)
+        report.onsite_jobs = stats.get('onsite_jobs', 0)
         
-        # 2. Fetch intelligence data (only changes that occurred in the report period)
         cutoff = report.period_start
         
         with self.db.get_cursor() as cursor:
@@ -359,14 +367,20 @@ class MarketIntelligence:
                 WHERE le.detected_at >= %s
                 ORDER BY le.detected_at DESC
             """, (cutoff,))
-            report.location_expansions = [
-                LocationExpansion(**{**dict(row), 'detected_at': row['detected_at']})
-                for row in cursor.fetchall()
-            ]
+            for row in cursor.fetchall():
+                report.location_expansions.append(LocationExpansion(
+                    company_id=row['company_id'],
+                    company_name=row['company_name'],
+                    ats_type=row['ats_type'],
+                    new_location=row['new_location'],
+                    detected_at=row['detected_at'],
+                    job_count_at_detection=row['job_count_at_detection'] or 0
+                ))
             
-            # Job Count Changes (Surges/Declines)
+            # Job Count Changes
             cursor.execute("""
-                SELECT jcc.company_id, jcc.previous_count, jcc.current_count, jcc.change_percent, jcc.change_type, jcc.detected_at,
+                SELECT jcc.company_id, jcc.previous_count, jcc.current_count, 
+                       jcc.change_percent, jcc.change_type, jcc.detected_at,
                        c.company_name, c.ats_type
                 FROM job_count_changes jcc
                 JOIN companies c ON jcc.company_id = c.id
@@ -374,95 +388,51 @@ class MarketIntelligence:
                 ORDER BY jcc.detected_at DESC
             """, (cutoff,))
             for row in cursor.fetchall():
-                change = JobCountChange(**{**dict(row), 'detected_at': row['detected_at']})
+                change = JobCountChange(
+                    company_id=row['company_id'],
+                    company_name=row['company_name'],
+                    ats_type=row['ats_type'],
+                    previous_count=row['previous_count'],
+                    current_count=row['current_count'],
+                    change_percent=row['change_percent'],
+                    change_type=row['change_type'],
+                    detected_at=row['detected_at']
+                )
                 if change.change_type == 'surge':
                     report.job_surges.append(change)
                 elif change.change_type == 'decline':
                     report.job_declines.append(change)
                     
-            # New Companies (first_seen in the period)
+            # New Companies
             cursor.execute("""
                 SELECT id, company_name, ats_type, job_count
                 FROM companies
                 WHERE first_seen >= %s
                 ORDER BY first_seen DESC
             """, (cutoff,))
-            report.new_entrants = list(cursor.fetchall())
+            report.new_entrants = [dict(r) for r in cursor.fetchall()]
             report.new_companies = len(report.new_entrants)
-
-            # Monthly trends (for top growing/shrinking)
-            self._calculate_monthly_trends(report)
             
         return report
 
-    def _calculate_monthly_trends(self, report: MarketIntelReport):
-        """Calculate month-over-month change and find top movers."""
-        
-        # Find the month we are comparing against (2 months ago)
-        two_months_ago = (datetime.utcnow().replace(day=1) - timedelta(days=1)).replace(day=1) - timedelta(days=1)
-        two_months_ago = two_months_ago.replace(day=1).date()
-        
-        # Get all monthly snapshots for the last two relevant months
-        with self.db.get_cursor() as cursor:
-            # Query the change in job count between the latest snapshot and the snapshot two months ago
-            cursor.execute("""
-                WITH latest_snap AS (
-                    SELECT company_id, job_count 
-                    FROM monthly_snapshots 
-                    WHERE snapshot_date >= NOW() - INTERVAL '30 days'
-                ),
-                previous_snap AS (
-                    SELECT company_id, job_count 
-                    FROM monthly_snapshots 
-                    WHERE snapshot_date < NOW() - INTERVAL '30 days' 
-                    ORDER BY snapshot_date DESC LIMIT 1
-                )
-                SELECT 
-                    c.id, c.company_name, c.ats_type,
-                    COALESCE(ls.job_count, 0) - COALESCE(ps.job_count, 0) AS job_change,
-                    COALESCE(ls.job_count, 0) AS current_jobs,
-                    COALESCE(ps.job_count, 0) AS previous_jobs
-                FROM companies c
-                LEFT JOIN latest_snap ls ON c.id = ls.company_id
-                LEFT JOIN previous_snap ps ON c.id = ps.company_id
-                ORDER BY job_change DESC
-                LIMIT 50
-            """)
-            
-            # This logic is simplified for top movers based on recent changes
-            all_movers = [dict(row) for row in cursor.fetchall() if abs(row['job_change']) > 0]
-            
-            # Filter and sort
-            report.top_growing_companies = sorted([
-                m for m in all_movers if m['job_change'] > 0
-            ], key=lambda x: x['job_change'], reverse=True)[:10]
-            
-            report.top_shrinking_companies = sorted([
-                m for m in all_movers if m['job_change'] < 0
-            ], key=lambda x: x['job_change'], reverse=False)[:10]
-            
-            
     # ==================== EMAIL REPORTER ====================
     
     def send_email_report(self, report: MarketIntelReport, recipient_email: str) -> bool:
         """Sends the market intelligence report via email."""
-        
-        # Email configuration from environment variables
         sender_email = os.getenv('SMTP_USER')
         sender_password = os.getenv('SMTP_PASSWORD')
         smtp_server = os.getenv('SMTP_HOST', 'smtp.gmail.com')
         smtp_port = int(os.getenv('SMTP_PORT', 587))
         
         if not all([sender_email, sender_password]):
-            logger.error("SMTP_USER or SMTP_PASSWORD not configured. Cannot send email.")
+            logger.error("SMTP_USER or SMTP_PASSWORD not configured")
             return False
 
         message = MIMEMultipart("alternative")
-        message["Subject"] = f"Job Intel Weekly Report: {report.period_start.strftime('%b %d')} - {report.period_end.strftime('%b %d')}"
+        message["Subject"] = f"Job Intel Report: {report.period_start.strftime('%b %d')} - {report.period_end.strftime('%b %d')}"
         message["From"] = sender_email
         message["To"] = recipient_email
         
-        # Create HTML content (simplified for this example)
         html = self._format_report_to_html(report)
         part = MIMEText(html, "html")
         message.attach(part)
@@ -480,104 +450,130 @@ class MarketIntelligence:
             return False
 
     def _format_report_to_html(self, report: MarketIntelReport) -> str:
-        """Generates a simple HTML body for the report."""
-        # This is a very basic HTML template. In a real app, you'd use a template engine.
-        html = f"""
+        """Generates HTML body for the report."""
+        surges_html = "".join(
+            f"<li>{c.company_name} ({c.ats_type}): +{c.current_count - c.previous_count:,} jobs ({c.change_percent*100:.1f}%)</li>" 
+            for c in report.job_surges[:10]
+        ) or "<li>No surges detected</li>"
+        
+        declines_html = "".join(
+            f"<li>{c.company_name} ({c.ats_type}): -{c.previous_count - c.current_count:,} jobs ({c.change_percent*100:.1f}%)</li>" 
+            for c in report.job_declines[:10]
+        ) or "<li>No declines detected</li>"
+        
+        expansions_html = "".join(
+            f"<li>{e.company_name} expanded to <strong>{e.new_location}</strong></li>" 
+            for e in report.location_expansions[:10]
+        ) or "<li>No expansions detected</li>"
+        
+        return f"""
         <html>
         <head>
             <style>
-                body {{ font-family: sans-serif; background-color: #f4f4f9; color: #333; }}
-                .container {{ max-width: 600px; margin: 20px auto; background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }}
-                h2 {{ color: #007bff; border-bottom: 2px solid #eee; padding-bottom: 10px; }}
-                .stat-box {{ background-color: #e9ecef; padding: 10px; border-radius: 4px; margin-bottom: 10px; }}
+                body {{ font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0a0f1a; color: #f9fafb; padding: 20px; }}
+                .container {{ max-width: 600px; margin: 0 auto; background: #111827; padding: 30px; border-radius: 12px; }}
+                h1 {{ color: #3b82f6; margin-bottom: 5px; }}
+                h2 {{ color: #06b6d4; border-bottom: 1px solid #374151; padding-bottom: 10px; margin-top: 30px; }}
+                .stat-grid {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin: 20px 0; }}
+                .stat {{ background: #1f2937; padding: 15px; border-radius: 8px; text-align: center; }}
+                .stat-value {{ font-size: 1.8em; font-weight: bold; color: #10b981; }}
+                .stat-label {{ color: #9ca3af; font-size: 0.85em; }}
                 ul {{ list-style-type: none; padding: 0; }}
-                li {{ margin-bottom: 5px; border-bottom: 1px dotted #ccc; padding-bottom: 5px; }}
+                li {{ padding: 8px 0; border-bottom: 1px solid #374151; }}
             </style>
         </head>
         <body>
             <div class="container">
-                <h1>Job Intel Weekly Report</h1>
-                <p>Period: {report.period_start.strftime('%b %d, %Y')} - {report.period_end.strftime('%b %d, %Y')}</p>
+                <h1>Job Intelligence Report</h1>
+                <p style="color:#9ca3af;">Period: {report.period_start.strftime('%b %d, %Y')} - {report.period_end.strftime('%b %d, %Y')}</p>
                 
-                <h2>Summary Metrics</h2>
-                <div class="stat-box">
-                    <p><strong>Total Jobs:</strong> {report.total_jobs:,}</p>
-                    <p><strong>Total Companies Tracked:</strong> {report.total_companies:,}</p>
-                    <p><strong>New Companies Added:</strong> {report.new_companies:,}</p>
-                    <p><strong>Remote Jobs:</strong> {report.remote_jobs:,} | <strong>Hybrid:</strong> {report.hybrid_jobs:,} | <strong>Onsite:</strong> {report.onsite_jobs:,}</p>
+                <div class="stat-grid">
+                    <div class="stat">
+                        <div class="stat-value">{report.total_jobs:,}</div>
+                        <div class="stat-label">Total Jobs</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value">{report.total_companies:,}</div>
+                        <div class="stat-label">Companies</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value">{report.new_companies:,}</div>
+                        <div class="stat-label">New This Week</div>
+                    </div>
                 </div>
 
-                <h2>Key Intelligence</h2>
-                
-                <h3>🚀 Job Surges ({len(report.job_surges)})</h3>
-                <ul>
-                {"".join(f"<li>{c.company_name} ({c.ats_type.title()}): +{c.current_count - c.previous_count:,} jobs ({c.change_percent*100:.1f}%)</li>" for c in report.job_surges)}
-                </ul>
+                <h2>🚀 Job Surges ({len(report.job_surges)})</h2>
+                <ul>{surges_html}</ul>
 
-                <h3>📉 Job Declines ({len(report.job_declines)})</h3>
-                <ul>
-                {"".join(f"<li>{c.company_name} ({c.ats_type.title()}): -{c.previous_count - c.current_count:,} jobs ({c.change_percent*100:.1f}%)</li>" for c in report.job_declines)}
-                </ul>
+                <h2>📉 Job Declines ({len(report.job_declines)})</h2>
+                <ul>{declines_html}</ul>
                 
-                <h3>🗺️ Location Expansions ({len(report.location_expansions)})</h3>
-                <ul>
-                {"".join(f"<li>{e.company_name} expanded to <strong>{e.new_location}</strong> ({e.job_count_at_detection:,} jobs at detection)</li>" for e in report.location_expansions)}
-                </ul>
-                
-                <h3>⭐ Top Growing Companies (Jobs M/M)</h3>
-                <ul>
-                {"".join(f"<li>{c['company_name']} ({c['ats_type'].title()}): +{c['job_change']:,} jobs</li>" for c in report.top_growing_companies)}
-                </ul>
-                
+                <h2>🗺️ Location Expansions ({len(report.location_expansions)})</h2>
+                <ul>{expansions_html}</ul>
             </div>
         </body>
         </html>
         """
-        return html
 
 
-# ==================== MAIN ENTRY POINT (DAILY MAINTENANCE) ====================
+# ==================== MAIN ENTRY POINT ====================
 
 def run_daily_maintenance(db: Database = None) -> Dict[str, int]:
     """
-    Run all daily/weekly maintenance tasks:
-    1. Archive job history (for diffing)
-    2. Detect Location Expansions
-    3. Detect Job Count Changes
-    4. Purge old data
+    Run maintenance tasks (called every 6 hours despite the name):
+    1. Detect location expansions
+    2. Detect job count changes (surges/declines)
+    3. Create 6h snapshots
+    4. Create market snapshot
+    5. Archive daily snapshot
+    6. Create weekly aggregate
+    7. Create monthly snapshot (on 1st of month)
+    8. Purge old data
     """
-    logger.info("Starting daily market intelligence maintenance...")
+    logger.info("Starting maintenance cycle...")
+    db = db or get_db()
     intel = MarketIntelligence(db)
     
-    # 1. Archive current state for future comparison
-    intel.archive_job_history()
-    
-    # 2. Detect and record expansions/changes
+    # 1. Detect expansions and changes
     expansions = intel.detect_location_expansions()
     changes = intel.detect_job_count_changes()
     
     surges = [c for c in changes if c.change_type == 'surge']
     declines = [c for c in changes if c.change_type == 'decline']
     
-    # 3. Create monthly snapshot (run only once per day, typically at a low-traffic time)
-    # Check if the current hour is early morning (e.g., before 6 AM UTC)
-    if datetime.utcnow().hour < 6:
-        intel.db.create_monthly_snapshot()
+    # 2. Create 6h snapshots
+    db.create_6h_snapshots()
     
-    # 4. Purge old data
+    # 3. Create market snapshot
+    db.create_market_snapshot()
+    
+    # 4. Archive daily snapshot
+    intel.archive_daily_snapshot()
+    
+    # 5. Create weekly aggregate
+    db.create_weekly_aggregate()
+    
+    # 6. Create monthly snapshot on 1st of month (early morning)
+    now = datetime.utcnow()
+    if now.day == 1 and now.hour < 6:
+        db.create_monthly_snapshot()
+    
+    # 7. Purge old data
     intel.purge_old_job_details(days_to_keep=30)
     intel.purge_stale_companies(days_stale=90)
+    intel.purge_old_archives(days_to_keep=90)
     
     logger.info(f"✅ Maintenance complete: {len(expansions)} expansions, {len(surges)} surges, {len(declines)} declines")
     
     return {
         'expansions': len(expansions),
         'surges': len(surges),
-        'declines': len(declines)
+        'declines': len(declines),
+        'timestamp': datetime.utcnow().isoformat()
     }
 
 
-def send_weekly_report(db: Database = None, recipient: str = None):
+def send_weekly_report(db: Database = None, recipient: str = None) -> bool:
     """Generate and send weekly intelligence report."""
     recipient = recipient or os.getenv('EMAIL_RECIPIENT')
     if not recipient:
@@ -590,16 +586,12 @@ def send_weekly_report(db: Database = None, recipient: str = None):
 
 
 if __name__ == "__main__":
-    # Test the intelligence module
     intel = MarketIntelligence()
     
     print("Running market intelligence analysis...")
-    
-    # Run maintenance
     results = run_daily_maintenance()
     print(f"Maintenance results: {results}")
     
-    # Generate report
     report = intel.generate_report(days=7)
     print(f"\n📊 Report Summary:")
     print(f"  Companies: {report.total_companies}")
