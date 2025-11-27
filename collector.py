@@ -33,6 +33,40 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+from database import get_db, Database # UPGRADE: Ensure Database is imported
+
+
+# UPGRADE: NEW HELPER FUNCTIONS FOR ADVANCED TOKEN GUESSING
+def _name_to_token(name: str) -> str:
+    """Converts a company name to a URL-friendly, lowercase ATS token/slug."""
+    # This function should match the one in seed_expander.py
+    token = name.lower()
+    token = re.sub(r'\s+(inc|llc|ltd|co|corp|gmbh|sa)\.?$', '', token, flags=re.IGNORECASE)
+    token = re.sub(r'[^a-z0-9\s-]', '', token)
+    token = re.sub(r'[\s-]+', '-', token).strip('-')
+    return token
+
+def _generate_token_variants(slug: str) -> List[str]:
+    """Generates a list of likely ATS token variants for a given base slug (slugging fix)."""
+    variants = {slug} # Start with the cleanest slug
+    
+    # 1. Common career page prefixes/suffixes
+    variants.add(f'{slug}-jobs')
+    variants.add(f'{slug}jobs')
+    variants.add(f'{slug}-careers')
+    variants.add(f'{slug}careers')
+    
+    # 2. Variants without common business suffixes (if the slugging logic missed it)
+    variants.add(f'{slug}inc')
+    variants.add(f'{slug}co')
+    
+    # 3. No hyphen variant (e.g., 'the-home-depot' -> 'homedepot')
+    no_hyphen = slug.replace('-', '')
+    variants.add(no_hyphen)
+    
+    # Order by likelihood (cleanest first)
+    return sorted(list(variants), key=lambda x: (len(x), x))
+
 
 @dataclass
 class JobBoard:
@@ -51,619 +85,260 @@ class JobBoard:
     discovered_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
 
 
-@dataclass 
+@dataclass
 class CollectorStats:
-    """Real-time collection statistics."""
-    started_at: datetime = field(default_factory=datetime.utcnow)
-    companies_tested: int = 0
+    """Stats for a single collection run."""
+    total_companies: int = 0
+    total_jobs: int = 0
     greenhouse_found: int = 0
     lever_found: int = 0
-    total_jobs: int = 0
-    errors: int = 0
-    rate_limits: int = 0
-    
+    total_tested: int = 0
+    start_time: datetime = field(default_factory=datetime.utcnow)
+    end_time: Optional[datetime] = None
+
     def to_dict(self) -> Dict:
-        return {
-            'started_at': self.started_at.isoformat(),
-            'duration_minutes': (datetime.utcnow() - self.started_at).total_seconds() / 60,
-            'companies_tested': self.companies_tested,
-            'greenhouse_found': self.greenhouse_found,
-            'lever_found': self.lever_found,
-            'total_jobs': self.total_jobs,
-            'errors': self.errors,
-            'rate_limits': self.rate_limits,
-            'discovery_rate': f"{(self.greenhouse_found + self.lever_found) / max(self.companies_tested, 1) * 100:.1f}%"
-        }
-
-
-# Import Database from database module
-from database import Database, get_db
-
-
-class ATSClient:
-    """Async client for ATS API calls."""
-    
-    def __init__(self, 
-                 max_concurrent: int = 10,
-                 rate_limit_per_second: float = 5.0):
-        self.max_concurrent = max_concurrent
-        self.rate_limit_delay = 1.0 / rate_limit_per_second
-        self.semaphore = asyncio.Semaphore(max_concurrent)
-        self.last_request_time = 0
-        self._session: Optional[aiohttp.ClientSession] = None
-        
-    async def get_session(self) -> aiohttp.ClientSession:
-        if self._session is None or self._session.closed:
-            timeout = aiohttp.ClientTimeout(total=15, connect=5)
-            self._session = aiohttp.ClientSession(
-                timeout=timeout,
-                headers={
-                    'User-Agent': 'JobIntelBot/2.0 (Research; https://github.com/job-intel)',
-                    'Accept': 'application/json'
-                }
-            )
-        return self._session
-    
-    async def close(self):
-        if self._session and not self._session.closed:
-            await self._session.close()
-    
-    async def _rate_limit(self):
-        """Enforce rate limiting."""
-        now = time.time()
-        elapsed = now - self.last_request_time
-        if elapsed < self.rate_limit_delay:
-            await asyncio.sleep(self.rate_limit_delay - elapsed + random.uniform(0, 0.1))
-        self.last_request_time = time.time()
-    
-    async def check_greenhouse(self, token: str) -> Optional[JobBoard]:
-        """Check Greenhouse API for a company."""
-        async with self.semaphore:
-            await self._rate_limit()
-            
-            # Use the Greenhouse JSON API - much more reliable than HTML
-            url = f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs"
-            
-            try:
-                session = await self.get_session()
-                async with session.get(url) as response:
-                    if response.status == 404:
-                        return None
-                    if response.status == 429:
-                        logger.warning(f"Rate limited on Greenhouse for {token}")
-                        await asyncio.sleep(30)
-                        return None
-                    if response.status != 200:
-                        return None
-                    
-                    data = await response.json()
-                    jobs = data.get('jobs', [])
-                    
-                    if not jobs:
-                        return None
-                    
-                    # Parse job data
-                    board = JobBoard(
-                        ats_type='greenhouse',
-                        token=token,
-                        company_name=self._extract_company_name_from_jobs(jobs, token),
-                        source='api_discovery'
-                    )
-                    
-                    locations = set()
-                    departments = set()
-                    
-                    for job in jobs:
-                        work_type = self._classify_work_type(
-                            job.get('location', {}).get('name', ''),
-                            job.get('title', '')
-                        )
-                        
-                        if work_type == 'remote':
-                            board.remote_count += 1
-                        elif work_type == 'hybrid':
-                            board.hybrid_count += 1
-                        else:
-                            board.onsite_count += 1
-                        
-                        location = job.get('location', {}).get('name', '')
-                        if location:
-                            locations.add(location)
-                        
-                        for dept in job.get('departments', []):
-                            if dept.get('name'):
-                                departments.add(dept['name'])
-                        
-                        board.jobs.append({
-                            'title': job.get('title', ''),
-                            'location': location,
-                            'department': ', '.join(d.get('name', '') for d in job.get('departments', [])),
-                            'work_type': work_type,
-                            'url': job.get('absolute_url', '')
-                        })
-                    
-                    board.job_count = len(jobs)
-                    board.locations = sorted(list(locations))
-                    board.departments = sorted(list(departments))
-                    
-                    return board
-                    
-            except asyncio.TimeoutError:
-                logger.debug(f"Timeout checking Greenhouse {token}")
-                return None
-            except Exception as e:
-                logger.debug(f"Error checking Greenhouse {token}: {e}")
-                return None
-    
-    async def check_lever(self, token: str) -> Optional[JobBoard]:
-        """Check Lever API for a company."""
-        async with self.semaphore:
-            await self._rate_limit()
-            
-            # Lever JSON API
-            url = f"https://api.lever.co/v0/postings/{token}?mode=json"
-            
-            try:
-                session = await self.get_session()
-                async with session.get(url) as response:
-                    if response.status == 404:
-                        return None
-                    if response.status == 429:
-                        logger.warning(f"Rate limited on Lever for {token}")
-                        await asyncio.sleep(30)
-                        return None
-                    if response.status != 200:
-                        return None
-                    
-                    jobs = await response.json()
-                    
-                    if not jobs or not isinstance(jobs, list):
-                        return None
-                    
-                    board = JobBoard(
-                        ats_type='lever',
-                        token=token,
-                        company_name=self._extract_lever_company_name(jobs, token),
-                        source='api_discovery'
-                    )
-                    
-                    locations = set()
-                    departments = set()
-                    
-                    for job in jobs:
-                        location = job.get('categories', {}).get('location', '')
-                        work_type = self._classify_work_type(
-                            location,
-                            job.get('text', '')
-                        )
-                        
-                        if work_type == 'remote':
-                            board.remote_count += 1
-                        elif work_type == 'hybrid':
-                            board.hybrid_count += 1
-                        else:
-                            board.onsite_count += 1
-                        
-                        if location:
-                            locations.add(location)
-                        
-                        dept = job.get('categories', {}).get('team', '')
-                        if dept:
-                            departments.add(dept)
-                        
-                        board.jobs.append({
-                            'title': job.get('text', ''),
-                            'location': location,
-                            'department': dept,
-                            'work_type': work_type,
-                            'url': job.get('hostedUrl', '')
-                        })
-                    
-                    board.job_count = len(jobs)
-                    board.locations = sorted(list(locations))
-                    board.departments = sorted(list(departments))
-                    
-                    return board
-                    
-            except asyncio.TimeoutError:
-                logger.debug(f"Timeout checking Lever {token}")
-                return None
-            except Exception as e:
-                logger.debug(f"Error checking Lever {token}: {e}")
-                return None
-    
-    def _extract_company_name_from_jobs(self, jobs: List[Dict], token: str) -> str:
-        """Extract company name from Greenhouse job data."""
-        if jobs and jobs[0].get('company', {}).get('name'):
-            return jobs[0]['company']['name']
-        # Fallback to formatted token
-        return token.replace('-', ' ').replace('_', ' ').title()
-    
-    def _extract_lever_company_name(self, jobs: List[Dict], token: str) -> str:
-        """Extract company name from Lever job data."""
-        if jobs and jobs[0].get('categories', {}).get('company'):
-            return jobs[0]['categories']['company']
-        return token.replace('-', ' ').replace('_', ' ').title()
-    
-    def _classify_work_type(self, location: str, title: str) -> str:
-        """Classify job as remote, hybrid, or onsite."""
-        text = f"{location} {title}".lower()
-        
-        remote_keywords = ['remote', 'anywhere', 'distributed', 'work from home', 
-                          'wfh', 'telecommute', 'virtual', 'home-based']
-        hybrid_keywords = ['hybrid', 'flexible', 'partial remote', 'remote-friendly',
-                          'remote optional', '2-3 days']
-        
-        for kw in remote_keywords:
-            if kw in text:
-                return 'remote'
-        
-        for kw in hybrid_keywords:
-            if kw in text:
-                return 'hybrid'
-        
-        return 'onsite'
-
-
-class CompanyDiscovery:
-    """Generates company names/tokens to test against ATS systems."""
-    
-    def __init__(self, db: Database = None):
-        self.tested = set()
-        self.db = db
-    
-    def generate_tokens(self, company_name: str) -> List[str]:
-        """Generate possible ATS tokens from a company name."""
-        tokens = []
-        name = company_name.lower().strip()
-        
-        # Remove common suffixes
-        suffixes = [' inc', ' inc.', ' llc', ' corp', ' corporation', ' ltd', 
-                   ' limited', ' co', ' company', ' technologies', ' tech',
-                   ' systems', ' solutions', ' services', ' group', ' io',
-                   ' ai', ' labs', ' studio', ' studios']
-        for suffix in suffixes:
-            if name.endswith(suffix):
-                name = name[:-len(suffix)].strip()
-        
-        # Primary slug
-        slug = re.sub(r'[^a-z0-9]+', '', name)
-        if slug and len(slug) >= 2:
-            tokens.append(slug)
-        
-        # Hyphenated version
-        slug_hyphen = re.sub(r'[^a-z0-9]+', '-', name).strip('-')
-        slug_hyphen = re.sub(r'-+', '-', slug_hyphen)
-        if slug_hyphen and slug_hyphen != slug and len(slug_hyphen) >= 2:
-            tokens.append(slug_hyphen)
-        
-        # Underscore version (less common but used)
-        slug_under = re.sub(r'[^a-z0-9]+', '_', name).strip('_')
-        if slug_under and slug_under not in tokens and len(slug_under) >= 2:
-            tokens.append(slug_under)
-        
-        return [t for t in tokens if t not in self.tested]
-    
-    def get_seed_companies(self) -> List[str]:
-        """Get comprehensive list of known tech companies from multiple sources."""
-        
-        # Try to load from database first (if seed_expander was run)
-        if self.db:
-            try:
-                db_companies = self.db.get_seed_companies(limit=2000)
-                if db_companies:
-                    logger.info(f"Loaded {len(db_companies)} companies from seed database")
-                    return db_companies
-            except Exception as e:
-                logger.debug(f"Could not load seeds from database: {e}")
-        
-        # Fallback to hardcoded comprehensive list
-        companies = self._get_hardcoded_seeds()
-        return list(set(companies))
-    
-    def _get_hardcoded_seeds(self) -> List[str]:
-        """Hardcoded seed list - comprehensive and curated."""
-        return [
-            # === TOP TECH (High confidence - known to use Greenhouse/Lever) ===
-            "Stripe", "Notion", "Figma", "Discord", "Dropbox", "Zoom", "DoorDash",
-            "Instacart", "Robinhood", "Coinbase", "Plaid", "OpenAI", "Anthropic",
-            "Airbnb", "Reddit", "GitLab", "HashiCorp", "MongoDB", "Elastic",
-            "Snowflake", "Databricks", "Atlassian", "Asana", "Slack", "Okta",
-            "Twilio", "Brex", "Mercury", "Ramp", "Checkr", "Chime", "Affirm",
-            "Canva", "Flexport", "Benchling", "Retool", "Vercel", "Linear",
-            "Shopify", "Netflix", "Spotify", "Unity", "Cloudflare", "Docker",
-            
-            # === AI/ML COMPANIES ===
-            "OpenAI", "Anthropic", "Cohere", "Mistral AI", "Inflection AI",
-            "Stability AI", "Midjourney", "Runway", "Hugging Face", "Scale AI",
-            "Labelbox", "Weights and Biases", "Anyscale", "Modal", "Replicate",
-            "Jasper", "Copy AI", "Writer", "Grammarly", "Textio",
-            "Glean", "Hebbia", "Vectara", "Pinecone", "Weaviate", "Chroma",
-            "Character AI", "Perplexity", "You.com", "Poe",
-            "ElevenLabs", "Descript", "Synthesia", "HeyGen", "D-ID",
-            
-            # === FINTECH ===
-            "Stripe", "Square", "Block", "PayPal", "Klarna", "Marqeta", "Adyen",
-            "Wise", "Revolut", "Monzo", "N26", "Chime", "Current", "Dave",
-            "SoFi", "Robinhood", "Webull", "Public", "Alpaca",
-            "Coinbase", "Kraken", "Gemini", "Circle", "Paxos",
-            "Affirm", "Afterpay", "Sezzle", "Zip",
-            "Plaid", "Unit", "Treasury Prime", "Lithic", "Moov",
-            "Brex", "Ramp", "Mercury", "Jeeves", "Airbase",
-            
-            # === DEVELOPER TOOLS ===
-            "GitHub", "GitLab", "Bitbucket", "Sourcegraph",
-            "Vercel", "Netlify", "Render", "Railway", "Fly.io",
-            "Supabase", "PlanetScale", "Neon", "CockroachDB", "Turso",
-            "CircleCI", "Buildkite", "Harness", "Codefresh", "Tekton",
-            "LaunchDarkly", "Split", "Statsig", "Eppo", "GrowthBook",
-            "Sentry", "Datadog", "New Relic", "Honeycomb", "Lightstep",
-            "PagerDuty", "OpsGenie", "Incident.io", "FireHydrant", "Rootly",
-            "Postman", "Insomnia", "Hoppscotch", "RapidAPI",
-            "Retool", "Internal", "Airplane", "Superblocks", "Appsmith",
-            "Temporal", "Prefect", "Dagster", "Airflow",
-            "Pulumi", "Terraform", "Crossplane",
-            
-            # === DATA & ANALYTICS ===
-            "Snowflake", "Databricks", "Fivetran", "Airbyte", "Stitch",
-            "dbt Labs", "Transform", "Preset", "Lightdash",
-            "Census", "Hightouch", "Polytomic", "RudderStack",
-            "Segment", "mParticle", "Amplitude", "Mixpanel", "Heap",
-            "Monte Carlo", "Bigeye", "Soda", "Great Expectations",
-            "Atlan", "Alation", "Collibra", "Select Star",
-            "Looker", "Metabase", "Mode", "Sigma", "ThoughtSpot",
-            
-            # === SECURITY ===
-            "CrowdStrike", "SentinelOne", "Palo Alto Networks", "Fortinet",
-            "Zscaler", "Cloudflare", "Akamai", "Fastly",
-            "Snyk", "Semgrep", "Socket", "Dependabot",
-            "Orca Security", "Wiz", "Lacework", "Aqua Security",
-            "1Password", "Dashlane", "Bitwarden", "LastPass",
-            "Vanta", "Drata", "Secureframe", "Laika", "Thoropass",
-            "Tailscale", "Teleport", "StrongDM", "Boundary",
-            "Doppler", "Infisical", "HashiCorp Vault",
-            
-            # === HR & PEOPLE ===
-            "Rippling", "Gusto", "Justworks", "TriNet", "Namely",
-            "Deel", "Remote", "Oyster", "Papaya Global", "Velocity Global",
-            "Lattice", "Culture Amp", "15Five", "Leapsome", "Betterworks",
-            "Greenhouse", "Lever", "Ashby", "Gem", "Dover",
-            "Checkr", "Certn", "GoodHire", "Sterling",
-            
-            # === PRODUCTIVITY ===
-            "Notion", "Coda", "Airtable", "Monday.com", "ClickUp", "Asana",
-            "Miro", "Figma", "Canva", "Pitch", "Gamma",
-            "Loom", "Grain", "Fathom", "Fireflies", "Otter",
-            "Linear", "Height", "Shortcut", "Jira",
-            "Calendly", "Cal.com", "SavvyCal", "Reclaim",
-            "Slack", "Discord", "Zoom", "Around", "Gather",
-            
-            # === E-COMMERCE ===
-            "Shopify", "BigCommerce", "Webflow", "Squarespace", "Wix",
-            "Faire", "Bulletin", "Abound", "Handshake",
-            "Klaviyo", "Attentive", "Postscript", "Sendlane",
-            "Gorgias", "Gladly", "Kustomer", "Richpanel",
-            "Yotpo", "Stamped", "Okendo", "Junip",
-            "Recharge", "Bold", "Loop", "Rebuy",
-            "ShipBob", "Shippo", "EasyPost", "Flexport",
-            
-            # === HEALTHCARE ===
-            "Oscar Health", "Clover Health", "Devoted Health",
-            "Carbon Health", "One Medical", "Forward", "Parsley Health",
-            "Ro", "Hims", "Nurx", "SimpleHealth", "Curology",
-            "Cerebral", "Lyra Health", "Spring Health", "Headspace", "Calm",
-            "Tempus", "Flatiron Health", "Color Health", "Veracyte",
-            
-            # === REAL ESTATE ===
-            "Zillow", "Redfin", "Opendoor", "Offerpad", "Compass",
-            "Knock", "Orchard", "Ribbon", "Better", "Blend",
-            "Divvy", "Landis", "Arrived", "Fundrise",
-            "Zumper", "Apartment List", "RentSpree",
-            
-            # === EDTECH ===
-            "Coursera", "Udemy", "Skillshare", "MasterClass", "LinkedIn Learning",
-            "Duolingo", "Babbel", "Busuu",
-            "Chegg", "Course Hero", "Quizlet", "Brainly",
-            "Guild Education", "InStride", "Degreed",
-            "Lambda School", "Springboard", "Thinkful",
-            
-            # === INFRASTRUCTURE ===
-            "AWS", "Google Cloud", "Azure", "DigitalOcean", "Linode",
-            "Cloudflare", "Fastly", "Akamai", "Imperva",
-            "Kong", "Nginx", "Envoy", "Istio",
-            "Redis", "Memcached", "Elasticsearch", "Algolia",
-            "Confluent", "Redpanda", "WarpStream",
-            
-            # === CRYPTO/WEB3 ===
-            "Coinbase", "Kraken", "Gemini", "Binance US",
-            "Alchemy", "QuickNode", "Infura", "Moralis",
-            "Chainlink", "The Graph", "Filecoin", "Protocol Labs",
-            "Polygon", "Arbitrum", "Optimism", "zkSync",
-            "OpenSea", "Blur", "Magic Eden", "Tensor",
-            
-            # === LOGISTICS ===
-            "Flexport", "Shippo", "EasyPost", "ShipBob",
-            "project44", "FourKites", "Samsara", "KeepTruckin",
-            "Convoy", "Uber Freight", "Loadsmart",
-            "Deliverr", "Fabric", "Vecna",
-            
-            # === GAMING ===
-            "Unity", "Epic Games", "Roblox", "Niantic",
-            "Discord", "Guilded",
-            "Riot Games", "Blizzard", "Bungie",
-            
-            # === LEGAL TECH ===
-            "Clio", "LegalZoom", "Rocket Lawyer",
-            "Ironclad", "DocuSign", "PandaDoc", "Dropbox Sign",
-            "Harvey", "Casetext", "Everlaw",
-            
-            # === TRAVEL ===
-            "Airbnb", "Booking.com", "Expedia", "TripAdvisor",
-            "Hopper", "Kayak", "Skyscanner",
-            "Uber", "Lyft", "DoorDash", "Instacart",
-            
-            # === ADDITIONAL HIGH-VALUE TARGETS ===
-            "Zapier", "IFTTT", "Make", "Tray.io",
-            "Intercom", "Zendesk", "Freshworks", "HelpScout",
-            "HubSpot", "Salesforce", "Marketo", "Pardot",
-            "Sprout Social", "Hootsuite", "Buffer", "Later",
-            "Webex", "RingCentral", "Dialpad", "Aircall",
-            "Workday", "ServiceNow", "Coupa", "SAP Concur",
-            "Docebo", "Lessonly", "WorkRamp",
-            "Pendo", "WalkMe", "Whatfix", "Userpilot",
-            "FullStory", "LogRocket", "Hotjar", "Crazy Egg",
-            "Optimizely", "VWO", "AB Tasty", "Dynamic Yield",
-            "Contentful", "Sanity", "Strapi", "Hygraph",
-            "Auth0", "Stytch", "Clerk", "WorkOS", "Descope",
-            "Twilio", "Vonage", "MessageBird", "Sinch",
-            "Plivo", "Bandwidth", "Telnyx",
-        ]
-    
-    def get_common_patterns(self) -> List[str]:
-        """Generate common company name patterns to test."""
-        patterns = []
-        
-        # Two-letter combinations (less common but worth testing)
-        # Skip these as they're low yield
-        
-        # Common tech company patterns
-        prefixes = ['get', 'try', 'use', 'go', 'my', 'the', 'one', 'all', 
-                   'pro', 'super', 'hyper', 'ultra', 'meta', 'neo', 'next']
-        roots = ['pay', 'pay', 'flow', 'sync', 'link', 'hub', 'lab', 'base',
-                'stack', 'cloud', 'data', 'code', 'dev', 'app', 'api', 'bot']
-        
-        for prefix in prefixes:
-            for root in roots:
-                patterns.append(f"{prefix}{root}")
-        
-        return patterns
+        """Returns a dict representation of stats."""
+        d = asdict(self)
+        d['duration_seconds'] = (self.end_time - self.start_time).total_seconds() if self.end_time else 0
+        return d
 
 
 class JobIntelCollector:
-    """Main collector orchestrating the job intelligence gathering."""
-    
-    def __init__(self, db: Database = None, max_concurrent: int = 10):
+    """Core class for running the job board intelligence collection."""
+
+    def __init__(self, db: Optional[Database] = None):
         self.db = db or get_db()
-        self.client = ATSClient(max_concurrent=max_concurrent)
-        self.discovery = CompanyDiscovery(self.db)
         self.stats = CollectorStats()
+        self.client = aiohttp.ClientSession(
+            headers={'User-Agent': 'JobIntelCollector/2.0'},
+            trust_env=True,
+            connector=aiohttp.TCPConnector(ssl=False)
+        )
         self._running = False
-    
-    async def test_company(self, company_name: str) -> Tuple[Optional[JobBoard], Optional[JobBoard]]:
-        """Test a company name against both Greenhouse and Lever."""
-        tokens = self.discovery.generate_tokens(company_name)
+        self._semaphore = asyncio.Semaphore(10) # Limit concurrent API requests
+
+    async def _get_company_ids(self) -> Set[str]:
+        """Gets existing company IDs to avoid re-collection (simulated)."""
+        # In a real implementation, this would query the DB for all existing company IDs
+        return set()
+
+    async def _exponential_backoff(self, attempt: int):
+        """Implements rate-limiting backoff."""
+        delay = min(2 ** attempt + random.random(), 60)
+        logger.warning(f"Rate limiting hit. Waiting for {delay:.2f}s (Attempt {attempt})...")
+        await asyncio.sleep(delay)
+
+    async def _fetch(self, url: str) -> Optional[Dict]:
+        """Fetch a single URL with retries and backoff."""
+        attempt = 0
+        while attempt < 3:
+            try:
+                async with self._semaphore:
+                    async with self.client.get(url, timeout=15) as response:
+                        if response.status == 200:
+                            return await response.json()
+                        elif response.status in (429, 503): # Rate limit/Service Unavailable
+                            attempt += 1
+                            await self._exponential_backoff(attempt)
+                            continue
+                        elif response.status == 404:
+                            return None # Expected miss
+                        else:
+                            logger.warning(f"Failed to fetch {url}. Status: {response.status}")
+                            return None
+            except asyncio.TimeoutError:
+                logger.error(f"Timeout fetching {url}")
+                return None
+            except aiohttp.ClientError as e:
+                logger.error(f"Client error fetching {url}: {e}")
+                return None
+        return None
+
+    async def _process_greenhouse_job(self, job: Dict) -> Tuple[str, str]:
+        """Extracts location and department from a Greenhouse job posting."""
+        location = job.get('location', {}).get('name', 'Unknown')
+        department = job.get('departments', [{}])[0].get('name', 'Unknown')
+        return location, department
         
-        greenhouse_result = None
-        lever_result = None
+    async def _process_lever_job(self, job: Dict) -> Tuple[str, str]:
+        """Extracts location and department from a Lever job posting."""
+        location = job.get('categories', {}).get('location', 'Unknown')
+        department = job.get('categories', {}).get('team', 'Unknown')
+        return location, department
+
+    async def _process_jobs(self, job_list: List[Dict], processor) -> Tuple[List[str], List[str]]:
+        """Processes a list of jobs using the provided ATS-specific processor."""
+        locations: Set[str] = set()
+        departments: Set[str] = set()
         
+        for job in job_list:
+            location, department = await processor(job)
+            locations.add(location)
+            departments.add(department)
+            
+        return list(locations), list(departments)
+
+    async def check_greenhouse(self, company_name: str, tokens: List[str]) -> Optional[JobBoard]:
+        """
+        Checks all provided tokens for a live Greenhouse job board.
+        Returns the JobBoard object on first success.
+        """
         for token in tokens:
-            if token in self.discovery.tested:
-                continue
-            self.discovery.tested.add(token)
+            url = f"https://boards-api.greenhouse.io/v1/boards/{quote(token)}/jobs?content=true"
+            data = await self._fetch(url)
             
-            # Check negative cache
-            if not self.db.is_recently_failed(token, 'greenhouse'):
-                try:
-                    result = await self.client.check_greenhouse(token)
-                    if result:
-                        result.source = f"discovery:{company_name}"
-                        greenhouse_result = result
-                        logger.info(f"✅ Greenhouse: {company_name} -> {result.company_name} ({result.job_count} jobs)")
-                    else:
-                        self.db.record_failed_lookup(token, 'greenhouse')
-                except Exception as e:
-                    logger.debug(f"Error testing Greenhouse {token}: {e}")
+            if data and data.get('jobs'):
+                # Found the board!
+                self.stats.greenhouse_found += 1
+                
+                # Process jobs
+                job_list = data.get('jobs', [])
+                locations, departments = await self._process_jobs(job_list, self._process_greenhouse_job)
+                
+                logger.info(f"🟢 GH HIT: {company_name} (Token: {token}) with {len(job_list)} jobs.")
+                
+                return JobBoard(
+                    ats_type='greenhouse',
+                    token=token,
+                    company_name=company_name,
+                    job_count=len(job_list),
+                    locations=locations,
+                    departments=departments,
+                    jobs=job_list,
+                    source='discovery' # Mark as discovery from seed
+                )
             
-            if not self.db.is_recently_failed(token, 'lever'):
-                try:
-                    result = await self.client.check_lever(token)
-                    if result:
-                        result.source = f"discovery:{company_name}"
-                        lever_result = result
-                        logger.info(f"✅ Lever: {company_name} -> {result.company_name} ({result.job_count} jobs)")
-                    else:
-                        self.db.record_failed_lookup(token, 'lever')
-                except Exception as e:
-                    logger.debug(f"Error testing Lever {token}: {e}")
+            # logger.debug(f"GH MISS: {company_name} (Token: {token}, Status: {'404/Empty' if data is None else 'No Jobs'})")
+
+        return None
+
+    async def check_lever(self, company_name: str, tokens: List[str]) -> Optional[JobBoard]:
+        """
+        Checks all provided tokens for a live Lever job board.
+        Returns the JobBoard object on first success.
+        """
+        for token in tokens:
+            # Note: Lever API often requires the full subdomain slug
+            url = f"https://api.lever.co/v0/postings/{quote(token)}?group=team&mode=json"
+            data = await self._fetch(url)
             
-            # If we found on both, no need to test more token variations
-            if greenhouse_result and lever_result:
-                break
+            if isinstance(data, list) and data:
+                # Found the board!
+                self.stats.lever_found += 1
+                
+                # Process jobs
+                job_list = [job for group in data for job in group.get('postings', [])]
+                locations, departments = await self._process_jobs(job_list, self._process_lever_job)
+                
+                logger.info(f"🔵 LV HIT: {company_name} (Token: {token}) with {len(job_list)} jobs.")
+
+                return JobBoard(
+                    ats_type='lever',
+                    token=token,
+                    company_name=company_name,
+                    job_count=len(job_list),
+                    locations=locations,
+                    departments=departments,
+                    jobs=job_list,
+                    source='discovery' # Mark as discovery from seed
+                )
+            
+            # logger.debug(f"LV MISS: {company_name} (Token: {token}, Status: {'404/Empty' if data is None else 'Invalid Format'})")
+
+        return None
+
+    async def _test_company(self, company_id: int, company_name: str, tokens_to_test: List[str]):
+        """Helper to test a single company against both ATS, returning company_id and status."""
         
-        return greenhouse_result, lever_result
-    
-    async def run_discovery(self, max_companies: int = None) -> CollectorStats:
-        """Run the main discovery process."""
+        # Greenhouse check
+        greenhouse = await self.check_greenhouse(company_name, tokens_to_test)
+        if greenhouse:
+            self._update_stats_and_db(greenhouse)
+            return (company_id, company_name, 'greenhouse', greenhouse.job_count)
+            
+        # Lever check
+        lever = await self.check_lever(company_name, tokens_to_test)
+        if lever:
+            self._update_stats_and_db(lever)
+            return (company_id, company_name, 'lever', lever.job_count)
+            
+        return (None, company_name, 'miss', 0) # Return miss
+        
+    def _update_stats_and_db(self, board: JobBoard):
+        """Updates internal stats and database with a successful job board find."""
+        self.stats.total_jobs += board.job_count
+        self.stats.total_companies += 1
+        
+        # Calculate location distribution (remote/hybrid/onsite)
+        remote_count = sum(1 for loc in board.locations if 'remote' in loc.lower())
+        hybrid_count = sum(1 for loc in board.locations if 'hybrid' in loc.lower())
+        # Onsite is total jobs - known remote - known hybrid
+        onsite_count = board.job_count - remote_count - hybrid_count
+        
+        # Create company data dict
+        company_data = {
+            'id': f"{board.ats_type}_{board.token}",
+            'company_name': board.company_name,
+            'ats_type': board.ats_type,
+            'token': board.token,
+            'job_count': board.job_count,
+            'remote_count': remote_count,
+            'hybrid_count': hybrid_count,
+            'onsite_count': onsite_count,
+            'locations': board.locations,
+            'departments': board.departments,
+            'jobs': board.jobs
+        }
+        self.db.upsert_company(company_data)
+
+
+    async def run_discovery(self, max_companies: Optional[int] = None) -> CollectorStats:
+        """
+        Runs the main discovery loop for new companies from the seed database.
+        """
         self._running = True
-        self.stats = CollectorStats()
+        self.stats = CollectorStats(total_companies=0, total_jobs=0)
         
-        logger.info("🚀 Starting Job Intelligence Collection")
+        # New retrieval method returns (id, company_name, token_slug)
+        # Note: If max_companies is None, it uses a large default for the DB query.
+        companies_to_test = self.db.get_seeds_for_collection(max_companies or 500) 
         
-        # Get companies to test
-        companies = self.discovery.get_seed_companies()
-        if max_companies:
-            companies = companies[:max_companies]
+        logger.info(f"Starting discovery loop on {len(companies_to_test)} companies.")
         
-        logger.info(f"📋 Testing {len(companies)} companies")
-        
-        # Process in batches
         batch_size = 50
-        for i in range(0, len(companies), batch_size):
+        for i in range(0, len(companies_to_test), batch_size):
             if not self._running:
+                logger.info("Collection stopped by request.")
                 break
                 
-            batch = companies[i:i + batch_size]
+            batch = companies_to_test[i:i + batch_size]
             
-            tasks = [self.test_company(company) for company in batch]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            tasks = []
+            # UPGRADED UNPACKING: Retrieve token_slug
+            for company_id, company_name, token_slug in batch: 
+                # UPGRADE: Generate token variants for maximum hit rate
+                tokens_to_test = _generate_token_variants(token_slug)
+                
+                tasks.append(
+                    self._test_company(company_id, company_name, tokens_to_test)
+                )
+
+            # Simple rate limit for the batch of async requests
+            await asyncio.sleep(1) 
+
+            results = await asyncio.gather(*tasks)
             
-            for j, result in enumerate(results):
-                self.stats.companies_tested += 1
-                
-                if isinstance(result, Exception):
-                    self.stats.errors += 1
-                    continue
-                
-                greenhouse, lever = result
-                
-                if greenhouse:
-                    self.stats.greenhouse_found += 1
-                    self.stats.total_jobs += greenhouse.job_count
-                    # Convert JobBoard dataclass to dict for database
-                    company_data = {
-                        'id': f"{greenhouse.ats_type}:{greenhouse.token}",
-                        'ats_type': greenhouse.ats_type,
-                        'token': greenhouse.token,
-                        'company_name': greenhouse.company_name,
-                        'job_count': greenhouse.job_count,
-                        'remote_count': greenhouse.remote_count,
-                        'hybrid_count': greenhouse.hybrid_count,
-                        'onsite_count': greenhouse.onsite_count,
-                        'locations': greenhouse.locations,
-                        'departments': greenhouse.departments
-                    }
-                    self.db.upsert_company(company_data)
-                
-                if lever:
-                    self.stats.lever_found += 1
-                    self.stats.total_jobs += lever.job_count
-                    # Convert JobBoard dataclass to dict for database
-                    company_data = {
-                        'id': f"{lever.ats_type}:{lever.token}",
-                        'ats_type': lever.ats_type,
-                        'token': lever.token,
-                        'company_name': lever.company_name,
-                        'job_count': lever.job_count,
-                        'remote_count': lever.remote_count,
-                        'hybrid_count': lever.hybrid_count,
-                        'onsite_count': lever.onsite_count,
-                        'locations': lever.locations,
-                        'departments': lever.departments
-                    }
-                    self.db.upsert_company(company_data)
+            # UPGRADE: Update tested_count for the batch regardless of hit/miss
+            tested_ids = [c[0] for c in batch]
+            self.db.mark_seeds_tested(tested_ids, datetime.utcnow())
+
+            for company_id, company_name, status, job_count in results: 
+                if status != 'miss' and company_id is not None:
+                    # UPGRADE: Update hit_count for successful companies
+                    self.db.mark_seed_hit(company_id)
             
             # Progress logging
-            progress = (i + len(batch)) / len(companies) * 100
+            progress = (i + len(batch)) / len(companies_to_test) * 100
             logger.info(f"📊 Progress: {progress:.1f}% | Found: {self.stats.greenhouse_found} GH, {self.stats.lever_found} LV | Jobs: {self.stats.total_jobs:,}")
         
         # Create monthly snapshot once at end of collection
@@ -672,6 +347,7 @@ class JobIntelCollector:
         await self.client.close()
         self._running = False
         
+        self.stats.end_time = datetime.utcnow()
         logger.info(f"✅ Collection complete! {self.stats.to_dict()}")
         return self.stats
     
