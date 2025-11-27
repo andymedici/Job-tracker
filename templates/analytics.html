@@ -1,1042 +1,109 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Job Intelligence Analytics</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
-    <style>
-        :root {
-            --bg-primary: #0f172a;
-            --bg-secondary: #1e293b;
-            --bg-card: #334155;
-            --text-primary: #f8fafc;
-            --text-secondary: #94a3b8;
-            --text-muted: #64748b;
-            --accent-blue: #3b82f6;
-            --accent-green: #10b981;
-            --accent-purple: #8b5cf6;
-            --accent-orange: #f59e0b;
-            --accent-red: #ef4444;
-            --accent-cyan: #06b6d4;
-            --accent-pink: #ec4899;
-            --border-color: #475569;
-            --border-light: #334155;
-        }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: var(--bg-primary);
-            color: var(--text-primary);
-            min-height: 100vh;
-            line-height: 1.5;
-        }
-        .nav-container {
-            background: var(--bg-secondary);
-            border-bottom: 1px solid var(--border-color);
-            position: sticky;
-            top: 0;
-            z-index: 100;
-        }
-        .nav-inner {
-            max-width: 1800px;
-            margin: 0 auto;
-            padding: 0 24px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            height: 64px;
-        }
-        .nav-brand {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        }
-        .nav-brand h1 {
-            font-size: 1.25rem;
-            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-        .back-link {
-            color: var(--text-secondary);
-            text-decoration: none;
-            font-size: 0.875rem;
-        }
-        .back-link:hover { color: var(--text-primary); }
-        .nav-tabs {
-            display: flex;
-            gap: 4px;
-            overflow-x: auto;
-        }
-        .nav-tab {
-            padding: 20px 16px;
-            background: transparent;
-            border: none;
-            color: var(--text-secondary);
-            cursor: pointer;
-            font-size: 0.875rem;
-            font-weight: 500;
-            border-bottom: 2px solid transparent;
-            white-space: nowrap;
-            transition: all 0.2s;
-        }
-        .nav-tab:hover { color: var(--text-primary); }
-        .nav-tab.active {
-            color: var(--accent-cyan);
-            border-bottom-color: var(--accent-cyan);
-        }
-        .status-badge {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 16px;
-            background: var(--bg-card);
-            border-radius: 24px;
-            font-size: 0.8rem;
-        }
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: var(--accent-green);
-        }
-        .status-dot.running {
-            background: var(--accent-orange);
-            animation: pulse 1.5s infinite;
-        }
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-        .main-content {
-            max-width: 1800px;
-            margin: 0 auto;
-            padding: 24px;
-        }
-        .page { display: none; }
-        .page.active {
-            display: block;
-            animation: fadeIn 0.3s ease;
-        }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        .page-header { margin-bottom: 24px; }
-        .page-header h2 { font-size: 1.5rem; margin-bottom: 8px; }
-        .page-header p { color: var(--text-secondary); }
-        .card {
-            background: var(--bg-secondary);
-            border-radius: 16px;
-            border: 1px solid var(--border-light);
-            overflow: hidden;
-        }
-        .card-header {
-            padding: 16px 20px;
-            border-bottom: 1px solid var(--border-light);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .card-header h3 { font-size: 0.95rem; font-weight: 600; }
-        .card-body { padding: 20px; }
-        .card-body.no-padding { padding: 0; }
-        .stats-row {
-            display: grid;
-            grid-template-columns: repeat(6, 1fr);
-            gap: 16px;
-            margin-bottom: 24px;
-        }
-        @media (max-width: 1400px) { .stats-row { grid-template-columns: repeat(3, 1fr); } }
-        @media (max-width: 768px) { .stats-row { grid-template-columns: repeat(2, 1fr); } }
-        .stat-card {
-            background: var(--bg-secondary);
-            border-radius: 12px;
-            border: 1px solid var(--border-light);
-            padding: 20px;
-            position: relative;
-        }
-        .stat-card::before {
-            content: '';
-            position: absolute;
-            top: 0; left: 0; right: 0;
-            height: 3px;
-        }
-        .stat-card.blue::before { background: var(--accent-blue); }
-        .stat-card.green::before { background: var(--accent-green); }
-        .stat-card.purple::before { background: var(--accent-purple); }
-        .stat-card.orange::before { background: var(--accent-orange); }
-        .stat-card.cyan::before { background: var(--accent-cyan); }
-        .stat-card.pink::before { background: var(--accent-pink); }
-        .stat-label {
-            font-size: 0.8rem;
-            color: var(--text-secondary);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 8px;
-        }
-        .stat-value { font-size: 2rem; font-weight: 700; }
-        .stat-card.blue .stat-value { color: var(--accent-blue); }
-        .stat-card.green .stat-value { color: var(--accent-green); }
-        .stat-card.purple .stat-value { color: var(--accent-purple); }
-        .stat-card.orange .stat-value { color: var(--accent-orange); }
-        .stat-card.cyan .stat-value { color: var(--accent-cyan); }
-        .stat-card.pink .stat-value { color: var(--accent-pink); }
-        .stat-change { font-size: 0.8rem; margin-top: 4px; color: var(--text-muted); }
-        .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px; margin-bottom: 24px; }
-        .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-bottom: 24px; }
-        .grid-2-1 { display: grid; grid-template-columns: 2fr 1fr; gap: 24px; margin-bottom: 24px; }
-        @media (max-width: 1200px) { .grid-2, .grid-3, .grid-2-1 { grid-template-columns: 1fr; } }
-        .chart-container { position: relative; height: 300px; }
-        .chart-container.large { height: 400px; }
-        .chart-container.small { height: 200px; }
-        .live-ticker {
-            display: flex;
-            gap: 32px;
-            padding: 16px 24px;
-            background: linear-gradient(135deg, var(--bg-secondary), var(--bg-card));
-            border-radius: 12px;
-            margin-bottom: 24px;
-            border: 1px solid var(--border-light);
-            overflow-x: auto;
-        }
-        .ticker-item { display: flex; align-items: center; gap: 12px; white-space: nowrap; }
-        .ticker-label { color: var(--text-secondary); font-size: 0.85rem; }
-        .ticker-value { font-weight: 600; font-size: 1.2rem; }
-        .ticker-change { font-size: 0.75rem; padding: 2px 8px; border-radius: 4px; }
-        .ticker-change.up { background: rgba(16, 185, 129, 0.2); color: var(--accent-green); }
-        .ticker-change.down { background: rgba(239, 68, 68, 0.2); color: var(--accent-red); }
-        .activity-feed { max-height: 400px; overflow-y: auto; }
-        .activity-item {
-            display: flex;
-            align-items: flex-start;
-            gap: 12px;
-            padding: 14px 16px;
-            border-bottom: 1px solid var(--border-light);
-            transition: background 0.2s;
-        }
-        .activity-item:hover { background: var(--bg-card); }
-        .activity-item:last-child { border-bottom: none; }
-        .activity-icon {
-            width: 36px; height: 36px;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1rem;
-            flex-shrink: 0;
-        }
-        .activity-icon.surge { background: rgba(16, 185, 129, 0.2); }
-        .activity-icon.decline { background: rgba(239, 68, 68, 0.2); }
-        .activity-icon.expansion { background: rgba(59, 130, 246, 0.2); }
-        .activity-content { flex: 1; min-width: 0; }
-        .activity-title { font-weight: 500; margin-bottom: 2px; }
-        .activity-subtitle { color: var(--text-secondary); font-size: 0.85rem; }
-        .activity-time { color: var(--text-muted); font-size: 0.75rem; white-space: nowrap; }
-        .data-table { width: 100%; border-collapse: collapse; }
-        .data-table th, .data-table td {
-            padding: 12px 16px;
-            text-align: left;
-            border-bottom: 1px solid var(--border-light);
-        }
-        .data-table th {
-            font-size: 0.75rem;
-            font-weight: 600;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            position: sticky;
-            top: 0;
-            background: var(--bg-secondary);
-        }
-        .data-table tbody tr { cursor: pointer; transition: background 0.2s; }
-        .data-table tbody tr:hover { background: var(--bg-card); }
-        .table-container { max-height: 500px; overflow-y: auto; }
-        .badge {
-            display: inline-flex;
-            padding: 4px 10px;
-            border-radius: 6px;
-            font-size: 0.75rem;
-            font-weight: 600;
-        }
-        .badge.greenhouse { background: rgba(16, 185, 129, 0.2); color: var(--accent-green); }
-        .badge.lever { background: rgba(139, 92, 246, 0.2); color: var(--accent-purple); }
-        .badge.remote { background: rgba(6, 182, 212, 0.2); color: var(--accent-cyan); }
-        .badge.hybrid { background: rgba(245, 158, 11, 0.2); color: var(--accent-orange); }
-        .badge.onsite { background: rgba(59, 130, 246, 0.2); color: var(--accent-blue); }
-        .badge.tier1 { background: rgba(16, 185, 129, 0.2); color: var(--accent-green); }
-        .badge.tier2 { background: rgba(245, 158, 11, 0.2); color: var(--accent-orange); }
-        .progress-bar { height: 8px; background: var(--bg-card); border-radius: 4px; overflow: hidden; }
-        .progress-fill { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
-        .work-type-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--bg-card); }
-        .work-type-bar .remote { background: var(--accent-cyan); }
-        .work-type-bar .hybrid { background: var(--accent-orange); }
-        .work-type-bar .onsite { background: var(--accent-blue); }
-        .filters-bar { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
-        .search-input, .filter-select {
-            padding: 10px 16px;
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            color: var(--text-primary);
-            font-size: 0.9rem;
-        }
-        .search-input { flex: 1; min-width: 200px; }
-        .search-input:focus { outline: none; border-color: var(--accent-cyan); }
-        .btn {
-            padding: 10px 20px;
-            border: none;
-            border-radius: 8px;
-            font-size: 0.9rem;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        .btn-primary {
-            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
-            color: white;
-        }
-        .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(6, 182, 212, 0.3); }
-        .time-range { display: flex; gap: 4px; background: var(--bg-card); padding: 4px; border-radius: 8px; }
-        .time-range button {
-            padding: 6px 12px;
-            border: none;
-            background: transparent;
-            color: var(--text-secondary);
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 0.8rem;
-            transition: all 0.2s;
-        }
-        .time-range button:hover { color: var(--text-primary); }
-        .time-range button.active { background: var(--accent-cyan); color: white; }
-        .modal-overlay {
-            display: none;
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0, 0, 0, 0.7);
-            z-index: 200;
-            align-items: center;
-            justify-content: center;
-            padding: 24px;
-        }
-        .modal-overlay.active { display: flex; }
-        .modal {
-            background: var(--bg-secondary);
-            border-radius: 16px;
-            max-width: 900px;
-            width: 100%;
-            max-height: 80vh;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-        }
-        .modal-header {
-            padding: 20px 24px;
-            border-bottom: 1px solid var(--border-light);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .modal-header h3 { font-size: 1.25rem; }
-        .modal-close {
-            background: none;
-            border: none;
-            color: var(--text-secondary);
-            cursor: pointer;
-            font-size: 1.5rem;
-        }
-        .modal-body { padding: 24px; overflow-y: auto; }
-        .empty-state { text-align: center; padding: 40px; color: var(--text-secondary); }
-        .empty-state .icon { font-size: 2.5rem; margin-bottom: 12px; opacity: 0.5; }
-        .loading { display: flex; align-items: center; justify-content: center; padding: 40px; color: var(--text-secondary); }
-        .spinner {
-            width: 24px; height: 24px;
-            border: 3px solid var(--border-color);
-            border-top-color: var(--accent-cyan);
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin-right: 12px;
-        }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        ::-webkit-scrollbar { width: 8px; height: 8px; }
-        ::-webkit-scrollbar-track { background: var(--bg-primary); }
-        ::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
-    </style>
-</head>
-<body>
-    <nav class="nav-container">
-        <div class="nav-inner">
-            <div class="nav-brand">
-                <a href="/" class="back-link">← Dashboard</a>
-                <h1>Analytics</h1>
-            </div>
-            <div class="nav-tabs">
-                <button class="nav-tab active" data-page="overview">Overview</button>
-                <button class="nav-tab" data-page="trends">Market Trends</button>
-                <button class="nav-tab" data-page="companies">Companies</button>
-                <button class="nav-tab" data-page="worktype">Work Types</button>
-                <button class="nav-tab" data-page="changes">Changes</button>
-                <button class="nav-tab" data-page="locations">Locations</button>
-                <button class="nav-tab" data-page="sources">Sources</button>
-            </div>
-            <div class="status-badge">
-                <div class="status-dot" id="statusDot"></div>
-                <span id="statusText">Live</span>
-            </div>
-        </div>
-    </nav>
+// This is the content for the <script> tag at the end of analytics.html
 
-    <main class="main-content">
-        <!-- OVERVIEW PAGE -->
-        <div class="page active" id="page-overview">
-            <div class="live-ticker">
-                <div class="ticker-item">
-                    <span class="ticker-label">Total Jobs</span>
-                    <span class="ticker-value" id="tickerJobs">-</span>
-                </div>
-                <div class="ticker-item">
-                    <span class="ticker-label">Companies</span>
-                    <span class="ticker-value" id="tickerCompanies">-</span>
-                </div>
-                <div class="ticker-item">
-                    <span class="ticker-label">Remote %</span>
-                    <span class="ticker-value" id="tickerRemote">-</span>
-                </div>
-                <div class="ticker-item">
-                    <span class="ticker-label">Surges (7d)</span>
-                    <span class="ticker-value" id="tickerSurges">-</span>
-                </div>
-                <div class="ticker-item">
-                    <span class="ticker-label">Declines (7d)</span>
-                    <span class="ticker-value" id="tickerDeclines">-</span>
-                </div>
-                <div class="ticker-item">
-                    <span class="ticker-label">Updated</span>
-                    <span class="ticker-value" id="tickerUpdated">-</span>
-                </div>
-            </div>
-
-            <div class="stats-row">
-                <div class="stat-card blue">
-                    <div class="stat-label">Total Companies</div>
-                    <div class="stat-value" id="statCompanies">-</div>
-                </div>
-                <div class="stat-card green">
-                    <div class="stat-label">Total Jobs</div>
-                    <div class="stat-value" id="statJobs">-</div>
-                </div>
-                <div class="stat-card cyan">
-                    <div class="stat-label">Remote Jobs</div>
-                    <div class="stat-value" id="statRemote">-</div>
-                    <div class="stat-change" id="statRemotePercent">-</div>
-                </div>
-                <div class="stat-card purple">
-                    <div class="stat-label">Greenhouse</div>
-                    <div class="stat-value" id="statGreenhouse">-</div>
-                    <div class="stat-change" id="statGHJobs">- jobs</div>
-                </div>
-                <div class="stat-card orange">
-                    <div class="stat-label">Lever</div>
-                    <div class="stat-value" id="statLever">-</div>
-                    <div class="stat-change" id="statLVJobs">- jobs</div>
-                </div>
-                <div class="stat-card pink">
-                    <div class="stat-label">Seeds</div>
-                    <div class="stat-value" id="statSeeds">-</div>
-                    <div class="stat-change" id="statSeedsTested">- tested</div>
-                </div>
-            </div>
-
-            <div class="grid-2-1">
-                <div class="card">
-                    <div class="card-header">
-                        <h3>📈 Market Trend (7 Days)</h3>
-                        <div class="time-range" id="overviewRange">
-                            <button class="active" data-days="7">7D</button>
-                            <button data-days="14">14D</button>
-                            <button data-days="30">30D</button>
-                        </div>
-                    </div>
-                    <div class="card-body">
-                        <div class="chart-container large"><canvas id="overviewChart"></canvas></div>
-                    </div>
-                </div>
-                <div class="card">
-                    <div class="card-header"><h3>⚡ Recent Activity</h3></div>
-                    <div class="card-body no-padding">
-                        <div class="activity-feed" id="activityFeed">
-                            <div class="loading"><div class="spinner"></div>Loading...</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="grid-3">
-                <div class="card">
-                    <div class="card-header"><h3>🏢 Platforms</h3></div>
-                    <div class="card-body"><div class="chart-container small"><canvas id="platformPie"></canvas></div></div>
-                </div>
-                <div class="card">
-                    <div class="card-header"><h3>💼 Work Types</h3></div>
-                    <div class="card-body"><div class="chart-container small"><canvas id="workTypePie"></canvas></div></div>
-                </div>
-                <div class="card">
-                    <div class="card-header"><h3>🏆 Top Hiring</h3></div>
-                    <div class="card-body no-padding"><div id="topHiring" style="max-height:200px;overflow-y:auto;"></div></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- TRENDS PAGE -->
-        <div class="page" id="page-trends">
-            <div class="page-header">
-                <h2>📊 Market Trends</h2>
-                <p>6-hourly granular data showing market movements</p>
-            </div>
-            <div class="card" style="margin-bottom:24px;">
-                <div class="card-header">
-                    <h3>Total Jobs Over Time</h3>
-                    <div class="time-range" id="trendsRange">
-                        <button data-days="1">24H</button>
-                        <button class="active" data-days="7">7D</button>
-                        <button data-days="14">14D</button>
-                        <button data-days="30">30D</button>
-                    </div>
-                </div>
-                <div class="card-body"><div class="chart-container large"><canvas id="trendLine"></canvas></div></div>
-            </div>
-            <div class="grid-2">
-                <div class="card">
-                    <div class="card-header"><h3>Work Type Trends</h3></div>
-                    <div class="card-body"><div class="chart-container"><canvas id="workTypeTrend"></canvas></div></div>
-                </div>
-                <div class="card">
-                    <div class="card-header"><h3>Platform Trends</h3></div>
-                    <div class="card-body"><div class="chart-container"><canvas id="platformTrend"></canvas></div></div>
-                </div>
-            </div>
-            <div class="card">
-                <div class="card-header"><h3>Monthly Comparison</h3></div>
-                <div class="card-body"><div class="chart-container"><canvas id="monthlyChart"></canvas></div></div>
-            </div>
-        </div>
-
-        <!-- COMPANIES PAGE -->
-        <div class="page" id="page-companies">
-            <div class="page-header"><h2>🏢 Companies</h2><p>All tracked companies</p></div>
-            <div class="card">
-                <div class="card-body">
-                    <div class="filters-bar">
-                        <input type="text" class="search-input" id="companySearch" placeholder="Search companies...">
-                        <select class="filter-select" id="platformFilter">
-                            <option value="">All Platforms</option>
-                            <option value="greenhouse">Greenhouse</option>
-                            <option value="lever">Lever</option>
-                        </select>
-                        <select class="filter-select" id="sortFilter">
-                            <option value="jobs">Most Jobs</option>
-                            <option value="remote">Most Remote</option>
-                            <option value="name">Alphabetical</option>
-                        </select>
-                        <button class="btn btn-primary" onclick="filterCompanies()">Search</button>
-                    </div>
-                    <div class="table-container">
-                        <table class="data-table" id="companiesTable">
-                            <thead><tr><th>Company</th><th>Platform</th><th>Jobs</th><th>Work Types</th><th>Remote %</th><th>Updated</th></tr></thead>
-                            <tbody></tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- WORK TYPES PAGE -->
-        <div class="page" id="page-worktype">
-            <div class="page-header"><h2>💼 Work Type Analysis</h2><p>Remote, Hybrid, and Onsite distribution</p></div>
-            <div class="stats-row" style="grid-template-columns:repeat(3,1fr);">
-                <div class="stat-card cyan">
-                    <div class="stat-label">Remote Jobs</div>
-                    <div class="stat-value" id="wtRemote">-</div>
-                    <div class="stat-change" id="wtRemotePct">-</div>
-                </div>
-                <div class="stat-card orange">
-                    <div class="stat-label">Hybrid Jobs</div>
-                    <div class="stat-value" id="wtHybrid">-</div>
-                    <div class="stat-change" id="wtHybridPct">-</div>
-                </div>
-                <div class="stat-card blue">
-                    <div class="stat-label">Onsite Jobs</div>
-                    <div class="stat-value" id="wtOnsite">-</div>
-                    <div class="stat-change" id="wtOnsitePct">-</div>
-                </div>
-            </div>
-            <div class="grid-2">
-                <div class="card">
-                    <div class="card-header"><h3>Distribution</h3></div>
-                    <div class="card-body"><div class="chart-container"><canvas id="wtDonut"></canvas></div></div>
-                </div>
-                <div class="card">
-                    <div class="card-header"><h3>Trend (7 Days)</h3></div>
-                    <div class="card-body"><div class="chart-container"><canvas id="wtTrend"></canvas></div></div>
-                </div>
-            </div>
-            <div class="grid-2">
-                <div class="card">
-                    <div class="card-header"><h3>🏠 Most Remote-Friendly</h3></div>
-                    <div class="card-body no-padding">
-                        <div class="table-container" style="max-height:350px;">
-                            <table class="data-table" id="remoteTable"><thead><tr><th>Company</th><th>Total</th><th>Remote</th><th>%</th></tr></thead><tbody></tbody></table>
-                        </div>
-                    </div>
-                </div>
-                <div class="card">
-                    <div class="card-header"><h3>🏢 Most Onsite-Heavy</h3></div>
-                    <div class="card-body no-padding">
-                        <div class="table-container" style="max-height:350px;">
-                            <table class="data-table" id="onsiteTable"><thead><tr><th>Company</th><th>Total</th><th>Onsite</th><th>%</th></tr></thead><tbody></tbody></table>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- CHANGES PAGE -->
-        <div class="page" id="page-changes">
-            <div class="page-header"><h2>🔄 Recent Changes</h2><p>Surges, declines, and expansions (7 days)</p></div>
-            <div class="stats-row" style="grid-template-columns:repeat(3,1fr);">
-                <div class="stat-card green">
-                    <div class="stat-label">Hiring Surges</div>
-                    <div class="stat-value" id="chgSurges">-</div>
-                    <div class="stat-change">+50% or more</div>
-                </div>
-                <div class="stat-card orange">
-                    <div class="stat-label">Hiring Declines</div>
-                    <div class="stat-value" id="chgDeclines">-</div>
-                    <div class="stat-change">-30% or more</div>
-                </div>
-                <div class="stat-card blue">
-                    <div class="stat-label">Expansions</div>
-                    <div class="stat-value" id="chgExpansions">-</div>
-                    <div class="stat-change">New markets</div>
-                </div>
-            </div>
-            <div class="grid-2">
-                <div class="card">
-                    <div class="card-header"><h3>🚀 Hiring Surges</h3></div>
-                    <div class="card-body no-padding"><div class="activity-feed" id="surgesList"></div></div>
-                </div>
-                <div class="card">
-                    <div class="card-header"><h3>📉 Hiring Declines</h3></div>
-                    <div class="card-body no-padding"><div class="activity-feed" id="declinesList"></div></div>
-                </div>
-            </div>
-            <div class="card">
-                <div class="card-header"><h3>📍 Location Expansions</h3></div>
-                <div class="card-body no-padding"><div class="activity-feed" id="expansionsList"></div></div>
-            </div>
-        </div>
-
-        <!-- LOCATIONS PAGE -->
-        <div class="page" id="page-locations">
-            <div class="page-header"><h2>📍 Locations</h2><p>Geographic distribution</p></div>
-            <div class="grid-2">
-                <div class="card">
-                    <div class="card-header"><h3>Top Locations</h3></div>
-                    <div class="card-body"><div class="chart-container large"><canvas id="locationsBar"></canvas></div></div>
-                </div>
-                <div class="card">
-                    <div class="card-header"><h3>All Locations</h3></div>
-                    <div class="card-body no-padding">
-                        <div class="table-container" style="max-height:430px;">
-                            <table class="data-table" id="locationsTable"><thead><tr><th>Location</th><th>Companies</th><th>Share</th></tr></thead><tbody></tbody></table>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- SOURCES PAGE -->
-        <div class="page" id="page-sources">
-            <div class="page-header"><h2>🌱 Seed Sources</h2><p>Discovery effectiveness</p></div>
-            <div class="stats-row" style="grid-template-columns:repeat(4,1fr);">
-                <div class="stat-card blue"><div class="stat-label">Sources</div><div class="stat-value" id="srcTotal">-</div></div>
-                <div class="stat-card green"><div class="stat-label">Tested</div><div class="stat-value" id="srcTested">-</div></div>
-                <div class="stat-card purple"><div class="stat-label">Found</div><div class="stat-value" id="srcFound">-</div></div>
-                <div class="stat-card cyan"><div class="stat-label">Hit Rate</div><div class="stat-value" id="srcHitRate">-</div></div>
-            </div>
-            <div class="grid-2">
-                <div class="card">
-                    <div class="card-header"><h3>🎯 Tier 1 (High Hit Rate)</h3></div>
-                    <div class="card-body no-padding"><div id="tier1List"></div></div>
-                </div>
-                <div class="card">
-                    <div class="card-header"><h3>📊 Tier 2 (Medium Hit Rate)</h3></div>
-                    <div class="card-body no-padding"><div id="tier2List"></div></div>
-                </div>
-            </div>
-            <div class="card">
-                <div class="card-header"><h3>Hit Rate Comparison</h3></div>
-                <div class="card-body"><div class="chart-container"><canvas id="sourceChart"></canvas></div></div>
-            </div>
-        </div>
-    </main>
-
-    <div class="modal-overlay" id="companyModal">
-        <div class="modal">
-            <div class="modal-header">
-                <h3 id="modalTitle">Company</h3>
-                <button class="modal-close" onclick="closeModal()">&times;</button>
-            </div>
-            <div class="modal-body" id="modalBody"></div>
-        </div>
-    </div>
-
-    <script>
-        let state = { stats: null, companies: [], trends: { granular: [], monthly: [] }, changes: [], expansions: [], sources: [], days: 7 };
-        let charts = {};
-
-        document.addEventListener('DOMContentLoaded', async () => {
-            setupNav();
-            setupRanges();
-            await loadAll();
-            updateAll();
-            setInterval(async () => { await loadAll(); updateAll(); }, 60000);
-        });
-
-        function setupNav() {
-            document.querySelectorAll('.nav-tab').forEach(tab => {
-                tab.addEventListener('click', () => {
-                    document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
-                    tab.classList.add('active');
-                    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-                    document.getElementById(`page-${tab.dataset.page}`).classList.add('active');
-                });
-            });
+        const apiUrl = '/api';
+        const charts = {};
+        let allCompanies = [];
+        let allLocations = [];
+        let allSources = [];
+        
+        // --- CHART UTILITIES (Must be defined here or already in your HTML) ---
+        
+        function getAccent(color) {
+            const rootStyle = getComputedStyle(document.documentElement);
+            return rootStyle.getPropertyValue(`--accent-${color}`).trim();
         }
 
-        function setupRanges() {
-            ['overviewRange', 'trendsRange'].forEach(id => {
-                const el = document.getElementById(id);
-                if (el) el.querySelectorAll('button').forEach(btn => {
-                    btn.addEventListener('click', async () => {
-                        el.querySelectorAll('button').forEach(b => b.classList.remove('active'));
-                        btn.classList.add('active');
-                        state.days = parseInt(btn.dataset.days);
-                        await loadTrends();
-                        updateTrends();
-                        updateOverview();
-                    });
-                });
-            });
-        }
-
-        async function loadAll() {
-            try {
-                const [stats, companies, trends, changes, expansions, sources] = await Promise.all([
-                    fetch('/api/stats').then(r => r.json()),
-                    fetch('/api/companies?limit=500').then(r => r.json()),
-                    fetch(`/api/trends?days=${state.days}`).then(r => r.json()),
-                    fetch('/api/changes?days=7&limit=100').then(r => r.json()),
-                    fetch('/api/expansions?days=7&limit=50').then(r => r.json()),
-                    fetch('/api/source-stats').then(r => r.json())
-                ]);
-                state.stats = stats;
-                state.companies = companies.companies || [];
-                state.trends = trends;
-                state.changes = changes.changes || [];
-                state.expansions = expansions.expansions || [];
-                state.sources = sources.sources || [];
-            } catch (e) { console.error(e); }
-        }
-
-        async function loadTrends() {
-            try {
-                state.trends = await fetch(`/api/trends?days=${state.days}`).then(r => r.json());
-            } catch (e) {}
-        }
-
-        function updateAll() {
-            updateOverview();
-            updateTrends();
-            updateCompanies();
-            updateWorkTypes();
-            updateChanges();
-            updateLocations();
-            updateSources();
-        }
-
-        function updateOverview() {
-            if (!state.stats) return;
-            const s = state.stats;
-            const remote = state.companies.reduce((a, c) => a + (c.remote_count || 0), 0);
-            const total = s.total_jobs || 1;
-            const remotePct = ((remote / total) * 100).toFixed(1);
-            const surges = state.changes.filter(c => c.change_type === 'surge').length;
-            const declines = state.changes.filter(c => c.change_type === 'decline').length;
-
-            document.getElementById('tickerJobs').textContent = fmt(s.total_jobs);
-            document.getElementById('tickerCompanies').textContent = fmt(s.total_companies);
-            document.getElementById('tickerRemote').textContent = remotePct + '%';
-            document.getElementById('tickerSurges').textContent = surges;
-            document.getElementById('tickerDeclines').textContent = declines;
-            document.getElementById('tickerUpdated').textContent = new Date().toLocaleTimeString();
-
-            document.getElementById('statCompanies').textContent = fmt(s.total_companies);
-            document.getElementById('statJobs').textContent = fmt(s.total_jobs);
-            document.getElementById('statRemote').textContent = fmt(remote);
-            document.getElementById('statRemotePercent').textContent = remotePct + '% of total';
-            document.getElementById('statGreenhouse').textContent = fmt(s.greenhouse_companies);
-            document.getElementById('statGHJobs').textContent = fmt(s.greenhouse_jobs) + ' jobs';
-            document.getElementById('statLever').textContent = fmt(s.lever_companies);
-            document.getElementById('statLVJobs').textContent = fmt(s.lever_jobs) + ' jobs';
-            document.getElementById('statSeeds').textContent = fmt(s.total_seeds);
-            document.getElementById('statSeedsTested').textContent = fmt(s.seeds_tested) + ' tested';
-
-            createChart('overviewChart', 'line', state.trends.granular, d => new Date(d.snapshot_time), d => d.total_jobs, '#3b82f6', true);
-            createPie('platformPie', ['Greenhouse', 'Lever'], [s.greenhouse_companies, s.lever_companies], ['#10b981', '#8b5cf6']);
-            createPie('workTypePie', ['Remote', 'Hybrid', 'Onsite'], [remote, state.companies.reduce((a,c)=>a+(c.hybrid_count||0),0), state.companies.reduce((a,c)=>a+(c.onsite_count||0),0)], ['#06b6d4', '#f59e0b', '#3b82f6']);
-            updateActivity();
-            updateTopHiring();
-        }
-
-        function updateActivity() {
-            const feed = document.getElementById('activityFeed');
-            const items = [];
-            state.changes.filter(c => c.change_type === 'surge').slice(0, 5).forEach(c => items.push({ type: 'surge', icon: '🚀', title: c.company_name, sub: `${c.previous_count}→${c.current_count} (+${c.change_percent?.toFixed(0)}%)`, time: c.detected_at }));
-            state.changes.filter(c => c.change_type === 'decline').slice(0, 3).forEach(c => items.push({ type: 'decline', icon: '📉', title: c.company_name, sub: `${c.previous_count}→${c.current_count} (${c.change_percent?.toFixed(0)}%)`, time: c.detected_at }));
-            state.expansions.slice(0, 3).forEach(e => items.push({ type: 'expansion', icon: '📍', title: e.company_name, sub: `→ ${e.new_location}`, time: e.detected_at }));
-            items.sort((a, b) => new Date(b.time) - new Date(a.time));
-            feed.innerHTML = items.length === 0 ? '<div class="empty-state"><div class="icon">📊</div><p>No recent activity</p></div>' : items.slice(0, 10).map(i => `<div class="activity-item"><div class="activity-icon ${i.type}">${i.icon}</div><div class="activity-content"><div class="activity-title">${esc(i.title)}</div><div class="activity-subtitle">${esc(i.sub)}</div></div><div class="activity-time">${ago(i.time)}</div></div>`).join('');
-        }
-
-        function updateTopHiring() {
-            const el = document.getElementById('topHiring');
-            const top = [...state.companies].sort((a, b) => (b.job_count || 0) - (a.job_count || 0)).slice(0, 5);
-            el.innerHTML = top.map((c, i) => `<div class="activity-item"><div class="activity-icon" style="background:rgba(59,130,246,0.2);font-weight:bold;">${i + 1}</div><div class="activity-content"><div class="activity-title">${esc(c.company_name)}</div><div class="activity-subtitle">${fmt(c.job_count)} jobs</div></div><span class="badge ${c.ats_type}">${c.ats_type}</span></div>`).join('');
-        }
-
-        function updateTrends() {
-            const g = state.trends.granular || [];
-            if (g.length === 0) return;
-            createChart('trendLine', 'line', g, d => new Date(d.snapshot_time), d => d.total_jobs, '#3b82f6', true);
-            createMultiLine('workTypeTrend', g, d => new Date(d.snapshot_time), [
-                { key: 'total_remote', color: '#06b6d4', label: 'Remote' },
-                { key: 'total_hybrid', color: '#f59e0b', label: 'Hybrid' },
-                { key: 'total_onsite', color: '#3b82f6', label: 'Onsite' }
-            ]);
-            createMultiLine('platformTrend', g, d => new Date(d.snapshot_time), [
-                { key: 'greenhouse_jobs', color: '#10b981', label: 'Greenhouse' },
-                { key: 'lever_jobs', color: '#8b5cf6', label: 'Lever' }
-            ]);
-            const m = state.trends.monthly || [];
-            if (m.length > 0) {
-                createBar('monthlyChart', m.map(x => `${x.year}-${String(x.month).padStart(2,'0')}`).reverse(), [
-                    { data: m.map(x => x.total_jobs).reverse(), color: '#3b82f6', label: 'Total' },
-                    { data: m.map(x => x.remote_jobs).reverse(), color: '#06b6d4', label: 'Remote' }
-                ]);
-            }
-        }
-
-        function updateCompanies() {
-            const tbody = document.querySelector('#companiesTable tbody');
-            const sorted = [...state.companies].sort((a, b) => (b.job_count || 0) - (a.job_count || 0));
-            tbody.innerHTML = sorted.slice(0, 100).map(c => {
-                const t = (c.remote_count||0) + (c.hybrid_count||0) + (c.onsite_count||0);
-                const rp = t > 0 ? ((c.remote_count/t)*100).toFixed(0) : 0;
-                const hp = t > 0 ? ((c.hybrid_count/t)*100).toFixed(0) : 0;
-                const op = t > 0 ? ((c.onsite_count/t)*100).toFixed(0) : 0;
-                return `<tr onclick="showCompany('${c.id}')"><td><strong>${esc(c.company_name)}</strong></td><td><span class="badge ${c.ats_type}">${c.ats_type}</span></td><td>${fmt(c.job_count)}</td><td><div class="work-type-bar" style="width:100px;"><div class="remote" style="width:${rp}%"></div><div class="hybrid" style="width:${hp}%"></div><div class="onsite" style="width:${op}%"></div></div></td><td>${rp}%</td><td>${ago(c.last_seen)}</td></tr>`;
-            }).join('');
-        }
-
-        function filterCompanies() {
-            const q = document.getElementById('companySearch').value.toLowerCase();
-            const p = document.getElementById('platformFilter').value;
-            const s = document.getElementById('sortFilter').value;
-            let list = [...state.companies];
-            if (q) list = list.filter(c => c.company_name.toLowerCase().includes(q));
-            if (p) list = list.filter(c => c.ats_type === p);
-            if (s === 'remote') list.sort((a, b) => (b.remote_count||0) - (a.remote_count||0));
-            else if (s === 'name') list.sort((a, b) => a.company_name.localeCompare(b.company_name));
-            else list.sort((a, b) => (b.job_count||0) - (a.job_count||0));
-            const tbody = document.querySelector('#companiesTable tbody');
-            tbody.innerHTML = list.slice(0, 100).map(c => {
-                const t = (c.remote_count||0) + (c.hybrid_count||0) + (c.onsite_count||0);
-                const rp = t > 0 ? ((c.remote_count/t)*100).toFixed(0) : 0;
-                return `<tr onclick="showCompany('${c.id}')"><td><strong>${esc(c.company_name)}</strong></td><td><span class="badge ${c.ats_type}">${c.ats_type}</span></td><td>${fmt(c.job_count)}</td><td>-</td><td>${rp}%</td><td>${ago(c.last_seen)}</td></tr>`;
-            }).join('');
-        }
-
-        function updateWorkTypes() {
-            const r = state.companies.reduce((a, c) => a + (c.remote_count || 0), 0);
-            const h = state.companies.reduce((a, c) => a + (c.hybrid_count || 0), 0);
-            const o = state.companies.reduce((a, c) => a + (c.onsite_count || 0), 0);
-            const t = r + h + o || 1;
-            document.getElementById('wtRemote').textContent = fmt(r);
-            document.getElementById('wtHybrid').textContent = fmt(h);
-            document.getElementById('wtOnsite').textContent = fmt(o);
-            document.getElementById('wtRemotePct').textContent = ((r/t)*100).toFixed(1) + '% of total';
-            document.getElementById('wtHybridPct').textContent = ((h/t)*100).toFixed(1) + '% of total';
-            document.getElementById('wtOnsitePct').textContent = ((o/t)*100).toFixed(1) + '% of total';
-            createPie('wtDonut', ['Remote', 'Hybrid', 'Onsite'], [r, h, o], ['#06b6d4', '#f59e0b', '#3b82f6']);
-            const g = state.trends.granular || [];
-            if (g.length > 0) createMultiLine('wtTrend', g, d => new Date(d.snapshot_time), [
-                { key: 'total_remote', color: '#06b6d4', label: 'Remote' },
-                { key: 'total_hybrid', color: '#f59e0b', label: 'Hybrid' },
-                { key: 'total_onsite', color: '#3b82f6', label: 'Onsite' }
-            ]);
-            updateRemoteTable();
-            updateOnsiteTable();
-        }
-
-        function updateRemoteTable() {
-            const tbody = document.querySelector('#remoteTable tbody');
-            const sorted = [...state.companies].filter(c => c.job_count > 0).map(c => ({ ...c, pct: c.job_count > 0 ? (c.remote_count / c.job_count) * 100 : 0 })).sort((a, b) => b.pct - a.pct).slice(0, 15);
-            tbody.innerHTML = sorted.map(c => `<tr><td>${esc(c.company_name)}</td><td>${fmt(c.job_count)}</td><td>${fmt(c.remote_count)}</td><td><span class="badge remote">${c.pct.toFixed(0)}%</span></td></tr>`).join('');
-        }
-
-        function updateOnsiteTable() {
-            const tbody = document.querySelector('#onsiteTable tbody');
-            const sorted = [...state.companies].filter(c => c.job_count > 0).map(c => ({ ...c, pct: c.job_count > 0 ? (c.onsite_count / c.job_count) * 100 : 0 })).sort((a, b) => b.pct - a.pct).slice(0, 15);
-            tbody.innerHTML = sorted.map(c => `<tr><td>${esc(c.company_name)}</td><td>${fmt(c.job_count)}</td><td>${fmt(c.onsite_count)}</td><td><span class="badge onsite">${c.pct.toFixed(0)}%</span></td></tr>`).join('');
-        }
-
-        function updateChanges() {
-            const surges = state.changes.filter(c => c.change_type === 'surge');
-            const declines = state.changes.filter(c => c.change_type === 'decline');
-            document.getElementById('chgSurges').textContent = surges.length;
-            document.getElementById('chgDeclines').textContent = declines.length;
-            document.getElementById('chgExpansions').textContent = state.expansions.length;
-            document.getElementById('surgesList').innerHTML = surges.length === 0 ? '<div class="empty-state"><div class="icon">🚀</div><p>No surges</p></div>' : surges.map(s => `<div class="activity-item"><div class="activity-icon surge">🚀</div><div class="activity-content"><div class="activity-title">${esc(s.company_name)}</div><div class="activity-subtitle">${s.previous_count}→${s.current_count}</div></div><div style="color:#10b981;font-weight:600;">+${s.change_percent?.toFixed(0)}%</div></div>`).join('');
-            document.getElementById('declinesList').innerHTML = declines.length === 0 ? '<div class="empty-state"><div class="icon">📉</div><p>No declines</p></div>' : declines.map(d => `<div class="activity-item"><div class="activity-icon decline">📉</div><div class="activity-content"><div class="activity-title">${esc(d.company_name)}</div><div class="activity-subtitle">${d.previous_count}→${d.current_count}</div></div><div style="color:#ef4444;font-weight:600;">${d.change_percent?.toFixed(0)}%</div></div>`).join('');
-            document.getElementById('expansionsList').innerHTML = state.expansions.length === 0 ? '<div class="empty-state"><div class="icon">📍</div><p>No expansions</p></div>' : state.expansions.map(e => `<div class="activity-item"><div class="activity-icon expansion">📍</div><div class="activity-content"><div class="activity-title">${esc(e.company_name)}</div><div class="activity-subtitle">→ ${esc(e.new_location)}</div></div><div class="activity-time">${ago(e.detected_at)}</div></div>`).join('');
-        }
-
-        function updateLocations() {
-            const locs = {};
-            state.companies.forEach(c => {
-                if (Array.isArray(c.locations)) c.locations.forEach(l => {
-                    if (l && !l.toLowerCase().includes('remote')) {
-                        const k = l.split(',')[0].trim();
-                        if (k) locs[k] = (locs[k] || 0) + 1;
-                    }
-                });
-            });
-            const sorted = Object.entries(locs).sort((a, b) => b[1] - a[1]);
-            const top15 = sorted.slice(0, 15);
-            createHBar('locationsBar', top15.map(([l]) => l), top15.map(([, c]) => c), '#3b82f6');
-            const tbody = document.querySelector('#locationsTable tbody');
-            tbody.innerHTML = sorted.slice(0, 30).map(([l, c]) => `<tr><td>${esc(l)}</td><td>${c}</td><td><div class="progress-bar" style="width:80px;"><div class="progress-fill" style="width:${(c/sorted[0][1])*100}%;background:#3b82f6;"></div></div></td></tr>`).join('');
-        }
-
-        function updateSources() {
-            const t1 = state.sources.filter(s => s.tier === 1);
-            const t2 = state.sources.filter(s => s.tier === 2);
-            const tested = state.sources.reduce((a, s) => a + (s.seeds_tested || 0), 0);
-            const found = state.sources.reduce((a, s) => a + (s.seeds_found || 0), 0);
-            const hr = tested > 0 ? (found / tested) * 100 : 0;
-            document.getElementById('srcTotal').textContent = state.sources.length;
-            document.getElementById('srcTested').textContent = fmt(tested);
-            document.getElementById('srcFound').textContent = fmt(found);
-            document.getElementById('srcHitRate').textContent = hr.toFixed(1) + '%';
-            document.getElementById('tier1List').innerHTML = t1.length === 0 ? '<div class="empty-state">No sources</div>' : t1.map(s => `<div class="activity-item"><div class="activity-content"><div class="activity-title">${esc(s.source)}</div><div class="activity-subtitle">${fmt(s.seeds_tested||0)} tested → ${fmt(s.seeds_found||0)} found</div></div><span class="badge tier1">${((s.hit_rate||0)*100).toFixed(1)}%</span></div>`).join('');
-            document.getElementById('tier2List').innerHTML = t2.length === 0 ? '<div class="empty-state">No sources</div>' : t2.map(s => `<div class="activity-item"><div class="activity-content"><div class="activity-title">${esc(s.source)}</div><div class="activity-subtitle">${fmt(s.seeds_tested||0)} tested → ${fmt(s.seeds_found||0)} found</div></div><span class="badge tier2">${((s.hit_rate||0)*100).toFixed(1)}%</span></div>`).join('');
-            const sorted = [...state.sources].filter(s => s.seeds_tested > 0).sort((a, b) => (b.hit_rate || 0) - (a.hit_rate || 0)).slice(0, 12);
-            createBar('sourceChart', sorted.map(s => s.source), [{ data: sorted.map(s => (s.hit_rate || 0) * 100), color: sorted.map(s => s.tier === 1 ? '#10b981' : '#f59e0b'), label: 'Hit Rate %' }]);
-        }
-
-        async function showCompany(id) {
-            const c = state.companies.find(x => x.id === id);
-            if (!c) return;
-            document.getElementById('modalTitle').textContent = c.company_name;
-            let trends = [];
-            try { trends = (await fetch(`/api/trends/company/${encodeURIComponent(id)}?days=7`).then(r => r.json())).trends || []; } catch (e) {}
-            const t = (c.remote_count||0) + (c.hybrid_count||0) + (c.onsite_count||0);
-            document.getElementById('modalBody').innerHTML = `
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
-                    <div>
-                        <p><strong>Platform:</strong> <span class="badge ${c.ats_type}">${c.ats_type}</span></p>
-                        <p style="margin-top:12px;"><strong>Total Jobs:</strong> ${fmt(c.job_count)}</p>
-                        <p style="margin-top:8px;"><strong>Remote:</strong> ${fmt(c.remote_count)} (${t>0?((c.remote_count/t)*100).toFixed(0):0}%)</p>
-                        <p style="margin-top:8px;"><strong>Hybrid:</strong> ${fmt(c.hybrid_count)} (${t>0?((c.hybrid_count/t)*100).toFixed(0):0}%)</p>
-                        <p style="margin-top:8px;"><strong>Onsite:</strong> ${fmt(c.onsite_count)} (${t>0?((c.onsite_count/t)*100).toFixed(0):0}%)</p>
-                        <p style="margin-top:12px;"><strong>Last Updated:</strong> ${ago(c.last_seen)}</p>
-                    </div>
-                    <div>
-                        <p><strong>7-Day Trend:</strong></p>
-                        <div class="chart-container small" style="margin-top:12px;"><canvas id="modalChart"></canvas></div>
-                    </div>
-                </div>`;
-            document.getElementById('companyModal').classList.add('active');
-            if (trends.length > 0) {
-                new Chart(document.getElementById('modalChart'), {
-                    type: 'line',
-                    data: { labels: trends.map(t => new Date(t.snapshot_time)), datasets: [{ data: trends.map(t => t.job_count), borderColor: '#3b82f6', fill: false, tension: 0.3 }] },
-                    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { type: 'time', display: false }, y: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } } } }
-                });
-            }
-        }
-
-        function closeModal() { document.getElementById('companyModal').classList.remove('active'); }
-        document.getElementById('companyModal').addEventListener('click', e => { if (e.target.classList.contains('modal-overlay')) closeModal(); });
-
-        // Chart Helpers
-        function createChart(id, type, data, labelFn, valueFn, color, fill = false) {
+        function createLine(id, labels, dataOrDatasets, label, color, isMultiDataset = false) {
             const ctx = document.getElementById(id);
-            if (!ctx || !data || data.length === 0) return;
+            if (!ctx) return;
             if (charts[id]) charts[id].destroy();
-            charts[id] = new Chart(ctx, {
-                type,
-                data: { labels: data.map(labelFn), datasets: [{ data: data.map(valueFn), borderColor: color, backgroundColor: fill ? color + '20' : 'transparent', fill, tension: 0.3 }] },
-                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { type: 'time', ticks: { color: '#94a3b8' }, grid: { display: false } }, y: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } } } }
-            });
-        }
+            
+            const datasets = isMultiDataset ? dataOrDatasets : [{
+                label: label,
+                data: dataOrDatasets,
+                borderColor: color,
+                backgroundColor: color.replace(')', ', 0.2)').replace('rgb(', 'rgba('),
+                fill: true,
+                tension: 0.4,
+                pointRadius: 2
+            }];
 
-        function createMultiLine(id, data, labelFn, series) {
-            const ctx = document.getElementById(id);
-            if (!ctx || !data || data.length === 0) return;
-            if (charts[id]) charts[id].destroy();
             charts[id] = new Chart(ctx, {
                 type: 'line',
-                data: { labels: data.map(labelFn), datasets: series.map(s => ({ label: s.label, data: data.map(d => d[s.key]), borderColor: s.color, fill: false, tension: 0.3 })) },
-                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top', labels: { color: '#94a3b8' } } }, scales: { x: { type: 'time', ticks: { color: '#94a3b8' }, grid: { display: false } }, y: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } } } }
+                data: { labels, datasets },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    scales: {
+                        x: { type: 'time', time: { unit: 'day' }, ticks: { color: '#94a3b8' }, grid: { color: '#334155' } },
+                        y: { beginAtZero: false, ticks: { color: '#94a3b8' }, grid: { color: '#334155' } }
+                    },
+                    plugins: { 
+                        legend: { display: isMultiDataset, labels: { color: '#94a3b8' } },
+                        tooltip: { mode: 'index', intersect: false }
+                    }
+                }
             });
         }
-
-        function createPie(id, labels, data, colors) {
+        
+        function createPie(id, labels, data, colors, type = 'pie') {
             const ctx = document.getElementById(id);
             if (!ctx) return;
             if (charts[id]) charts[id].destroy();
+
             charts[id] = new Chart(ctx, {
-                type: 'doughnut',
-                data: { labels, datasets: [{ data, backgroundColor: colors, borderWidth: 0 }] },
-                options: { responsive: true, maintainAspectRatio: false, cutout: '60%', plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8' } } } }
+                type: type,
+                data: {
+                    labels,
+                    datasets: [{ data, backgroundColor: colors, hoverOffset: 4, borderWidth: 0 }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: {
+                        legend: { 
+                            position: 'bottom', 
+                            labels: { color: 'var(--text-secondary)' }
+                        },
+                        tooltip: { enabled: true }
+                    },
+                    cutout: type === 'doughnut' ? '70%' : '0%',
+                }
             });
         }
-
-        function createBar(id, labels, series) {
+        
+        function createBar(id, labels, datasets) {
             const ctx = document.getElementById(id);
             if (!ctx) return;
             if (charts[id]) charts[id].destroy();
             charts[id] = new Chart(ctx, {
                 type: 'bar',
-                data: { labels, datasets: series.map(s => ({ label: s.label, data: s.data, backgroundColor: s.color })) },
-                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top', labels: { color: '#94a3b8' } } }, scales: { x: { ticks: { color: '#94a3b8' }, grid: { display: false } }, y: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } } } }
+                data: { labels, datasets },
+                options: { responsive: true, maintainAspectRatio: false, scales: { x: { stacked: true, ticks: { color: '#94a3b8' }, grid: { color: '#334155' } }, y: { stacked: true, ticks: { color: '#94a3b8' }, grid: { color: '#334155' } } } }
             });
         }
 
-        function createHBar(id, labels, data, color) {
+        function createHBar(id, labels, dataOrDatasets, colorOrColors, isMultiDataset = false) {
             const ctx = document.getElementById(id);
             if (!ctx) return;
             if (charts[id]) charts[id].destroy();
+            
+            const datasets = isMultiDataset ? dataOrDatasets : [{
+                data: dataOrDatasets,
+                backgroundColor: colorOrColors
+            }];
+
             charts[id] = new Chart(ctx, {
                 type: 'bar',
-                data: { labels, datasets: [{ data, backgroundColor: color }] },
-                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } }, y: { ticks: { color: '#94a3b8' }, grid: { display: false } } } }
+                data: { labels, datasets },
+                options: { 
+                    indexAxis: 'y', responsive: true, maintainAspectRatio: false, 
+                    plugins: { 
+                        legend: { display: isMultiDataset, labels: { color: '#94a3b8' } } 
+                    }, 
+                    scales: { 
+                        x: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } }, 
+                        y: { ticks: { color: '#94a3b8' }, grid: { display: false } } 
+                    } 
+                }
             });
         }
 
@@ -1050,17 +117,628 @@
             if (!d) return '-';
             const s = Math.floor((new Date() - new Date(d)) / 1000);
             if (s < 60) return 'now';
-            if (s < 3600) return Math.floor(s / 60) + 'm';
-            if (s < 86400) return Math.floor(s / 3600) + 'h';
-            return Math.floor(s / 86400) + 'd';
+            if (s < 3600) return Math.floor(s / 60) + 'm ago';
+            if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+            return Math.floor(s / 86400) + 'd ago';
+        }
+        
+        // --- DATA FETCHING & RENDERING CORE FUNCTIONS ---
+
+        async function fetchData(endpoint, params = {}) {
+            const url = new URL(`${apiUrl}${endpoint}`, window.location.origin);
+            Object.keys(params).forEach(key => url.searchParams.append(key, params[key]));
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            return response.json();
         }
 
-        function esc(t) {
-            if (!t) return '';
-            const d = document.createElement('div');
-            d.textContent = t;
-            return d.innerHTML;
+        async function loadOverview() {
+            try {
+                const stats = await fetchData('/stats');
+                
+                document.getElementById('statusDot').className = 'status-dot' + (stats.is_running ? ' running' : '');
+                document.getElementById('statusText').textContent = stats.is_running ? 'Collecting...' : 'Live';
+
+                // Ticker & Stat Cards
+                document.getElementById('tickerJobs').textContent = fmt(stats.total_jobs);
+                document.getElementById('tickerCompanies').textContent = fmt(stats.total_companies);
+                const remotePct = (stats.total_jobs > 0) ? (stats.remote_jobs / stats.total_jobs) * 100 : 0;
+                document.getElementById('tickerRemote').textContent = remotePct.toFixed(1) + '%';
+                document.getElementById('tickerUpdated').textContent = ago(stats.last_updated);
+                
+                document.getElementById('statCompanies').textContent = fmt(stats.total_companies);
+                document.getElementById('statJobs').textContent = fmt(stats.total_jobs);
+                document.getElementById('statRemote').textContent = fmt(stats.remote_jobs);
+                document.getElementById('statRemotePercent').textContent = `${remotePct.toFixed(1)}% of total`;
+                document.getElementById('statGreenhouse').textContent = fmt(stats.greenhouse_companies);
+                document.getElementById('statGHJobs').textContent = fmt(stats.greenhouse_jobs) + ' jobs';
+                document.getElementById('statLever').textContent = fmt(stats.lever_companies);
+                document.getElementById('statLVJobs').textContent = fmt(stats.lever_jobs) + ' jobs';
+                document.getElementById('statSeeds').textContent = fmt(stats.total_seeds);
+                document.getElementById('statSeedsTested').textContent = fmt(stats.seeds_tested) + ' tested';
+
+                // Activity & Changes Ticker (fetched via loadActivityFeed)
+                await loadActivityFeed();
+                
+                // Platform Pie Chart
+                createPie('platformPie', 
+                    ['Greenhouse', 'Lever'], 
+                    [stats.greenhouse_companies, stats.lever_companies], 
+                    [getAccent('purple'), getAccent('orange')]
+                );
+
+                // Work Type Pie Chart
+                createPie('workTypePie', 
+                    ['Remote', 'Hybrid', 'Onsite'], 
+                    [stats.remote_jobs, stats.hybrid_jobs, stats.onsite_jobs], 
+                    [getAccent('cyan'), getAccent('orange'), getAccent('blue')]
+                );
+
+                // Top Hiring
+                renderTopHiring(stats.top_hiring_companies || []); 
+                
+                // Load initial trend chart
+                await loadTrendChart(7, 'overviewChart', false);
+
+
+            } catch (error) {
+                console.error('Error loading overview:', error);
+                document.getElementById('statusText').textContent = 'Error';
+            }
         }
-    </script>
-</body>
-</html>
+        
+        async function loadTrendChart(days, chartId, isAreaChart = true) {
+            try {
+                const data = await fetchData('/history', { days });
+                const history = data.history.map(item => ({ 
+                    t: new Date(item.timestamp), 
+                    y: item.total_jobs,
+                    remote_jobs: item.remote_jobs,
+                    hybrid_jobs: item.hybrid_jobs,
+                    onsite_jobs: item.onsite_jobs,
+                    greenhouse_jobs: item.greenhouse_jobs,
+                    lever_jobs: item.lever_jobs
+                }));
+
+                const labels = history.map(d => d.t);
+                const totalJobsData = history.map(d => d.y);
+                
+                if (isAreaChart) {
+                    // For Trends page
+                    createLine(chartId, labels, totalJobsData, 'Total Jobs', getAccent('cyan'), false);
+                } else {
+                    // For Overview page (simpler presentation)
+                    createLine(chartId, labels, totalJobsData, 'Total Jobs', getAccent('cyan'), false);
+                }
+
+                if (chartId === 'trendLine') {
+                    // Load the other trend charts too on the trends page
+                    createWorkTypeTrendChart(history);
+                    createPlatformTrendChart(history);
+                    createMonthlyChart(data.monthly_snapshots);
+                }
+
+            } catch (error) {
+                console.error(`Error loading trend data for ${days} days:`, error);
+            }
+        }
+
+        async function loadCompaniesPage() {
+            // Load all company data once for client-side filtering/sorting
+            const tableContainer = document.getElementById('companiesTable').closest('.table-container');
+            tableContainer.innerHTML = `<div class="loading"><div class="spinner"></div>Loading Companies...</div>`;
+            
+            try {
+                const data = await fetchData('/companies', { sort_by: 'jobs', limit: 2000 });
+                allCompanies = data.companies;
+                tableContainer.innerHTML = `
+                    <table class="data-table" id="companiesTable">
+                        <thead><tr><th>Company</th><th>Platform</th><th>Jobs</th><th>Work Types</th><th>Remote %</th><th>Updated</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                `;
+                filterCompanies(); // Initial render
+            } catch (error) {
+                tableContainer.innerHTML = `<div class="empty-state">Failed to load company data.</div>`;
+                console.error('Error loading companies:', error);
+            }
+        }
+
+        function filterCompanies() {
+            const search = document.getElementById('companySearch').value.toLowerCase();
+            const platform = document.getElementById('platformFilter').value;
+            const sortKey = document.getElementById('sortFilter').value;
+
+            let filtered = allCompanies.filter(c => {
+                const matchesSearch = c.company_name.toLowerCase().includes(search) || (c.ats_type && c.ats_type.includes(search));
+                const matchesPlatform = platform ? c.ats_type === platform : true;
+                return matchesSearch && matchesPlatform;
+            });
+            
+            // Sorting logic
+            filtered.sort((a, b) => {
+                if (sortKey === 'jobs') return b.job_count - a.job_count;
+                if (sortKey === 'remote') {
+                    const pctA = a.job_count > 0 ? (a.remote_count / a.job_count) : 0;
+                    const pctB = b.job_count > 0 ? (b.remote_count / b.job_count) : 0;
+                    return pctB - pctA;
+                }
+                if (sortKey === 'name') return a.company_name.localeCompare(b.company_name);
+                return 0;
+            });
+
+            renderCompaniesTable(filtered);
+        }
+
+        function renderCompaniesTable(companies) {
+            const tbody = document.getElementById('companiesTable').querySelector('tbody');
+            tbody.innerHTML = ''; // Clear existing rows
+            
+            if (companies.length === 0) {
+                 tbody.innerHTML = '<tr><td colspan="6" class="empty-state"><div class="icon">🔍</div>No companies match your criteria.</td></tr>';
+                 return;
+            }
+
+            companies.forEach(c => {
+                const remotePct = (c.job_count > 0) ? (c.remote_count / c.job_count) * 100 : 0;
+                const row = document.createElement('tr');
+                // Use default click handler for modal. If the company modal isn't fully implemented, this is a placeholder.
+                row.setAttribute('onclick', `showCompanyModal('${c.company_name.replace(/'/g, "\\'")}', '${c.company_id}', '${c.ats_type}')`); 
+
+                row.innerHTML = `
+                    <td>${c.company_name}</td>
+                    <td><span class="badge ${c.ats_type}">${c.ats_type}</span></td>
+                    <td>${fmt(c.job_count)}</td>
+                    <td>
+                        <div class="work-type-bar" title="Remote: ${fmt(c.remote_count)}, Hybrid: ${fmt(c.hybrid_count)}, Onsite: ${fmt(c.onsite_count)}">
+                            <div class="remote" style="width:${(c.remote_count/c.job_count)*100}%;"></div>
+                            <div class="hybrid" style="width:${(c.hybrid_count/c.job_count)*100}%;"></div>
+                            <div class="onsite" style="width:${(c.onsite_count/c.job_count)*100}%;"></div>
+                        </div>
+                    </td>
+                    <td>${remotePct.toFixed(1)}%</td>
+                    <td>${ago(c.last_updated)}</td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+        
+        async function loadWorkTypePage() {
+            // Ensure company data is loaded or refresh if needed
+            if (allCompanies.length === 0) {
+                 try {
+                    const data = await fetchData('/companies', { sort_by: 'jobs', limit: 2000 });
+                    allCompanies = data.companies;
+                } catch (error) {
+                    console.error('Failed to fetch companies for work type analysis:', error);
+                    // Continue with zeros if fetch fails
+                }
+            }
+
+            // Aggregate totals from allCompanies
+            const totalJobs = allCompanies.reduce((sum, c) => sum + (c.job_count || 0), 0);
+            const remote = allCompanies.reduce((sum, c) => sum + (c.remote_count || 0), 0);
+            const hybrid = allCompanies.reduce((sum, c) => sum + (c.hybrid_count || 0), 0);
+            const onsite = allCompanies.reduce((sum, c) => sum + (c.onsite_count || 0), 0);
+
+            const remotePct = (totalJobs > 0) ? (remote / totalJobs) * 100 : 0;
+            const hybridPct = (totalJobs > 0) ? (hybrid / totalJobs) * 100 : 0;
+            const onsitePct = (totalJobs > 0) ? (onsite / totalJobs) * 100 : 0;
+
+            document.getElementById('wtRemote').textContent = fmt(remote);
+            document.getElementById('wtRemotePct').textContent = `${remotePct.toFixed(1)}% of total`;
+            document.getElementById('wtHybrid').textContent = fmt(hybrid);
+            document.getElementById('wtHybridPct').textContent = `${hybridPct.toFixed(1)}% of total`;
+            document.getElementById('wtOnsite').textContent = fmt(onsite);
+            document.getElementById('wtOnsitePct').textContent = `${onsitePct.toFixed(1)}% of total`;
+
+            // Donut Chart
+            createPie('wtDonut', 
+                ['Remote', 'Hybrid', 'Onsite'], 
+                [remote, hybrid, onsite], 
+                [getAccent('cyan'), getAccent('orange'), getAccent('blue')],
+                'doughnut'
+            );
+
+            // Trend Chart
+            await loadWorkTypeTrendChartFromAPI();
+
+            // Remote/Onsite Tables
+            renderRemoteOnsiteTables(allCompanies);
+        }
+
+        async function loadWorkTypeTrendChartFromAPI() {
+            try {
+                const data = await fetchData('/history', { days: 7 });
+                const history = data.history.map(item => ({ 
+                    t: new Date(item.timestamp), 
+                    remote_jobs: item.remote_jobs,
+                    hybrid_jobs: item.hybrid_jobs,
+                    onsite_jobs: item.onsite_jobs
+                }));
+                
+                const labels = history.map(d => d.t);
+                const datasets = [
+                    { label: 'Remote', data: history.map(d => d.remote_jobs), borderColor: getAccent('cyan'), backgroundColor: 'rgba(6, 182, 212, 0.1)', fill: true, tension: 0.4, pointRadius: 2 },
+                    { label: 'Hybrid', data: history.map(d => d.hybrid_jobs), borderColor: getAccent('orange'), backgroundColor: 'rgba(245, 158, 11, 0.1)', fill: true, tension: 0.4, pointRadius: 2 },
+                    { label: 'Onsite', data: history.map(d => d.onsite_jobs), borderColor: getAccent('blue'), backgroundColor: 'rgba(59, 130, 246, 0.1)', fill: true, tension: 0.4, pointRadius: 2 }
+                ];
+
+                createLine('wtTrend', labels, datasets, null, null, true);
+            } catch (error) {
+                console.error('Error loading work type trend:', error);
+            }
+        }
+        
+        function renderRemoteOnsiteTables(companies) {
+            const remoteTableBody = document.getElementById('remoteTable').querySelector('tbody');
+            const onsiteTableBody = document.getElementById('onsiteTable').querySelector('tbody');
+            remoteTableBody.innerHTML = '';
+            onsiteTableBody.innerHTML = '';
+
+            // Filter out companies with 0 jobs and calculate percentages
+            let validCompanies = companies.filter(c => c.job_count > 0).map(c => ({
+                ...c,
+                remotePct: (c.remote_count / c.job_count) * 100,
+                onsitePct: (c.onsite_count / c.job_count) * 100
+            }));
+
+            // Top Remote (at least 10 jobs)
+            const topRemote = validCompanies.filter(c => c.job_count >= 10).sort((a, b) => b.remotePct - a.remotePct).slice(0, 15);
+            topRemote.forEach(c => {
+                const row = document.createElement('tr');
+                row.innerHTML = `<td>${c.company_name}</td><td>${fmt(c.job_count)}</td><td>${fmt(c.remote_count)}</td><td>${c.remotePct.toFixed(1)}%</td>`;
+                remoteTableBody.appendChild(row);
+            });
+            if (topRemote.length === 0) remoteTableBody.innerHTML = '<tr><td colspan="4" class="empty-state">No remote-friendly companies found.</td></tr>';
+
+            // Top Onsite (at least 10 jobs)
+            const topOnsite = validCompanies.filter(c => c.job_count >= 10).sort((a, b) => b.onsitePct - a.onsitePct).slice(0, 15);
+            topOnsite.forEach(c => {
+                const row = document.createElement('tr');
+                row.innerHTML = `<td>${c.company_name}</td><td>${fmt(c.job_count)}</td><td>${fmt(c.onsite_count)}</td><td>${c.onsitePct.toFixed(1)}%</td>`;
+                onsiteTableBody.appendChild(row);
+            });
+            if (topOnsite.length === 0) onsiteTableBody.innerHTML = '<tr><td colspan="4" class="empty-state">No onsite-heavy companies found.</td></tr>';
+        }
+
+        async function loadChangesPage() {
+            try {
+                const data = await fetchData('/intel');
+                const { surges, declines, expansions } = data;
+
+                document.getElementById('chgSurges').textContent = fmt(surges.length);
+                document.getElementById('chgDeclines').textContent = fmt(declines.length);
+                document.getElementById('chgExpansions').textContent = fmt(expansions.length);
+
+                renderChangesList('surgesList', surges, 'surge');
+                renderChangesList('declinesList', declines, 'decline');
+                renderChangesList('expansionsList', expansions, 'expansion');
+                
+            } catch (error) {
+                console.error('Error loading changes data:', error);
+            }
+        }
+        
+        async function loadActivityFeed() {
+             try {
+                const data = await fetchData('/intel');
+                const { surges, declines, expansions } = data;
+                
+                // Combine all events and sort by detected_at (most recent first)
+                const activity = [
+                    ...surges.map(s => ({ ...s, type: 'surge', detected_at: new Date(s.detected_at) })),
+                    ...declines.map(d => ({ ...d, type: 'decline', detected_at: new Date(d.detected_at) })),
+                    ...expansions.map(e => ({ ...e, type: 'expansion', detected_at: new Date(e.detected_at) }))
+                ].sort((a, b) => b.detected_at - a.detected_at).slice(0, 10); 
+
+                renderChangesList('activityFeed', activity, null, true);
+                
+                // Update Overview Ticker
+                document.getElementById('tickerSurges').textContent = fmt(surges.length);
+                document.getElementById('tickerDeclines').textContent = fmt(declines.length);
+
+            } catch (error) {
+                console.error('Error loading activity feed:', error);
+                document.getElementById('activityFeed').innerHTML = '<div class="empty-state">Failed to load activity.</div>';
+            }
+        }
+        
+        function renderChangesList(elementId, items, fixedType, isActivityFeed = false) {
+            const container = document.getElementById(elementId);
+            container.innerHTML = ''; 
+
+            if (items.length === 0) {
+                container.innerHTML = `<div class="empty-state"><div class="icon">${fixedType === 'surge' ? '🚀' : fixedType === 'decline' ? '📉' : fixedType === 'expansion' ? '📍' : '✨'}</div>No ${fixedType || 'recent'} changes detected in the last 7 days.</div>`;
+                return;
+            }
+
+            items.forEach(item => {
+                const type = item.type || fixedType;
+                const iconMap = { 'surge': '🚀', 'decline': '📉', 'expansion': '📍' };
+                let title, subtitle;
+
+                if (type === 'expansion') {
+                    title = `Expansion to ${item.new_location}`;
+                    subtitle = `${item.company_name} (${item.ats_type}). Jobs at detection: ${fmt(item.job_count_at_detection)}`;
+                } else if (type === 'surge' || type === 'decline') {
+                    const sign = item.change_percent >= 0 ? '+' : '';
+                    const percent = Math.abs(item.change_percent * 100);
+                    title = `${item.company_name} - ${sign}${Math.round(percent)}% Change`;
+                    subtitle = `Jobs: ${fmt(item.previous_count)} → ${fmt(item.current_count)}`;
+                } else {
+                    title = item.company_name;
+                    subtitle = `Unknown change type: ${item.type}`;
+                }
+
+                const itemHtml = `
+                    <div class="activity-item" onclick="showCompanyModal('${item.company_name.replace(/'/g, "\\'")}', '${item.company_id}', '${item.ats_type}')">
+                        <div class="activity-icon ${type}">${iconMap[type]}</div>
+                        <div class="activity-content">
+                            <div class="activity-title">${title}</div>
+                            <div class="activity-subtitle">${subtitle}</div>
+                        </div>
+                        <div class="activity-time">${ago(item.detected_at)}</div>
+                    </div>
+                `;
+                container.insertAdjacentHTML('beforeend', itemHtml);
+            });
+        }
+        
+        async function loadLocationsPage() {
+            try {
+                const data = await fetchData('/locations-stats');
+                allLocations = data.locations;
+
+                // Sort by total companies descending
+                allLocations.sort((a, b) => b.total_companies - a.total_companies);
+
+                // Bar Chart (Top 10)
+                const topLocations = allLocations.slice(0, 10);
+                const labels = topLocations.map(l => l.location);
+                const dataPoints = topLocations.map(l => l.total_companies);
+                
+                createHBar('locationsBar', labels, dataPoints, getAccent('purple'));
+
+                // Table
+                renderLocationsTable(allLocations);
+
+            } catch (error) {
+                console.error('Error loading locations:', error);
+                document.getElementById('locationsTable').querySelector('tbody').innerHTML = '<tr><td colspan="3" class="empty-state">Failed to load locations.</td></tr>';
+            }
+        }
+
+        function renderLocationsTable(locations) {
+            const tbody = document.getElementById('locationsTable').querySelector('tbody');
+            tbody.innerHTML = '';
+            
+            if (locations.length === 0) {
+                 tbody.innerHTML = '<tr><td colspan="3" class="empty-state">No location data available.</td></tr>';
+                 return;
+            }
+
+            const totalCompanies = locations.reduce((sum, l) => sum + l.total_companies, 0);
+
+            locations.forEach(l => {
+                const share = (totalCompanies > 0) ? (l.total_companies / totalCompanies) * 100 : 0;
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${l.location}</td>
+                    <td>${fmt(l.total_companies)}</td>
+                    <td>${share.toFixed(1)}%</td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+        
+        async function loadSourcesPage() {
+            try {
+                const data = await fetchData('/source-stats');
+                allSources = data.sources;
+
+                // Stats Cards
+                const totalTested = allSources.reduce((sum, s) => sum + (s.seeds_tested || 0), 0);
+                const totalFound = allSources.reduce((sum, s) => sum + (s.companies_found || 0), 0);
+                const overallHitRate = (totalTested > 0) ? (totalFound / totalTested) * 100 : 0;
+                
+                document.getElementById('srcTotal').textContent = fmt(data.total_sources);
+                document.getElementById('srcTested').textContent = fmt(totalTested);
+                document.getElementById('srcFound').textContent = fmt(totalFound);
+                document.getElementById('srcHitRate').textContent = overallHitRate.toFixed(2) + '%';
+                
+                // Sort by hit rate descending
+                allSources.sort((a, b) => b.hit_rate - a.hit_rate);
+
+                // Tier Lists
+                const tier1 = allSources.filter(s => s.tier === 1);
+                const tier2 = allSources.filter(s => s.tier === 2);
+                renderSourceList('tier1List', tier1, 1);
+                renderSourceList('tier2List', tier2, 2);
+
+                // Chart
+                createSourceChart(allSources);
+
+            } catch (error) {
+                console.error('Error loading sources:', error);
+                document.getElementById('srcTotal').textContent = 'Error';
+            }
+        }
+
+        function renderSourceList(elementId, sources, tier) {
+            const container = document.getElementById(elementId);
+            container.innerHTML = '';
+            
+            if (sources.length === 0) {
+                container.innerHTML = `<div class="empty-state"><div class="icon">🌱</div>No Tier ${tier} sources available.</div>`;
+                return;
+            }
+
+            sources.forEach(s => {
+                const hitRate = (s.hit_rate * 100) || 0;
+                const status = s.enabled ? 'Enabled' : 'Disabled';
+                const statusColor = s.enabled ? 'var(--accent-green)' : 'var(--accent-red)';
+
+                const itemHtml = `
+                    <div class="activity-item" style="cursor:default;">
+                        <div class="activity-content" style="padding-left:0;">
+                            <div class="activity-title">${s.source} <span class="badge tier${tier}">Tier ${tier}</span></div>
+                            <div class="activity-subtitle">${fmt(s.companies_found)} companies found / ${fmt(s.seeds_tested)} tested</div>
+                        </div>
+                        <div style="text-align:right;flex-shrink:0;">
+                            <div class="activity-title" style="color:${getAccent('cyan')};">${hitRate.toFixed(2)}%</div>
+                            <div class="activity-subtitle" style="color:${statusColor};">${status}</div>
+                        </div>
+                    </div>
+                `;
+                container.insertAdjacentHTML('beforeend', itemHtml);
+            });
+        }
+        
+        function createWorkTypeTrendChart(history) {
+            // See loadWorkTypeTrendChartFromAPI for implementation (line chart with multiple datasets)
+            const labels = history.map(d => d.t);
+            const datasets = [
+                { label: 'Remote', data: history.map(d => d.remote_jobs), borderColor: getAccent('cyan'), backgroundColor: 'rgba(6, 182, 212, 0.1)', fill: true, tension: 0.4, pointRadius: 2 },
+                { label: 'Hybrid', data: history.map(d => d.hybrid_jobs), borderColor: getAccent('orange'), backgroundColor: 'rgba(245, 158, 11, 0.1)', fill: true, tension: 0.4, pointRadius: 2 },
+                { label: 'Onsite', data: history.map(d => d.onsite_jobs), borderColor: getAccent('blue'), backgroundColor: 'rgba(59, 130, 246, 0.1)', fill: true, tension: 0.4, pointRadius: 2 }
+            ];
+            createLine('workTypeTrend', labels, datasets, null, null, true);
+        }
+        
+        function createPlatformTrendChart(history) {
+             const labels = history.map(d => d.t);
+            const datasets = [
+                { label: 'Greenhouse', data: history.map(d => d.greenhouse_jobs), borderColor: getAccent('purple'), backgroundColor: 'rgba(139, 92, 246, 0.1)', fill: true, tension: 0.4, pointRadius: 2 },
+                { label: 'Lever', data: history.map(d => d.lever_jobs), borderColor: getAccent('orange'), backgroundColor: 'rgba(245, 158, 11, 0.1)', fill: true, tension: 0.4, pointRadius: 2 }
+            ];
+            createLine('platformTrend', labels, datasets, null, null, true);
+        }
+        
+        function createMonthlyChart(snapshots) {
+            snapshots.sort((a, b) => new Date(a.month) - new Date(b.month));
+            
+            const labels = snapshots.map(s => new Date(s.month).toLocaleString('en-US', { month: 'short', year: 'numeric' }));
+            
+            const datasets = [
+                {
+                    label: 'Total Jobs',
+                    data: snapshots.map(s => s.total_jobs),
+                    backgroundColor: getAccent('green'),
+                    borderRadius: 4
+                },
+                {
+                    label: 'Remote Jobs',
+                    data: snapshots.map(s => s.remote_jobs),
+                    backgroundColor: getAccent('cyan'),
+                    borderRadius: 4
+                }
+            ];
+            createBar('monthlyChart', labels, datasets);
+        }
+
+        function createSourceChart(sources) {
+            sources.sort((a, b) => b.hit_rate - a.hit_rate);
+            
+            const labels = sources.map(s => s.source);
+            const data = sources.map(s => s.hit_rate * 100);
+            const colors = sources.map(s => s.tier === 1 ? getAccent('green') : getAccent('orange'));
+
+            createHBar('sourceChart', labels, data, colors);
+        }
+
+        function renderTopHiring(companies) {
+             const container = document.getElementById('topHiring');
+             container.innerHTML = '';
+             
+             if (!companies || companies.length === 0) {
+                 container.innerHTML = `<div class="empty-state"><div class="icon">🏆</div>No top hiring data available.</div>`;
+                 return;
+             }
+             
+             companies.forEach(c => {
+                 const percent = (c.job_count > 0) ? (c.remote_count / c.job_count) * 100 : 0;
+                 const item = `
+                     <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 20px;border-bottom:1px solid var(--border-light);cursor:pointer;" 
+                          onclick="showCompanyModal('${c.company_name.replace(/'/g, "\\'")}', '${c.company_id}', '${c.ats_type}')">
+                         <div>
+                             <div style="font-weight:500;">${c.company_name}</div>
+                             <div style="font-size:0.8rem;color:var(--text-secondary);">${c.ats_type} - ${c.location || 'N/A'}</div>
+                         </div>
+                         <div style="text-align:right;">
+                             <div style="font-weight:600;color:var(--accent-green);">${fmt(c.job_count)} Jobs</div>
+                             <div style="font-size:0.7rem;color:var(--text-muted);">${percent.toFixed(0)}% Remote</div>
+                         </div>
+                     </div>
+                 `;
+                 container.insertAdjacentHTML('beforeend', item);
+             });
+        }
+        
+        // --- EVENT HANDLERS ---
+        
+        document.querySelectorAll('.nav-tab').forEach(tab => {
+            tab.addEventListener('click', async (e) => {
+                const pageId = e.target.getAttribute('data-page');
+                
+                // Switch Tabs and Pages
+                document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+                e.target.classList.add('active');
+                document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+                document.getElementById(`page-${pageId}`).classList.add('active');
+
+                // Load data for the new page
+                // Note: Overview is loaded once on init, but can be re-run for fresh data
+                if (pageId === 'overview') { await loadOverview(); } 
+                else if (pageId === 'trends') { await loadTrendChart(7, 'trendLine', true); }
+                else if (pageId === 'companies') { await loadCompaniesPage(); }
+                else if (pageId === 'worktype') { await loadWorkTypePage(); }
+                else if (pageId === 'changes') { await loadChangesPage(); }
+                else if (pageId === 'locations') { await loadLocationsPage(); }
+                else if (pageId === 'sources') { await loadSourcesPage(); }
+            });
+        });
+
+        document.getElementById('overviewRange').addEventListener('click', async (e) => {
+             if (e.target.tagName === 'BUTTON') {
+                document.querySelectorAll('#overviewRange button').forEach(b => b.classList.remove('active'));
+                e.target.classList.add('active');
+                const days = parseInt(e.target.getAttribute('data-days'));
+                await loadTrendChart(days, 'overviewChart', false);
+             }
+        });
+        
+        document.getElementById('trendsRange').addEventListener('click', async (e) => {
+             if (e.target.tagName === 'BUTTON') {
+                document.querySelectorAll('#trendsRange button').forEach(b => b.classList.remove('active'));
+                e.target.classList.add('active');
+                const days = parseInt(e.target.getAttribute('data-days'));
+                await loadTrendChart(days, 'trendLine', true);
+             }
+        });
+
+
+        // --- MODAL FUNCTIONS ---
+        
+        function showCompanyModal(name, id, type) {
+            document.getElementById('modalTitle').textContent = `${name} (${type})`;
+            document.getElementById('modalBody').innerHTML = `
+                <p>Company ID: <strong>${id}</strong></p>
+                <p>This section would display detailed company information like full job list, location breakdown, and hiring history. The data would typically be loaded from a dedicated <code>/api/jobs?company_id=${id}</code> endpoint.</p>
+                <div class="card" style="margin-top:20px;">
+                    <div class="card-header"><h3>7-Day Job Trend (Placeholder)</h3></div>
+                    <div class="card-body">
+                         <div class="chart-container" style="height:200px;"><canvas id="companyTrendChart"></canvas></div>
+                    </div>
+                </div>
+            `;
+            document.getElementById('companyModal').classList.add('active');
+        }
+
+        function closeModal() {
+            document.getElementById('companyModal').classList.remove('active');
+        }
+
+        // --- INIT ---
+
+        loadOverview(); // Load the default tab on page load
