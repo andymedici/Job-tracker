@@ -42,22 +42,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
-# CORE FIX: HELPER FUNCTION
-def _name_to_token(name: str) -> str:
-    """
-    Converts a company name to a URL-friendly, lowercase ATS token/slug.
-    This is the FIX for the core issue.
-    """
-    # 1. Convert to lowercase
-    token = name.lower()
-    # 2. Remove common business suffixes (to increase chance of matching slugs like 'plaid' vs 'plaid-inc')
-    token = re.sub(r'\s+(inc|llc|ltd|co|corp|gmbh|sa)\.?$', '', token, flags=re.IGNORECASE)
-    # 3. Replace non-alphanumeric characters (except space/hyphen) with nothing
-    token = re.sub(r'[^a-z0-9\s-]', '', token)
-    # 4. Replace spaces and multiple hyphens with a single hyphen
-    token = re.sub(r'[\s-]+', '-', token).strip('-')
-    return token
-
 @dataclass
 class SourceConfig:
     """Configuration for a company source."""
@@ -74,243 +58,274 @@ SOURCES = {
     'github_orgs': SourceConfig('GitHub Organizations', tier=1, priority=85),
     'producthunt': SourceConfig('ProductHunt', tier=1, priority=80),
     'github_awesome': SourceConfig('GitHub Awesome Lists', tier=1, priority=75),
-    'crunchbase_free': SourceConfig('Crunchbase Free', tier=1, priority=70),
-
+    'crunchbase': SourceConfig('Crunchbase', tier=1, priority=70),
+    
     # Tier 2 - Medium hit rate (established businesses)
-    'sec_edgar': SourceConfig('SEC EDGAR', tier=2, priority=50),
-    'usas_gov': SourceConfig('USASpending.gov', tier=2, priority=45),
-    'sam_gov': SourceConfig('SAM.gov', tier=2, priority=40),
-    'inc_5000': SourceConfig('Inc 5000', tier=2, priority=35),
-    'fortune_lists': SourceConfig('Fortune Lists', tier=2, priority=30),
-    'glassdoor': SourceConfig('Glassdoor', tier=2, priority=25),
+    'sec_edgar': SourceConfig('SEC EDGAR', tier=2, priority=55),
+    'usaspending': SourceConfig('USASpending.gov', tier=2, priority=50),
+    'sam_gov': SourceConfig('SAM.gov', tier=2, priority=45),
+    'inc5000': SourceConfig('Inc 5000', tier=2, priority=50),
+    'fortune500': SourceConfig('Fortune 500', tier=2, priority=55),
+    'glassdoor': SourceConfig('Glassdoor', tier=2, priority=45),
 }
 
 
 class SeedExpander:
-    """Manages the discovery and expansion of new company seeds."""
-
-    def __init__(self, db: Optional[Database] = None):
+    """Expands seed tokens from multiple tiered sources."""
+    
+    def __init__(self, db: Database = None):
         self.db = db or get_db()
-        self.client = aiohttp.ClientSession(
-            headers={'User-Agent': 'JobIntelExpander/2.0'},
-            trust_env=True,
-            connector=aiohttp.TCPConnector(ssl=False)
-        )
-        self.source_stats = {name: self.db.get_source_stats() for name in SOURCES}
-
+        self.session: Optional[aiohttp.ClientSession] = None
+        self.discovered_companies: Set[str] = set()
+        self.results: Dict[str, List[str]] = {}
+    
+    async def get_session(self) -> aiohttp.ClientSession:
+        """Get or create aiohttp session."""
+        if self.session is None or self.session.closed:
+            timeout = aiohttp.ClientTimeout(total=60)
+            self.session = aiohttp.ClientSession(
+                timeout=timeout,
+                headers={
+                    'User-Agent': 'Mozilla/5.0 (compatible; JobIntelBot/2.0; +https://github.com/job-intel)',
+                    'Accept': 'application/json, text/html, */*'
+                }
+            )
+        return self.session
+    
     async def close(self):
-        """Close HTTP client session."""
-        await self.client.close()
-
-    def _check_source_enabled(self, source_name: str) -> bool:
-        """Checks if a source is currently enabled in the database."""
-        stats = next((s for s in self.source_stats.get(source_name, []) if s['source'] == source_name), None)
-        return stats['enabled'] if stats else True
+        """Close the session."""
+        if self.session and not self.session.closed:
+            await self.session.close()
     
-    def _upsert_seed(self, name: str, source: str, priority: int) -> bool:
-        """Wrapper to call database upsert with token slug generation."""
-        # FIX IMPLEMENTATION: Generate the token slug here
-        token_slug = _name_to_token(name)
-        
-        # Guard against empty slugs (e.g., if input was just 'Inc.')
-        if not token_slug:
-            return False
-            
-        return self.db.upsert_seed_company(name, token_slug, source, priority)
-
     # ========================================================================
-    # TIER 1 Expansion Methods (High Hit Rate)
+    # TIER 1 SOURCES - High Hit Rate (Tech/Startups)
     # ========================================================================
-
-    async def _fetch(self, url: str) -> Optional[str]:
-        """Generic fetch with basic error handling."""
-        try:
-            async with self.client.get(url, timeout=30) as response:
-                if response.status == 200:
-                    return await response.text()
-                logger.warning(f"Failed to fetch {url}. Status: {response.status}")
-                return None
-        except asyncio.TimeoutError:
-            logger.error(f"Timeout while fetching {url}")
-            return None
-        except aiohttp.ClientError as e:
-            logger.error(f"Client error fetching {url}: {e}")
-            return None
-
-    async def _expand_yc(self, config: SourceConfig) -> List[str]:
-        """Scrapes Y Combinator companies (Example implementation)."""
-        logger.info(f"Expanding from {config.name}...")
-        discovered_names = []
+    
+    async def fetch_yc_companies(self) -> List[str]:
+        """Fetch companies from Y Combinator's public Algolia API."""
+        source = 'yc'
+        logger.info(f"🚀 Fetching from Y Combinator...")
+        companies = []
         
-        # This is a mock example, replace with actual scraper logic
         try:
-            # Simulate fetching a list of names
-            names = ["Airbnb", "Stripe, Inc.", "DoorDash", "Dropbox", "Coinbase", "Plum Life", "Scribe", "Retool Technologies, Inc"]
+            session = await self.get_session()
             
-            for name in names:
-                if self._upsert_seed(name, config.name, config.priority):
-                    discovered_names.append(name)
+            url = "https://45bwzj1sgc-dsn.algolia.net/1/indexes/*/queries"
+            headers = {
+                'x-algolia-api-key': 'NDYzYmNmMTRjYzU3YTY1MTNlMzgwMzY5NGIwNmNkMTNkNjE2NjE1NTQ5OGY4NjkwMmZhNzRkZjVjYTViZDY1N3Jlc3RyaWN0SW5kaWNlcz1ZQ0NvbXBhbnlfcHJvZHVjdGlvbiZ0YWdGaWx0ZXJzPSU1QiUyMnljZGNfcHVibGljJTIyJTVE',
+                'x-algolia-application-id': '45BWZJ1SGC',
+                'Content-Type': 'application/json'
+            }
+            
+            for page in range(0, 50):  # Up to 5000 companies
+                payload = {
+                    "requests": [{
+                        "indexName": "YCCompany_production",
+                        "params": f"hitsPerPage=100&page={page}"
+                    }]
+                }
+                async with session.post(url, json=payload, headers=headers) as resp:
+                    if resp.status != 200:
+                        break
+                    data = await resp.json()
+                    results = data.get('results', [{}])[0]
+                    hits = results.get('hits', [])
+                    if not hits:
+                        break
+                    
+                    for hit in hits:
+                        name = hit.get('name', '')
+                        if name and self._is_valid_company_name(name):
+                            companies.append(self._clean_company_name(name))
+                    
+                    await asyncio.sleep(0.1)
+            
+            logger.info(f" Found {len(companies)} YC companies")
+            return companies
+            
         except Exception as e:
-            logger.error(f"Error in {config.name} expansion: {e}")
-
-        logger.info(f"Discovered {len(discovered_names)} new seeds from {config.name}")
-        return discovered_names
-
-    async def _expand_github_orgs(self, config: SourceConfig) -> List[str]:
-        """Gets large GitHub organizations (Example implementation)."""
-        logger.info(f"Expanding from {config.name}...")
-        discovered_names = []
-        
-        # This is a mock example, replace with actual API/scraper logic
-        try:
-            names = ["Microsoft", "Google", "Facebook", "Netflix", "Uber", "Lyft Inc", "Unity Technologies"]
+            logger.error(f" Error fetching YC companies: {e}")
+            return []
             
-            for name in names:
-                if self._upsert_seed(name, config.name, config.priority):
-                    discovered_names.append(name)
-        except Exception as e:
-            logger.error(f"Error in {config.name} expansion: {e}")
-
-        logger.info(f"Discovered {len(discovered_names)} new seeds from {config.name}")
-        return discovered_names
-
-    async def _expand_producthunt(self, config: SourceConfig) -> List[str]:
-        """Gets company names from ProductHunt (example for illustration)."""
-        logger.info(f"Expanding from {config.name}...")
-        discovered_names = []
+    async def fetch_github_organizations(self) -> List[str]:
+        """Fetch companies from a curated list of GitHub organizations (simulated)."""
+        source = 'github_orgs'
+        logger.info(f"🚀 Fetching from GitHub Organizations (simulated)...")
+        # In a real app, this would query an API or scrape a list.
+        companies = [
+            "stripe", "hashicorp", "grafana", "prisma", "vercel", "netlify", 
+            "postmanlabs", "datadog", "sentry", "cockroachdb", "gitbook",
+            "algolia", "figma", "notion", "airtable", "supabase", "novu",
+            "openai", "anthropic", "cohere"
+        ]
         
-        # This is a mock example, replace with actual scraper logic
-        try:
-            names = ["Figma", "Webflow", "Notion", "Airtable", "Zoom", "Slack, Co.", "Miro"]
+        cleaned_companies = [self._clean_company_name(c) for c in companies]
+        logger.info(f" Found {len(cleaned_companies)} GitHub orgs (simulated)")
+        return cleaned_companies
+        
+    async def fetch_producthunt_companies(self) -> List[str]:
+        """Fetch companies from ProductHunt (simulated)."""
+        source = 'producthunt'
+        logger.info(f"🚀 Fetching from ProductHunt (simulated)...")
+        # In a real app, this would scrape a list of top products/makers.
+        companies = [
+            "Loom", "Miro", "Linear", "Height", "Revolut", "Brex", "Ramp", 
+            "Mendel", "Fivetran", "Airbyte", "Retool", "Webflow", "Gatsby",
+            "Next.js", "Vercel", "Chime", "Affirm", "Klarna"
+        ]
+        
+        cleaned_companies = [self._clean_company_name(c) for c in companies]
+        logger.info(f" Found {len(cleaned_companies)} ProductHunt companies (simulated)")
+        return cleaned_companies
+
+    # ... (other Tier 1 sources would be implemented here)
+    
+    # ========================================================================
+    # TIER 2 SOURCES - Medium Hit Rate (Established Businesses)
+    # ========================================================================
+    
+    async def fetch_sec_edgar_companies(self) -> List[str]:
+        """Fetch public companies from SEC EDGAR (simulated)."""
+        source = 'sec_edgar'
+        logger.info(f"🚀 Fetching from SEC EDGAR (simulated)...")
+        # In a real app, this would process the public company index file.
+        companies = [
+            "Salesforce", "Alphabet", "Meta Platforms", "Tesla", "Microsoft", 
+            "Apple", "Amazon", "Netflix", "Adobe", "Intel", 
+            "IBM", "Oracle", "SAP", "Cisco", "Qualcomm"
+        ]
+        
+        cleaned_companies = [self._clean_company_name(c) for c in companies]
+        logger.info(f" Found {len(cleaned_companies)} SEC EDGAR companies (simulated)")
+        return cleaned_companies
+        
+    async def fetch_usaspending_companies(self) -> List[str]:
+        """Fetch federal contractors from USASpending (simulated)."""
+        source = 'usaspending'
+        logger.info(f"🚀 Fetching from USASpending.gov (simulated)...")
+        companies = [
+            "Raytheon", "Lockheed Martin", "General Dynamics", "Boeing", 
+            "Northrop Grumman", "Leidos", "SAIC", "Booz Allen Hamilton"
+        ]
+        
+        cleaned_companies = [self._clean_company_name(c) for c in companies]
+        logger.info(f" Found {len(cleaned_companies)} USASpending companies (simulated)")
+        return cleaned_companies
+
+    # ... (other Tier 2 sources would be implemented here)
+    
+    # ========================================================================
+    # EXPANSION MANAGEMENT
+    # ========================================================================
+    
+    async def _run_source(self, source_key: str) -> List[str]:
+        """Execute the fetching function for a single source."""
+        config = SOURCES[source_key]
+        if not config.enabled:
+            logger.info(f"Skipping disabled source: {config.name}")
+            return []
             
-            for name in names:
-                # We use the product name as a seed company name
-                if self._upsert_seed(name, config.name, config.priority):
-                    discovered_names.append(name)
-        except Exception as e:
-            logger.error(f"Error in {config.name} expansion: {e}")
-
-        logger.info(f"Discovered {len(discovered_names)} new seeds from {config.name}")
-        return discovered_names
-        
-    # Placeholder methods for Tier 1
-    async def _expand_github_awesome(self, config: SourceConfig) -> List[str]:
-        logger.debug(f"Skipping {config.name} (Placeholder)")
-        return []
-    
-    async def _expand_crunchbase_free(self, config: SourceConfig) -> List[str]:
-        logger.debug(f"Skipping {config.name} (Placeholder)")
-        return []
-
-    # ========================================================================
-    # TIER 2 Expansion Methods (Medium Hit Rate)
-    # ========================================================================
-    
-    async def _expand_sec_edgar(self, config: SourceConfig) -> List[str]:
-        """Fetches public company names from SEC EDGAR (Example implementation)."""
-        logger.info(f"Expanding from {config.name}...")
-        discovered_names = []
-        
-        # This is a mock example, replace with actual API/scraper logic
-        try:
-            names = ["General Motors", "Ford", "IBM", "Exxon Mobil", "Intel Corporation"]
+        fetch_func = getattr(self, f'fetch_{source_key}_companies', None)
+        if not fetch_func:
+            logger.error(f"No fetch function found for source: {source_key}")
+            return []
             
-            for name in names:
-                if self._upsert_seed(name, config.name, config.priority):
-                    discovered_names.append(name)
+        try:
+            companies = await fetch_func()
+            return companies
         except Exception as e:
-            logger.error(f"Error in {config.name} expansion: {e}")
+            logger.error(f"Failed to run source {source_key}: {e}")
+            return []
 
-        logger.info(f"Discovered {len(discovered_names)} new seeds from {config.name}")
-        return discovered_names
-
-    # Placeholder methods for Tier 2
-    async def _expand_usas_gov(self, config: SourceConfig) -> List[str]:
-        logger.debug(f"Skipping {config.name} (Placeholder)")
-        return []
-    
-    async def _expand_sam_gov(self, config: SourceConfig) -> List[str]:
-        logger.debug(f"Skipping {config.name} (Placeholder)")
-        return []
-
-    async def _expand_inc_5000(self, config: SourceConfig) -> List[str]:
-        logger.debug(f"Skipping {config.name} (Placeholder)")
-        return []
-    
-    async def _expand_fortune_lists(self, config: SourceConfig) -> List[str]:
-        logger.debug(f"Skipping {config.name} (Placeholder)")
-        return []
-
-    async def _expand_glassdoor(self, config: SourceConfig) -> List[str]:
-        logger.debug(f"Skipping {config.name} (Placeholder)")
-        return []
-
-    # ========================================================================
-    # MAIN EXPANSION RUNNER
-    # ========================================================================
-
-    async def _run_tier(self, tier: int) -> Dict[str, List[str]]:
-        """Runs all expansion methods for a given tier."""
-        tier_methods = {
-            1: [self._expand_yc, self._expand_github_orgs, self._expand_producthunt, self._expand_github_awesome, self._expand_crunchbase_free],
-            2: [self._expand_sec_edgar, self._expand_usas_gov, self._expand_sam_gov, self._expand_inc_5000, self._expand_fortune_lists, self._expand_glassdoor],
-        }
-
-        tasks = []
-        tier_sources = [config for name, config in SOURCES.items() if config.tier == tier]
+    async def _process_results(self, source_key: str, companies: List[str]):
+        """Clean, dedup, and upsert companies into the database."""
+        config = SOURCES[source_key]
         
-        for config in tier_sources:
-            if self._check_source_enabled(config.name):
-                # Map config to the correct method
-                method_name = f'_expand_{config.name.lower().replace(" ", "_").replace(".", "").replace(",", "")}'
-                # Attempt to find the corresponding method, otherwise skip (for placeholders)
-                method = next((m for m in tier_methods[tier] if m.__name__ == method_name), None)
-                
-                if method:
-                    tasks.append(method(config))
-                else:
-                    logger.warning(f"No implementation found for source: {config.name}")
-
-        results = await asyncio.gather(*tasks)
+        new_companies = [c for c in companies if c not in self.discovered_companies]
         
-        all_discovered = [name for result in results for name in result]
-        return {
-            'tier': tier,
-            'total_new_seeds': len(all_discovered),
-            'unique_names': all_discovered # In a real implementation, you'd track unique names better
-        }
+        # Upsert into database
+        added = self.db.upsert_seed_companies(
+            companies=new_companies,
+            source=config.name,
+            tier=config.tier,
+            priority=config.priority
+        )
+        
+        self.results[config.name] = new_companies
+        self.discovered_companies.update(new_companies)
+        
+        logger.info(f"✅ Source {config.name}: {len(companies)} total, {added} new seeds added.")
 
     async def expand_tier1(self) -> Dict[str, List[str]]:
-        """Run Tier 1 expansion only."""
-        return await self._run_tier(tier=1)
-
+        """Run all Tier 1 expansion sources."""
+        tier1_keys = [k for k, v in SOURCES.items() if v.tier == 1]
+        
+        tasks = [self._run_source(key) for key in tier1_keys]
+        results = await asyncio.gather(*tasks)
+        
+        for key, companies in zip(tier1_keys, results):
+            await self._process_results(key, companies)
+            
+        return self.results
+        
     async def expand_tier2(self) -> Dict[str, List[str]]:
-        """Run Tier 2 expansion only."""
-        return await self._run_tier(tier=2)
+        """Run all Tier 2 expansion sources."""
+        tier2_keys = [k for k, v in SOURCES.items() if v.tier == 2]
+        
+        tasks = [self._run_source(key) for key in tier2_keys]
+        results = await asyncio.gather(*tasks)
+        
+        for key, companies in zip(tier2_keys, results):
+            await self._process_results(key, companies)
+            
+        return self.results
 
-    async def expand_all(self) -> Dict[str, Any]:
-        """Run full expansion (all tiers)."""
-        logger.info("Starting full seed expansion (Tier 1 & 2)...")
-        t1_results = await self._run_tier(tier=1)
-        t2_results = await self._run_tier(tier=2)
+    async def expand_all(self) -> Dict[str, List[str]]:
+        """Run all expansion sources."""
+        await self.expand_tier1()
+        await self.expand_tier2()
         
-        total_unique = set(t1_results['unique_names'] + t2_results['unique_names'])
+        return self.results
+
+    # ========================================================================
+    # UTILITY FUNCTIONS
+    # ========================================================================
+    
+    def _clean_company_name(self, name: str) -> str:
+        """Standardize and clean company names for token generation."""
+        name = name.lower().strip()
+        # Remove common business suffixes
+        name = re.sub(r'\s+(inc|co|corp|llc|ltd|gmbh|sa|bv)\.?$', '', name)
+        # Remove common cruft
+        name = re.sub(r'[^a-z0-9\s-]', '', name)
+        # Standardize spaces to dashes (for potential token slug)
+        name = re.sub(r'\s+', '-', name)
+        return name
         
-        logger.info(f"Expansion finished. T1: {t1_results['total_new_seeds']} seeds. T2: {t2_results['total_new_seeds']} seeds.")
-        
-        return {
-            'tier1': t1_results,
-            'tier2': t2_results,
-            'total_unique': total_unique
-        }
+    def _is_valid_company_name(self, name: str) -> bool:
+        """Simple validation check."""
+        # Must be at least 2 characters long and not purely numerical
+        if len(name) < 2 or name.isdigit():
+            return False
+        # Exclude common generic stop words
+        generic_words = {"the", "a", "an", "software", "solutions", "group", "labs", "tech", "studio"}
+        if name.lower() in generic_words:
+            return False
+        return True
 
     def print_source_stats(self):
-        """Prints current source performance statistics."""
+        """Prints the final source statistics."""
         stats = self.db.get_source_stats()
-        print("\n--- Seed Source Performance ---")
-        for s in stats:
-            print(f"  [{'✓' if s['enabled'] else '✗'}] {s['source']:<20} | Discovered: {s['seeds_discovered']:,} | Tested: {s['seeds_tested']:,} | Hit Rate: {s['hit_rate'] * 100:.2f}%")
-        print("-------------------------------")
+        logger.info("\n=========================")
+        logger.info("SEED EXPANSION SUMMARY")
+        logger.info("=========================")
+        for stat in stats:
+            logger.info(f"Source: {stat['source']} (Tier {SOURCES[stat['source'].lower().split()[0]].tier})")
+            logger.info(f"  Discovered: {stat['seeds_discovered']:,}")
+            logger.info(f"  Tested: {stat['seeds_tested']:,}")
+            logger.info(f"  Hit Rate: {stat['hit_rate']:.2%}")
+            logger.info(f"  Enabled: {stat['enabled']}")
+        logger.info("=========================")
 
 
 # ========================================================================
@@ -337,7 +352,7 @@ async def run_tier2_expansion() -> Dict[str, List[str]]:
         await expander.close()
 
 
-async def run_full_expansion() -> Dict[str, Any]:
+async def run_full_expansion() -> Dict[str, List[str]]:
     """Run full expansion (all tiers)."""
     expander = SeedExpander()
     try:
