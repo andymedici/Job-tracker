@@ -309,7 +309,8 @@ class Database:
             stats['seeds_tested'] = s_row['tested'] or 0 # The fix for the error log
             
             # Top Hiring
-            cursor.execute("SELECT company_name, ats_type, location, job_count, remote_count FROM companies ORDER BY job_count DESC LIMIT 5")
+            # FIX: Changed 'location' (singular) to 'locations' (plural JSONB column)
+            cursor.execute("SELECT company_name, ats_type, locations, job_count, remote_count FROM companies ORDER BY job_count DESC LIMIT 5")
             stats['top_hiring_companies'] = list(cursor)
             
             return stats
