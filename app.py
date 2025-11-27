@@ -19,11 +19,17 @@ import threading
 import logging
 from datetime import datetime, timedelta
 from functools import wraps
-from typing import Optional
 
 from flask import Flask, jsonify, render_template, request, Response
 import schedule
 import time
+
+# NEW IMPORTS for collection and maintenance
+# We import the new resilient get_db directly
+from collector import run_collection 
+from market_intel import run_daily_maintenance, send_weekly_report
+from seed_expander import run_tier1_expansion, run_tier2_expansion, run_full_expansion
+from database import get_db, Database # UPGRADED: Database import for type hint
 
 # Configure logging
 logging.basicConfig(
@@ -31,12 +37,6 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-# NEW IMPORTS for collection and maintenance
-from collector import run_collection 
-from market_intel import run_daily_maintenance 
-from seed_expander import run_full_expansion, run_tier1_expansion, run_tier2_expansion
-from database import get_db, Database
 
 app = Flask(__name__)
 
@@ -54,11 +54,8 @@ collection_state = {
     'error': None
 }
 
-
-def get_db():
-    """Get database instance."""
-    return get_db()
-
+# The original get_db() helper is implicitly replaced by the direct import, 
+# but we'll use a direct reference in get_stats.
 
 def get_stats():
     """Get current statistics from database."""
@@ -69,161 +66,224 @@ def get_stats():
         return stats
     except Exception as e:
         logger.error(f"Error getting stats: {e}")
-        return {}
+        return {
+            'total_companies': 0,
+            'total_jobs': 0,
+            'error': str(e),
+            'last_updated': datetime.utcnow().isoformat()
+        }
 
 
-def run_collection_task(max_companies: Optional[int] = None):
-    """Wrapper to run collection in the background thread."""
-    if collection_state['running']:
-        logger.warning("Collection already running, skipping scheduled run.")
-        return
-
-    collection_state['running'] = True
-    collection_state['error'] = None
-    logger.info(f"Starting collection task (Max: {max_companies})...")
+def run_collection_sync():
+    """Run collection in sync context (for thread)."""
+    global collection_state
     
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    if collection_state['running']:
+        logger.info("Collection already running, skipping")
+        return
     
     try:
-        stats = loop.run_until_complete(run_collection(max_companies=max_companies))
+        collection_state['running'] = True
+        collection_state['error'] = None
         collection_state['last_run'] = datetime.utcnow().isoformat()
-        collection_state['last_stats'] = stats.to_dict()
-        logger.info("Collection finished successfully.")
+        
+        logger.info("Starting scheduled collection...")
+        
+        # Run async collection
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            stats = loop.run_until_complete(run_collection())
+            collection_state['last_stats'] = stats.to_dict()
+            logger.info(f"Collection completed: {stats.to_dict()}")
+            
+            # Run market intelligence after collection
+            logger.info("Running market intelligence analysis...")
+            
+            intel_results = run_daily_maintenance()
+            collection_state['last_intel'] = intel_results
+            logger.info(f"Intelligence analysis complete: {intel_results}")
+            
+        finally:
+            loop.close()
+        
     except Exception as e:
         logger.error(f"Collection failed: {e}")
         collection_state['error'] = str(e)
     finally:
         collection_state['running'] = False
-        loop.close()
 
 
-def trigger_collection(max_companies: Optional[int] = None):
-    """Starts the collection task in a new thread."""
-    thread = threading.Thread(target=run_collection_task, args=(max_companies,), daemon=True)
-    thread.start()
-
-
-def run_daily_maintenance_task():
-    """Wrapper to run market intelligence daily maintenance (UPGRADE)."""
-    logger.info("Starting daily maintenance task...")
+def run_weekly_email():
+    """Send weekly email report."""
     try:
-        # Maintenance also includes purging old data and creating snapshots
-        results = run_daily_maintenance()
-        logger.info(f"Maintenance complete: {results}")
-        collection_state['last_intel'] = {
-            'timestamp': datetime.utcnow().isoformat(),
-            'stats': results
-        }
-        # Force stats refresh after maintenance
-        collection_state['last_stats'] = get_stats() 
+        success = send_weekly_report()
+        logger.info(f"Weekly email report: {'sent' if success else 'failed'}")
     except Exception as e:
-        logger.error(f"Daily maintenance error: {e}")
+        logger.error(f"Failed to send weekly report: {e}")
 
 
-def start_scheduler():
-    """Sets up and runs the background scheduling loop."""
-    logger.info("Setting up scheduler jobs...")
+def run_tier1_expansion_sync():
+    """Run Tier 1 seed expansion (weekly - high quality sources) in sync context."""
+    global collection_state
     
-    # Core Collection: Every 6 hours to get fresh data
-    schedule.every(6).hours.do(trigger_collection, max_companies=500).tag('core-collection')
-    logger.info("  - Core collection scheduled (every 6 hours)")
-
-    # Seed Expansion: Tier 1 daily, Tier 2 weekly
-    schedule.every().day.at("02:00").do(trigger_expansion, tier=1).tag('seed-expansion')
-    schedule.every().monday.at("03:00").do(trigger_expansion, tier=2).tag('seed-expansion')
-    logger.info("  - Seed expansion scheduled (Tier 1 daily, Tier 2 weekly)")
-    
-    # Daily Maintenance (UPGRADE)
-    schedule.every().day.at("04:00").do(run_daily_maintenance_task).tag('maintenance')
-    logger.info("  - Daily maintenance scheduled (4:00 AM UTC)")
-    
-    # Run loop
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
-
-# ========================================================================
-# FLASK ENDPOINTS
-# ========================================================================
-
-@app.route('/')
-def dashboard():
-    """The main dashboard view."""
-    return render_template('dashboard.html')
-
-
-@app.route('/analytics')
-def analytics():
-    """The analytics and historical view."""
-    return render_template('analytics.html')
-
-
-@app.route('/health')
-def health_check():
-    """Health check endpoint for Railway."""
-    try:
-        db = get_db()
-        # Test connection by fetching a simple stat
-        stats = db.get_stats()
-        if stats is not None:
-            return jsonify({'status': 'ok', 'db': 'connected'}), 200
-        return jsonify({'status': 'error', 'db': 'disconnected'}), 500
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return jsonify({'status': 'error', 'db': str(e)}), 500
-
-
-@app.route('/api/stats')
-def api_stats():
-    """Get all current statistics and status."""
-    stats = get_stats()
-    stats['collection_status'] = collection_state
-    
-    # Calculate key metrics
-    total_companies = stats.get('total_companies', 0)
-    total_jobs = stats.get('total_jobs', 0)
-    
-    stats['average_jobs_per_company'] = round(total_jobs / total_companies, 2) if total_companies else 0
-    stats['seeds_hit_rate'] = round(stats.get('seeds_hit', 0) / stats.get('seeds_tested', 1), 4) * 100
-    
-    # Include untested seeds stat (UPGRADE)
-    stats['untested_seeds'] = stats.get('untested_seeds', 0) 
-    
-    return jsonify(stats)
-
-
-@app.route('/api/collection/run', methods=['POST'])
-def api_run_collection():
-    """Manually trigger a collection run."""
     if collection_state['running']:
-        return jsonify({'status': 'error', 'message': 'Collection already running'}), 409
+        logger.info("Collection running, skipping Tier 1 expansion")
+        return
     
-    data = request.get_json(silent=True)
-    max_companies = data.get('max_companies') if data and data.get('max_companies') else None
-    
-    thread = threading.Thread(target=run_collection_task, args=(max_companies,), daemon=True)
-    thread.start()
-    
-    return jsonify({'status': 'success', 'message': f'Collection (Max: {max_companies}) started in background'})
-
-
-@app.route('/api/expansion/run/<int:tier>', methods=['POST'])
-def api_run_expansion(tier):
-    """Manually trigger seed expansion for a specific tier."""
-    
-    def run_expansion():
+    try:
+        logger.info("🚀 Starting Tier 1 seed expansion...")
+        
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
         try:
-            if tier == 1:
+            results = loop.run_until_complete(run_tier1_expansion())
+            total = sum(len(c) for c in results.values() if isinstance(c, list))
+            logger.info(f"✅ Tier 1 expansion complete: {total} companies discovered")
+        finally:
+            loop.close()
+            
+    except Exception as e:
+        logger.error(f"Tier 1 expansion failed: {e}")
+        
+        
+def run_tier2_expansion_sync():
+    """Run Tier 2 seed expansion (monthly - broader sources) in sync context."""
+    global collection_state
+    
+    if collection_state['running']:
+        logger.info("Collection running, skipping Tier 2 expansion")
+        return
+    
+    try:
+        logger.info("🚀 Starting Tier 2 seed expansion...")
+        
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            results = loop.run_until_complete(run_tier2_expansion())
+            total = sum(len(c) for c in results.values() if isinstance(c, list))
+            logger.info(f"✅ Tier 2 expansion complete: {total} companies discovered")
+        finally:
+            loop.close()
+            
+    except Exception as e:
+        logger.error(f"Tier 2 expansion failed: {e}")
+        
+        
+def start_scheduler():
+    """Configure and start the background job scheduler."""
+    
+    # 1. Daily Collection: Run every 6 hours (4 times a day)
+    schedule.every(6).hours.do(
+        lambda: threading.Thread(target=run_collection_sync).start()
+    ).tag('collection')
+    
+    # 2. Weekly Tier 1 Expansion (High-quality seeds): Run every Sunday at 3:00 AM UTC
+    schedule.every().sunday.at("03:00").do(
+        lambda: threading.Thread(target=run_tier1_expansion_sync).start()
+    ).tag('expansion_t1')
+    
+    # 3. Monthly Tier 2 Expansion (Broader seeds): Run on the 1st of every month at 4:00 AM UTC
+    schedule.every().day.at("04:00").do(
+        lambda: datetime.now().day == 1 and threading.Thread(target=run_tier2_expansion_sync).start()
+    ).tag('expansion_t2')
+    
+    # 4. Weekly Intelligence Report Email: Run every Monday at 9:00 AM UTC
+    schedule.every().monday.at("09:00").do(
+        lambda: threading.Thread(target=run_weekly_email).start()
+    ).tag('report')
+    
+    # Start the first collection immediately upon boot (after a brief delay)
+    logger.info("Initial collection scheduled to run in 60 seconds.")
+    schedule.every(1).minutes.do(
+        lambda: threading.Thread(target=run_collection_sync).start() and schedule.clear('initial_run')
+    ).tag('initial_run').at(":00")
+    
+    # Main scheduler loop
+    while True:
+        try:
+            schedule.run_pending()
+        except Exception as e:
+            logger.error(f"Scheduler error: {e}")
+        time.sleep(1)
+
+
+# ==================== FLASK ROUTES ====================
+
+# Helper for /health
+@app.route('/health')
+def health_check():
+    """Health check endpoint for Railway."""
+    # Check if the database connection is alive
+    try:
+        get_db().test_connection()
+        return jsonify({'status': 'ok', 'db': 'connected'}), 200
+    except Exception as e:
+        logger.error(f"Health check failed: Database connection error: {e}")
+        return jsonify({'status': 'error', 'db': 'disconnected', 'error': str(e)}), 503
+
+@app.route('/')
+def dashboard():
+    """Main dashboard view."""
+    stats = get_stats()
+    return render_template(
+        "dashboard.html",
+        stats=stats,
+        state=collection_state
+    )
+
+@app.route('/analytics')
+def analytics():
+    """Comprehensive analytics dashboard."""
+    return render_template("analytics.html")
+
+@app.route('/api/stats')
+def api_stats():
+    """API endpoint for statistics."""
+    stats = get_stats()
+    stats['collection_running'] = collection_state.get('running', False)
+    stats['last_run'] = collection_state.get('last_run')
+    stats['last_error'] = collection_state.get('error')
+    stats['last_stats'] = collection_state.get('last_stats')
+    stats['last_intel'] = collection_state.get('last_intel')
+    return jsonify(stats)
+
+@app.route('/api/run-collection', methods=['POST'])
+def api_run_collection():
+    """Trigger a manual collection run."""
+    if collection_state['running']:
+        return jsonify({'status': 'error', 'message': 'Collection already running'}), 409
+    
+    thread = threading.Thread(target=run_collection_sync, daemon=True)
+    thread.start()
+    
+    return jsonify({
+        'status': 'success', 
+        'message': 'Collection started in background'
+    })
+
+@app.route('/api/run-expansion', methods=['POST'])
+def api_run_expansion():
+    """Trigger a manual seed expansion run."""
+    tier = request.args.get('tier', 'full').lower()
+    
+    def run_expansion():
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            if tier == 'tier1':
                 results = loop.run_until_complete(run_tier1_expansion())
-                logger.info(f"Tier 1 expansion complete: {len(results.get('unique_names', []))} new seeds")
-            elif tier == 2:
+                logger.info(f"Tier 1 expansion complete: {len(results.get('total_unique', []))} unique companies")
+            elif tier == 'tier2':
                 results = loop.run_until_complete(run_tier2_expansion())
-                logger.info(f"Tier 2 expansion complete: {len(results.get('unique_names', []))} new seeds")
-            else:
+                logger.info(f"Tier 2 expansion complete: {len(results.get('total_unique', []))} unique companies")
+            elif tier == 'full':
                 results = loop.run_until_complete(run_full_expansion())
                 logger.info(f"Full expansion complete: {len(results.get('total_unique', []))} unique companies")
         finally:
@@ -234,7 +294,7 @@ def api_run_expansion(tier):
     
     return jsonify({
         'status': 'success',
-        'message': f'Seed expansion (Tier {tier}) started in background'
+        'message': f'Seed expansion ({tier}) started in background'
     })
 
 
@@ -257,32 +317,21 @@ def api_source_stats():
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/historical-data')
-def api_historical_data():
-    """Get monthly snapshot data for analytics page."""
-    try:
-        db = get_db()
-        # This is a placeholder; you'd need a method in database.py to get all snapshots
-        # For now, return a mock or a simple list from a simplified DB method if available
-        # Assuming database.py has a get_monthly_snapshots method
-        # snapshots = db.get_monthly_snapshots()
-        
-        # Mock historical data for rendering the chart
-        snapshots = [
-            {'snapshot_month': (datetime.utcnow() - timedelta(days=90)).isoformat(), 'total_jobs': 5000, 'total_companies': 100, 'avg_remote_pct': 30.5, 'avg_hybrid_pct': 15.0, 'avg_onsite_pct': 54.5},
-            {'snapshot_month': (datetime.utcnow() - timedelta(days=60)).isoformat(), 'total_jobs': 5500, 'total_companies': 110, 'avg_remote_pct': 31.0, 'avg_hybrid_pct': 16.0, 'avg_onsite_pct': 53.0},
-            {'snapshot_month': (datetime.utcnow() - timedelta(days=30)).isoformat(), 'total_jobs': 6200, 'total_companies': 125, 'avg_remote_pct': 32.5, 'avg_hybrid_pct': 14.5, 'avg_onsite_pct': 53.0},
-            {'snapshot_month': datetime.utcnow().isoformat(), 'total_jobs': get_stats().get('total_jobs', 0), 'total_companies': get_stats().get('total_companies', 0), 'avg_remote_pct': 35.0, 'avg_hybrid_pct': 15.0, 'avg_onsite_pct': 50.0},
-        ]
-        
-        return jsonify({'snapshots': snapshots})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
 def main():
     """Main entry point."""
     logger.info("Starting Job Intelligence Dashboard...")
+    
+    # FIX: Force initial database connection and wait for service health
+    try:
+        # The get_db() function now includes retry logic and will wait 
+        # for the database to become available before returning.
+        get_db()
+        logger.info("Initial database connection successful. Proceeding to start services.")
+    except Exception as e:
+        # If get_db() fails after all retries, log a fatal error and exit 
+        # to let the container restart (which triggers the retry again).
+        logger.fatal(f"Failed to initialize database connection. Shutting down. Error: {e}")
+        exit(1)
     
     # Start scheduler in background
     scheduler_thread = threading.Thread(target=start_scheduler, daemon=True)
@@ -292,6 +341,7 @@ def main():
     # Start Flask
     port = int(os.environ.get('PORT', 8080))
     logger.info(f"Starting Flask server on port {port}")
+    # The default Flask debug=False is crucial for production
     app.run(host='0.0.0.0', port=port, debug=False)
 
 
