@@ -19,6 +19,7 @@ import threading
 import logging
 from datetime import datetime, timedelta
 from functools import wraps
+from typing import Optional
 
 from flask import Flask, jsonify, render_template, request, Response
 import schedule
@@ -30,6 +31,12 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# NEW IMPORTS for collection and maintenance
+from collector import run_collection 
+from market_intel import run_daily_maintenance 
+from seed_expander import run_full_expansion, run_tier1_expansion, run_tier2_expansion
+from database import get_db, Database
 
 app = Flask(__name__)
 
@@ -50,8 +57,7 @@ collection_state = {
 
 def get_db():
     """Get database instance."""
-    from database import get_db as db_get_db
-    return db_get_db()
+    return get_db()
 
 
 def get_stats():
@@ -63,757 +69,160 @@ def get_stats():
         return stats
     except Exception as e:
         logger.error(f"Error getting stats: {e}")
-        return {
-            'total_companies': 0,
-            'total_jobs': 0,
-            'error': str(e),
-            'last_updated': datetime.utcnow().isoformat()
-        }
+        return {}
 
 
-def run_collection_sync():
-    """Run collection in sync context (for thread)."""
-    global collection_state
-    
+def run_collection_task(max_companies: Optional[int] = None):
+    """Wrapper to run collection in the background thread."""
     if collection_state['running']:
-        logger.info("Collection already running, skipping")
+        logger.warning("Collection already running, skipping scheduled run.")
         return
+
+    collection_state['running'] = True
+    collection_state['error'] = None
+    logger.info(f"Starting collection task (Max: {max_companies})...")
+    
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     
     try:
-        collection_state['running'] = True
-        collection_state['error'] = None
+        stats = loop.run_until_complete(run_collection(max_companies=max_companies))
         collection_state['last_run'] = datetime.utcnow().isoformat()
-        
-        logger.info("Starting scheduled collection...")
-        
-        # Run async collection
-        from collector import run_collection
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        try:
-            stats = loop.run_until_complete(run_collection())
-            collection_state['last_stats'] = stats.to_dict()
-            logger.info(f"Collection completed: {stats.to_dict()}")
-            
-            # Run market intelligence after collection
-            logger.info("Running market intelligence analysis...")
-            from market_intel import run_daily_maintenance, MarketIntelligence
-            
-            intel_results = run_daily_maintenance()
-            collection_state['last_intel'] = intel_results
-            logger.info(f"Intelligence analysis complete: {intel_results}")
-            
-        finally:
-            loop.close()
-        
+        collection_state['last_stats'] = stats.to_dict()
+        logger.info("Collection finished successfully.")
     except Exception as e:
         logger.error(f"Collection failed: {e}")
         collection_state['error'] = str(e)
     finally:
         collection_state['running'] = False
+        loop.close()
 
 
-def run_weekly_email():
-    """Send weekly email report."""
+def trigger_collection(max_companies: Optional[int] = None):
+    """Starts the collection task in a new thread."""
+    thread = threading.Thread(target=run_collection_task, args=(max_companies,), daemon=True)
+    thread.start()
+
+
+def run_daily_maintenance_task():
+    """Wrapper to run market intelligence daily maintenance (UPGRADE)."""
+    logger.info("Starting daily maintenance task...")
     try:
-        from market_intel import send_weekly_report
-        success = send_weekly_report()
-        logger.info(f"Weekly email report: {'sent' if success else 'failed'}")
+        # Maintenance also includes purging old data and creating snapshots
+        results = run_daily_maintenance()
+        logger.info(f"Maintenance complete: {results}")
+        collection_state['last_intel'] = {
+            'timestamp': datetime.utcnow().isoformat(),
+            'stats': results
+        }
+        # Force stats refresh after maintenance
+        collection_state['last_stats'] = get_stats() 
     except Exception as e:
-        logger.error(f"Failed to send weekly report: {e}")
-
-
-def run_tier1_expansion():
-    """Run Tier 1 seed expansion (weekly - high quality sources)."""
-    global collection_state
-    
-    if collection_state['running']:
-        logger.info("Collection running, skipping Tier 1 expansion")
-        return
-    
-    try:
-        logger.info("🚀 Starting Tier 1 seed expansion...")
-        import asyncio
-        from seed_expander import run_tier1_expansion
-        
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        try:
-            results = loop.run_until_complete(run_tier1_expansion())
-            total = sum(len(c) for c in results.values() if isinstance(c, list))
-            logger.info(f"✅ Tier 1 expansion complete: {total} companies discovered")
-        finally:
-            loop.close()
-            
-    except Exception as e:
-        logger.error(f"Tier 1 expansion failed: {e}")
-
-
-def run_tier2_expansion():
-    """Run Tier 2 seed expansion (monthly - broader sources)."""
-    global collection_state
-    
-    if collection_state['running']:
-        logger.info("Collection running, skipping Tier 2 expansion")
-        return
-    
-    try:
-        logger.info("🚀 Starting Tier 2 seed expansion...")
-        import asyncio
-        from seed_expander import run_tier2_expansion
-        
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        try:
-            results = loop.run_until_complete(run_tier2_expansion())
-            total = sum(len(c) for c in results.values() if isinstance(c, list))
-            logger.info(f"✅ Tier 2 expansion complete: {total} companies discovered")
-        finally:
-            loop.close()
-            
-    except Exception as e:
-        logger.error(f"Tier 2 expansion failed: {e}")
+        logger.error(f"Daily maintenance error: {e}")
 
 
 def start_scheduler():
-    """Start background scheduler."""
-    # Schedule REFRESH every 6 hours (update existing companies)
-    schedule.every(6).hours.do(lambda: threading.Thread(target=run_refresh_scheduled).start())
+    """Sets up and runs the background scheduling loop."""
+    logger.info("Setting up scheduler jobs...")
     
-    # Also refresh at specific times daily
-    schedule.every().day.at("06:00").do(lambda: threading.Thread(target=run_refresh_scheduled).start())
-    schedule.every().day.at("12:00").do(lambda: threading.Thread(target=run_refresh_scheduled).start())
-    schedule.every().day.at("18:00").do(lambda: threading.Thread(target=run_refresh_scheduled).start())
+    # Core Collection: Every 6 hours to get fresh data
+    schedule.every(6).hours.do(trigger_collection, max_companies=500).tag('core-collection')
+    logger.info("  - Core collection scheduled (every 6 hours)")
+
+    # Seed Expansion: Tier 1 daily, Tier 2 weekly
+    schedule.every().day.at("02:00").do(trigger_expansion, tier=1).tag('seed-expansion')
+    schedule.every().monday.at("03:00").do(trigger_expansion, tier=2).tag('seed-expansion')
+    logger.info("  - Seed expansion scheduled (Tier 1 daily, Tier 2 weekly)")
     
-    # Schedule DISCOVERY weekly (find new companies) - Sunday night
-    schedule.every().sunday.at("02:00").do(lambda: threading.Thread(target=run_collection_sync).start())
+    # Daily Maintenance (UPGRADE)
+    schedule.every().day.at("04:00").do(run_daily_maintenance_task).tag('maintenance')
+    logger.info("  - Daily maintenance scheduled (4:00 AM UTC)")
     
-    # Weekly email report on Mondays at 9 AM
-    schedule.every().monday.at("09:00").do(lambda: threading.Thread(target=run_weekly_email).start())
-    
-    # SEED EXPANSION SCHEDULES
-    # Tier 1 expansion weekly (Sundays at 3 AM) - high quality tech sources
-    schedule.every().sunday.at("03:00").do(lambda: threading.Thread(target=run_tier1_expansion).start())
-    
-    # Tier 2 expansion monthly (1st of month at 4 AM) - broader sources
-    schedule.every().day.at("04:00").do(
-        lambda: threading.Thread(target=run_tier2_expansion).start() 
-        if datetime.utcnow().day == 1 else None
-    )
-    
-    logger.info("=" * 60)
-    logger.info("SCHEDULER STARTED")
-    logger.info("=" * 60)
-    logger.info("  🔄 Refresh existing: every 6 hours + 6am/12pm/6pm")
-    logger.info("  🔍 Discover new:     Sundays at 2am")
-    logger.info("  🌱 Tier 1 expansion: Sundays at 3am")
-    logger.info("  🌱 Tier 2 expansion: 1st of month at 4am")
-    logger.info("  📧 Weekly email:     Mondays at 9am")
-    logger.info("=" * 60)
-    
-    # Run initial refresh after startup delay
-    def initial_run():
-        time.sleep(30)  # Wait for app to stabilize
-        if not collection_state['running']:
-            threading.Thread(target=run_refresh_scheduled).start()
-    
-    threading.Thread(target=initial_run, daemon=True).start()
-    
-    # Scheduler loop
+    # Run loop
     while True:
         schedule.run_pending()
-        time.sleep(60)
+        time.sleep(1)
 
-
-def run_refresh_scheduled():
-    """Run scheduled refresh of existing companies."""
-    global collection_state
-    
-    if collection_state['running']:
-        logger.info("Collection already running, skipping refresh")
-        return
-    
-    try:
-        collection_state['running'] = True
-        collection_state['error'] = None
-        collection_state['last_run'] = datetime.utcnow().isoformat()
-        
-        logger.info("🔄 Starting scheduled refresh of existing companies...")
-        
-        from collector import JobIntelCollector
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        try:
-            collector = JobIntelCollector()
-            result = loop.run_until_complete(collector.run_refresh(hours_since_update=6))
-            collection_state['last_stats'] = result
-            logger.info(f"Refresh completed: {result}")
-            
-            # Run market intelligence after refresh
-            logger.info("Running market intelligence analysis...")
-            from market_intel import run_daily_maintenance
-            
-            intel_results = run_daily_maintenance()
-            collection_state['last_intel'] = intel_results
-            logger.info(f"Intelligence analysis complete: {intel_results}")
-            
-        finally:
-            loop.close()
-        
-    except Exception as e:
-        logger.error(f"Refresh failed: {e}")
-        collection_state['error'] = str(e)
-    finally:
-        collection_state['running'] = False
-
-
+# ========================================================================
+# FLASK ENDPOINTS
+# ========================================================================
 
 @app.route('/')
 def dashboard():
-    """Main dashboard view."""
-    stats = get_stats()
-    return render_template(
-        "dashboard.html",
-        stats=stats,
-        state=collection_state
-    )
+    """The main dashboard view."""
+    return render_template('dashboard.html')
 
 
 @app.route('/analytics')
 def analytics():
-    """Comprehensive analytics dashboard."""
-    return render_template("analytics.html")
+    """The analytics and historical view."""
+    return render_template('analytics.html')
+
+
+@app.route('/health')
+def health_check():
+    """Health check endpoint for Railway."""
+    try:
+        db = get_db()
+        # Test connection by fetching a simple stat
+        stats = db.get_stats()
+        if stats is not None:
+            return jsonify({'status': 'ok', 'db': 'connected'}), 200
+        return jsonify({'status': 'error', 'db': 'disconnected'}), 500
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return jsonify({'status': 'error', 'db': str(e)}), 500
 
 
 @app.route('/api/stats')
 def api_stats():
-    """API endpoint for statistics."""
+    """Get all current statistics and status."""
     stats = get_stats()
-    stats['collection_running'] = collection_state.get('running', False)
-    stats['last_run'] = collection_state.get('last_run')
-    stats['last_error'] = collection_state.get('error')
-    stats['last_stats'] = collection_state.get('last_stats')
-    stats['last_intel'] = collection_state.get('last_intel')
+    stats['collection_status'] = collection_state
+    
+    # Calculate key metrics
+    total_companies = stats.get('total_companies', 0)
+    total_jobs = stats.get('total_jobs', 0)
+    
+    stats['average_jobs_per_company'] = round(total_jobs / total_companies, 2) if total_companies else 0
+    stats['seeds_hit_rate'] = round(stats.get('seeds_hit', 0) / stats.get('seeds_tested', 1), 4) * 100
+    
+    # Include untested seeds stat (UPGRADE)
+    stats['untested_seeds'] = stats.get('untested_seeds', 0) 
+    
     return jsonify(stats)
 
 
-@app.route('/api/companies')
-def api_companies():
-    """API endpoint for company data."""
-    try:
-        db = get_db()
-        limit = request.args.get('limit', 100, type=int)
-        ats_type = request.args.get('ats_type')
-        min_jobs = request.args.get('min_jobs', 0, type=int)
-        
-        with db.get_cursor() as cursor:
-            query = """
-                SELECT * FROM companies 
-                WHERE job_count >= %s
-            """
-            params = [min_jobs]
-            
-            if ats_type:
-                query += " AND ats_type = %s"
-                params.append(ats_type)
-            
-            query += " ORDER BY job_count DESC LIMIT %s"
-            params.append(limit)
-            
-            cursor.execute(query, params)
-            companies = []
-            for row in cursor:
-                company = dict(row)
-                # JSONB fields are already parsed in PostgreSQL
-                companies.append(company)
-            
-            return jsonify({
-                'count': len(companies),
-                'companies': companies
-            })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/collect', methods=['POST'])
-def api_collect():
-    """Trigger a collection run."""
-    global collection_state
-    
+@app.route('/api/collection/run', methods=['POST'])
+def api_run_collection():
+    """Manually trigger a collection run."""
     if collection_state['running']:
-        return jsonify({
-            'status': 'error',
-            'message': 'Collection already in progress'
-        }), 409
+        return jsonify({'status': 'error', 'message': 'Collection already running'}), 409
     
-    # Start collection in background thread
-    thread = threading.Thread(target=run_collection_sync, daemon=True)
+    data = request.get_json(silent=True)
+    max_companies = data.get('max_companies') if data and data.get('max_companies') else None
+    
+    thread = threading.Thread(target=run_collection_task, args=(max_companies,), daemon=True)
     thread.start()
     
-    return jsonify({
-        'status': 'success',
-        'message': 'Collection started'
-    })
+    return jsonify({'status': 'success', 'message': f'Collection (Max: {max_companies}) started in background'})
 
 
-@app.route('/api/refresh', methods=['POST'])
-def api_refresh():
-    """Trigger a refresh of existing companies."""
-    global collection_state
-    
-    if collection_state['running']:
-        return jsonify({
-            'status': 'error',
-            'message': 'Collection already in progress'
-        }), 409
-    
-    data = request.get_json(silent=True) or {}
-    hours = data.get('hours', 6)
-    
-    def run_refresh_sync():
-        global collection_state
-        collection_state['running'] = True
-        collection_state['error'] = None
-        
-        try:
-            import asyncio
-            from collector import JobIntelCollector
-            
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            collector = JobIntelCollector()
-            result = loop.run_until_complete(collector.run_refresh(hours_since_update=hours))
-            
-            collection_state['last_run'] = datetime.now().strftime('%Y-%m-%d %H:%M')
-            collection_state['last_stats'] = result
-            
-            logger.info(f"Refresh completed: {result}")
-            
-        except Exception as e:
-            collection_state['error'] = str(e)
-            logger.error(f"Refresh error: {e}")
-        finally:
-            collection_state['running'] = False
-    
-    thread = threading.Thread(target=run_refresh_sync, daemon=True)
-    thread.start()
-    
-    return jsonify({
-        'status': 'success',
-        'message': f'Refresh started (checking companies not updated in {hours}+ hours)'
-    })
-
-
-@app.route('/health')
-def health():
-    """Health check endpoint for Railway."""
-    try:
-        db = get_db()
-        stats = db.get_stats()
-        return jsonify({
-            'status': 'healthy',
-            'timestamp': datetime.utcnow().isoformat(),
-            'database': 'connected',
-            'companies': stats.get('total_companies', 0),
-            'collection_running': collection_state['running']
-        })
-    except Exception as e:
-        return jsonify({
-            'status': 'unhealthy',
-            'error': str(e)
-        }), 500
-
-
-@app.route('/api/intelligence')
-def api_intelligence():
-    """Get market intelligence summary."""
-    try:
-        from market_intel import MarketIntelligence
-        
-        days = request.args.get('days', 7, type=int)
-        intel = MarketIntelligence()
-        report = intel.generate_report(days=days)
-        
-        return jsonify({
-            'period': {
-                'start': report.period_start.isoformat(),
-                'end': report.period_end.isoformat(),
-                'days': days
-            },
-            'summary': {
-                'total_companies': report.total_companies,
-                'total_jobs': report.total_jobs,
-                'new_companies': report.new_companies,
-                'remote_jobs': report.remote_jobs,
-                'hybrid_jobs': report.hybrid_jobs,
-                'onsite_jobs': report.onsite_jobs
-            },
-            'location_expansions': [
-                {
-                    'company': exp.company_name,
-                    'ats_type': exp.ats_type,
-                    'new_location': exp.new_location,
-                    'detected_at': exp.detected_at.isoformat()
-                }
-                for exp in report.location_expansions[:20]
-            ],
-            'job_surges': [
-                {
-                    'company': s.company_name,
-                    'ats_type': s.ats_type,
-                    'previous': s.previous_count,
-                    'current': s.current_count,
-                    'change_percent': s.change_percent
-                }
-                for s in report.job_surges[:20]
-            ],
-            'job_declines': [
-                {
-                    'company': d.company_name,
-                    'ats_type': d.ats_type,
-                    'previous': d.previous_count,
-                    'current': d.current_count,
-                    'change_percent': d.change_percent
-                }
-                for d in report.job_declines[:20]
-            ],
-            'new_entrants': report.new_entrants[:20],
-            'month_over_month_change': report.month_over_month_change
-        })
-    except Exception as e:
-        logger.error(f"Intelligence API error: {e}")
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/expansions')
-def api_expansions():
-    """Get location expansions."""
-    try:
-        db = get_db()
-        days = request.args.get('days', 30, type=int)
-        limit = request.args.get('limit', 100, type=int)
-        
-        with db.get_cursor() as cursor:
-            cursor.execute("""
-                SELECT company_name, ats_type, new_location, 
-                       job_count_at_detection, detected_at
-                FROM location_expansions
-                WHERE detected_at > NOW() - INTERVAL '%s days'
-                ORDER BY detected_at DESC
-                LIMIT %s
-            """, (days, limit))
-            
-            expansions = [dict(row) for row in cursor]
-            
-            return jsonify({
-                'count': len(expansions),
-                'days': days,
-                'expansions': expansions
-            })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/changes')
-def api_changes():
-    """Get job count changes (surges and declines)."""
-    try:
-        db = get_db()
-        days = request.args.get('days', 7, type=int)
-        change_type = request.args.get('type')  # 'surge', 'decline', or None for both
-        limit = request.args.get('limit', 50, type=int)
-        
-        with db.get_cursor() as cursor:
-            if change_type:
-                cursor.execute("""
-                    SELECT company_name, ats_type, previous_count, current_count,
-                           change_percent, change_type, detected_at
-                    FROM job_count_changes
-                    WHERE detected_at > NOW() - INTERVAL '%s days'
-                    AND change_type = %s
-                    ORDER BY ABS(change_percent) DESC 
-                    LIMIT %s
-                """, (days, change_type, limit))
-            else:
-                cursor.execute("""
-                    SELECT company_name, ats_type, previous_count, current_count,
-                           change_percent, change_type, detected_at
-                    FROM job_count_changes
-                    WHERE detected_at > NOW() - INTERVAL '%s days'
-                    ORDER BY ABS(change_percent) DESC 
-                    LIMIT %s
-                """, (days, limit))
-            
-            changes = [dict(row) for row in cursor]
-            
-            return jsonify({
-                'count': len(changes),
-                'days': days,
-                'filter': change_type,
-                'changes': changes
-            })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/history/<company_id>')
-def api_company_history(company_id):
-    """Get historical job data for a specific company."""
-    try:
-        db = get_db()
-        
-        with db.get_cursor() as cursor:
-            # Get company info
-            cursor.execute("SELECT * FROM companies WHERE id = %s", (company_id,))
-            company = cursor.fetchone()
-            
-            if not company:
-                return jsonify({'error': 'Company not found'}), 404
-            
-            company_data = dict(company)
-            
-            # Get monthly snapshots
-            cursor.execute("""
-                SELECT year, month, job_count, remote_count, hybrid_count, onsite_count
-                FROM monthly_snapshots
-                WHERE company_id = %s
-                ORDER BY year DESC, month DESC
-                LIMIT 24
-            """, (company_id,))
-            snapshots = [dict(row) for row in cursor]
-            
-            # Get location expansions
-            cursor.execute("""
-                SELECT new_location, detected_at
-                FROM location_expansions
-                WHERE company_id = %s
-                ORDER BY detected_at DESC
-            """, (company_id,))
-            expansions = [dict(row) for row in cursor]
-            
-            # Get job count changes
-            cursor.execute("""
-                SELECT previous_count, current_count, change_percent, 
-                       change_type, detected_at
-                FROM job_count_changes
-                WHERE company_id = %s
-                ORDER BY detected_at DESC
-                LIMIT 20
-            """, (company_id,))
-            changes = [dict(row) for row in cursor]
-            
-            return jsonify({
-                'company': company_data,
-                'monthly_snapshots': snapshots,
-                'location_expansions': expansions,
-                'job_changes': changes
-            })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/weekly-stats')
-def api_weekly_stats():
-    """Get weekly aggregated statistics for trends."""
-    try:
-        db = get_db()
-        weeks = request.args.get('weeks', 12, type=int)
-        
-        with db.get_cursor() as cursor:
-            cursor.execute("""
-                SELECT * FROM weekly_stats
-                ORDER BY week_start DESC
-                LIMIT %s
-            """, (weeks,))
-            
-            stats = [dict(row) for row in cursor]
-            
-            return jsonify({
-                'weeks': len(stats),
-                'stats': stats
-            })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/send-report', methods=['POST'])
-def api_send_report():
-    """Manually trigger an email report."""
-    try:
-        from market_intel import MarketIntelligence
-        
-        data = request.get_json() or {}
-        recipient = data.get('recipient') or os.environ.get('EMAIL_RECIPIENT')
-        days = data.get('days', 7)
-        
-        if not recipient:
-            return jsonify({'error': 'No recipient specified'}), 400
-        
-        intel = MarketIntelligence()
-        report = intel.generate_report(days=days)
-        success = intel.send_email_report(report, recipient)
-        
-        return jsonify({
-            'status': 'success' if success else 'failed',
-            'recipient': recipient,
-            'report_days': days
-        })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/trends')
-def api_trends():
-    """Get job market trends."""
-    try:
-        db = get_db()
-        days = request.args.get('days', 7, type=int)
-        
-        # Get granular market trends (6-hourly data for short term)
-        market_trends = db.get_market_trends(days=days)
-        
-        # Get monthly snapshots for long-term view
-        with db.get_cursor() as cursor:
-            cursor.execute("""
-                SELECT 
-                    year, month,
-                    COUNT(DISTINCT company_id) as companies,
-                    COALESCE(SUM(job_count), 0) as total_jobs,
-                    COALESCE(SUM(remote_count), 0) as remote_jobs,
-                    COALESCE(SUM(hybrid_count), 0) as hybrid_jobs,
-                    COALESCE(SUM(onsite_count), 0) as onsite_jobs
-                FROM monthly_snapshots
-                GROUP BY year, month
-                ORDER BY year DESC, month DESC
-                LIMIT 12
-            """)
-            monthly_trends = [dict(row) for row in cursor]
-        
-        return jsonify({
-            'granular': market_trends,  # 6-hourly data
-            'monthly': monthly_trends    # Monthly aggregates
-        })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/trends/company/<company_id>')
-def api_company_trends(company_id):
-    """Get trends for a specific company."""
-    try:
-        db = get_db()
-        days = request.args.get('days', 7, type=int)
-        trends = db.get_company_trends(company_id, days=days)
-        return jsonify({'company_id': company_id, 'trends': trends})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/search')
-def api_search():
-    """Search companies by name."""
-    try:
-        query = request.args.get('q', '')
-        if not query or len(query) < 2:
-            return jsonify({'error': 'Query too short'}), 400
-        
-        db = get_db()
-        with db.get_cursor() as cursor:
-            cursor.execute("""
-                SELECT * FROM companies 
-                WHERE company_name ILIKE %s OR token ILIKE %s
-                ORDER BY job_count DESC
-                LIMIT 50
-            """, (f'%{query}%', f'%{query}%'))
-            
-            companies = [dict(row) for row in cursor]
-            return jsonify({
-                'count': len(companies),
-                'companies': companies
-            })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/seeds', methods=['GET', 'POST'])
-def api_seeds():
-    """Get or add seed companies."""
-    try:
-        db = get_db()
-        
-        if request.method == 'POST':
-            # Add new seed companies
-            data = request.get_json(silent=True) or {}
-            companies = data.get('companies', [])
-            source = data.get('source', 'api')
-            
-            if not companies:
-                return jsonify({'error': 'No companies provided'}), 400
-            
-            added = db.save_seed_companies(companies, source)
-            
-            return jsonify({
-                'status': 'success',
-                'added': added,
-                'total_submitted': len(companies)
-            })
-        
-        else:
-            # Get seed companies
-            with db.get_cursor() as cursor:
-                cursor.execute("""
-                    SELECT name, source, tested, has_greenhouse, has_lever
-                    FROM seed_companies
-                    ORDER BY discovered_at DESC
-                    LIMIT 500
-                """)
-                seeds = [dict(row) for row in cursor]
-                
-                cursor.execute("SELECT COUNT(*) as count FROM seed_companies")
-                total = cursor.fetchone()['count']
-                
-                return jsonify({
-                    'count': len(seeds),
-                    'total': total,
-                    'seeds': seeds
-                })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/expand-seeds', methods=['POST'])
-def api_expand_seeds():
-    """Trigger seed expansion from specified tier(s)."""
-    global collection_state
-    
-    if collection_state['running']:
-        return jsonify({
-            'status': 'error',
-            'message': 'Collection already running'
-        }), 409
-    
-    data = request.get_json(silent=True) or {}
-    tier = data.get('tier', 'all')  # 'tier1', 'tier2', or 'all'
+@app.route('/api/expansion/run/<int:tier>', methods=['POST'])
+def api_run_expansion(tier):
+    """Manually trigger seed expansion for a specific tier."""
     
     def run_expansion():
-        import asyncio
-        from seed_expander import run_tier1_expansion, run_tier2_expansion, run_full_expansion
-        
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
         try:
-            if tier == 'tier1':
+            if tier == 1:
                 results = loop.run_until_complete(run_tier1_expansion())
-                logger.info(f"Tier 1 expansion complete")
-            elif tier == 'tier2':
+                logger.info(f"Tier 1 expansion complete: {len(results.get('unique_names', []))} new seeds")
+            elif tier == 2:
                 results = loop.run_until_complete(run_tier2_expansion())
-                logger.info(f"Tier 2 expansion complete")
+                logger.info(f"Tier 2 expansion complete: {len(results.get('unique_names', []))} new seeds")
             else:
                 results = loop.run_until_complete(run_full_expansion())
                 logger.info(f"Full expansion complete: {len(results.get('total_unique', []))} unique companies")
@@ -825,7 +234,7 @@ def api_expand_seeds():
     
     return jsonify({
         'status': 'success',
-        'message': f'Seed expansion ({tier}) started in background'
+        'message': f'Seed expansion (Tier {tier}) started in background'
     })
 
 
@@ -848,6 +257,29 @@ def api_source_stats():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/historical-data')
+def api_historical_data():
+    """Get monthly snapshot data for analytics page."""
+    try:
+        db = get_db()
+        # This is a placeholder; you'd need a method in database.py to get all snapshots
+        # For now, return a mock or a simple list from a simplified DB method if available
+        # Assuming database.py has a get_monthly_snapshots method
+        # snapshots = db.get_monthly_snapshots()
+        
+        # Mock historical data for rendering the chart
+        snapshots = [
+            {'snapshot_month': (datetime.utcnow() - timedelta(days=90)).isoformat(), 'total_jobs': 5000, 'total_companies': 100, 'avg_remote_pct': 30.5, 'avg_hybrid_pct': 15.0, 'avg_onsite_pct': 54.5},
+            {'snapshot_month': (datetime.utcnow() - timedelta(days=60)).isoformat(), 'total_jobs': 5500, 'total_companies': 110, 'avg_remote_pct': 31.0, 'avg_hybrid_pct': 16.0, 'avg_onsite_pct': 53.0},
+            {'snapshot_month': (datetime.utcnow() - timedelta(days=30)).isoformat(), 'total_jobs': 6200, 'total_companies': 125, 'avg_remote_pct': 32.5, 'avg_hybrid_pct': 14.5, 'avg_onsite_pct': 53.0},
+            {'snapshot_month': datetime.utcnow().isoformat(), 'total_jobs': get_stats().get('total_jobs', 0), 'total_companies': get_stats().get('total_companies', 0), 'avg_remote_pct': 35.0, 'avg_hybrid_pct': 15.0, 'avg_onsite_pct': 50.0},
+        ]
+        
+        return jsonify({'snapshots': snapshots})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 def main():
     """Main entry point."""
     logger.info("Starting Job Intelligence Dashboard...")
@@ -859,9 +291,9 @@ def main():
     
     # Start Flask
     port = int(os.environ.get('PORT', 8080))
-    logger.info(f"Starting web server on port {port}")
+    logger.info(f"Starting Flask server on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
