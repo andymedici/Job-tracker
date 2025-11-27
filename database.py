@@ -2,23 +2,14 @@
 Database Module for PostgreSQL
 ==============================
 Handles all database operations with PostgreSQL for Railway deployment.
-
-Railway automatically provides DATABASE_URL environment variable when you
-add a PostgreSQL plugin to your project.
-
-Includes:
-- Connection pooling
-- Schema management
-- Seed company priority system
-- Source hit rate tracking
 """
 
 import os
 import json
 import logging
-import time # <-- ADDED for retry sleep
+import time
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from contextlib import contextmanager
 from urllib.parse import urlparse
 
@@ -29,72 +20,45 @@ from psycopg2 import pool
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-
 class Database:
-    """PostgreSQL database manager for Railway deployment."""
-    
     def __init__(self, database_url: str = None):
         self.database_url = database_url or os.getenv('DATABASE_URL')
-        
         if not self.database_url:
             raise ValueError("DATABASE_URL environment variable is required")
         
-        # Parse the URL for connection parameters
         self.conn_params = self._parse_database_url(self.database_url)
-        
-        # Create connection pool
-        self.pool = pool.ThreadedConnectionPool(
-            minconn=1,
-            maxconn=10,
-            **self.conn_params
-        )
-        
-        # Initialize schema
+        self.pool = pool.ThreadedConnectionPool(minconn=1, maxconn=10, **self.conn_params)
         self._init_schema()
     
     def _parse_database_url(self, url: str) -> Dict[str, Any]:
-        """Parse DATABASE_URL into connection parameters."""
         parsed = urlparse(url)
-        
         return {
             'host': parsed.hostname,
             'port': parsed.port or 5432,
-            'database': parsed.path[1:],  # Remove leading slash
+            'database': parsed.path[1:],
             'user': parsed.username,
             'password': parsed.password,
-            'sslmode': 'require'  # Railway requires SSL
+            'sslmode': 'require'
         }
     
     @contextmanager
-    def get_connection(self):
-        """Get a connection from the pool."""
+    def get_cursor(self, dict_cursor: bool = True):
         conn = self.pool.getconn()
         try:
-            yield conn
+            cursor_factory = RealDictCursor if dict_cursor else None
+            cursor = conn.cursor(cursor_factory=cursor_factory)
+            yield cursor
             conn.commit()
+            cursor.close()
         except Exception as e:
             conn.rollback()
             raise e
         finally:
             self.pool.putconn(conn)
     
-    @contextmanager
-    def get_cursor(self, dict_cursor: bool = True):
-        """Get a cursor with automatic connection handling."""
-        with self.get_connection() as conn:
-            cursor_factory = RealDictCursor if dict_cursor else None
-            cursor = conn.cursor(cursor_factory=cursor_factory)
-            try:
-                yield cursor
-            finally:
-                cursor.close()
-    
     def _init_schema(self):
-        """Initialize database schema."""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Main companies table
+        with self.get_cursor() as cursor:
+            # Companies Table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS companies (
                     id TEXT PRIMARY KEY,
@@ -110,11 +74,12 @@ class Database:
                     departments JSONB,
                     first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(ats_type, token)
                 )
             """)
             
-            # Individual jobs table
+            # Jobs Table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS jobs (
                     id TEXT PRIMARY KEY,
@@ -129,13 +94,56 @@ class Database:
                 )
             """)
             
-            # Monthly snapshots for trends
+            # Seed Companies (Queue)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS seed_companies (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT UNIQUE NOT NULL,
+                    token_slug TEXT, -- UPGRADE: Pre-calculated slug
+                    source TEXT,
+                    source_tier INTEGER DEFAULT 2,
+                    priority INTEGER DEFAULT 50,
+                    tested_count INTEGER DEFAULT 0, -- FIX: Ensure this column exists
+                    hit_count INTEGER DEFAULT 0,
+                    last_tested TIMESTAMP,
+                    discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Source Stats (FIX: Ensure schema matches queries)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS source_stats (
+                    source TEXT PRIMARY KEY,
+                    tier INTEGER DEFAULT 2,
+                    seeds_discovered INTEGER DEFAULT 0,
+                    seeds_tested INTEGER DEFAULT 0, -- FIX: Used in app.py
+                    seeds_found INTEGER DEFAULT 0,
+                    hit_rate REAL DEFAULT 0.0,
+                    enabled BOOLEAN DEFAULT TRUE,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Snapshots (6h granular)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS snapshots_6h (
+                    id SERIAL PRIMARY KEY,
+                    company_id TEXT NOT NULL,
+                    snapshot_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    job_count INTEGER,
+                    remote_count INTEGER,
+                    hybrid_count INTEGER,
+                    onsite_count INTEGER
+                )
+            """)
+            
+            # Monthly Snapshots
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS monthly_snapshots (
                     id SERIAL PRIMARY KEY,
                     company_id TEXT NOT NULL,
-                    year INTEGER NOT NULL,
-                    month INTEGER NOT NULL,
+                    year INTEGER,
+                    month INTEGER,
                     job_count INTEGER,
                     remote_count INTEGER,
                     hybrid_count INTEGER,
@@ -144,566 +152,308 @@ class Database:
                     UNIQUE(company_id, year, month)
                 )
             """)
-            
-            # Seed companies with priority system
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS seed_companies (
-                    name TEXT PRIMARY KEY,
-                    source TEXT,
-                    source_tier INTEGER DEFAULT 2,
-                    priority INTEGER DEFAULT 50,
-                    tested_count INTEGER DEFAULT 0,
-                    success_count INTEGER DEFAULT 0,
-                    last_tested TIMESTAMP,
-                    first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Job history archive (for location and job count change detection)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS job_history_archive (
-                    id SERIAL PRIMARY KEY,
-                    company_id TEXT NOT NULL,
-                    job_count INTEGER,
-                    locations_json JSONB,
-                    departments_json JSONB,
-                    archive_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(company_id, archive_date)
-                )
-            """)
-            
-            # Location expansion alerts
+
+            # Market Intel Tables
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS location_expansions (
                     id SERIAL PRIMARY KEY,
                     company_id TEXT NOT NULL,
-                    new_location TEXT NOT NULL,
+                    new_location TEXT,
                     job_count_at_detection INTEGER,
                     detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(company_id, new_location)
                 )
             """)
             
-            # Job count change alerts
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS job_count_changes (
                     id SERIAL PRIMARY KEY,
                     company_id TEXT NOT NULL,
                     previous_count INTEGER,
                     current_count INTEGER,
-                    change_percent DECIMAL,
-                    change_type TEXT, -- 'surge', 'decline', 'new'
+                    change_percent REAL,
+                    change_type TEXT,
                     detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
             
-            # Source statistics (for seed expander performance)
+            # Job History Archive (for diffing)
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS source_stats (
-                    source TEXT PRIMARY KEY,
-                    seeds_discovered INTEGER DEFAULT 0,
-                    seeds_tested INTEGER DEFAULT 0,
-                    hit_rate DECIMAL DEFAULT 0.0,
-                    enabled BOOLEAN DEFAULT TRUE,
-                    last_run TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Market-wide hourly totals (for trend charts)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS market_snapshots (
+                CREATE TABLE IF NOT EXISTS job_history_archive (
                     id SERIAL PRIMARY KEY,
-                    snapshot_time TIMESTAMP NOT NULL UNIQUE DEFAULT CURRENT_TIMESTAMP,
-                    total_companies INTEGER,
-                    total_jobs INTEGER,
-                    total_remote INTEGER,
-                    total_hybrid INTEGER,
-                    total_onsite INTEGER,
-                    greenhouse_companies INTEGER,
-                    greenhouse_jobs INTEGER,
-                    lever_companies INTEGER,
-                    lever_jobs INTEGER
+                    company_id TEXT NOT NULL,
+                    archive_date DATE NOT NULL,
+                    locations_json JSONB,
+                    UNIQUE(company_id, archive_date)
                 )
             """)
-            
-            # Weekly aggregated stats
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS weekly_stats (
-                    id SERIAL PRIMARY KEY,
-                    week_start DATE NOT NULL UNIQUE,
-                    total_companies INTEGER,
-                    total_jobs INTEGER,
-                    remote_jobs INTEGER,
-                    hybrid_jobs INTEGER,
-                    onsite_jobs INTEGER,
-                    new_companies INTEGER
-                )
-            """)
-            
-            conn.commit()
 
+    # --- CORE UPSERT METHODS ---
 
-    # ==================== PUBLIC API ====================
-    
-    def upsert_company(self, company_data: Dict):
-        """Insert or update a company record."""
-        # ... (implementation omitted for brevity, no changes needed)
+    def upsert_company(self, data: Dict):
         with self.get_cursor() as cursor:
             cursor.execute("""
                 INSERT INTO companies (
-                    id, ats_type, token, company_name, job_count, remote_count, hybrid_count, onsite_count, last_job_count, locations, departments, first_seen, last_seen, last_updated
-                ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-                )
+                    id, ats_type, token, company_name, job_count, remote_count, 
+                    hybrid_count, onsite_count, last_job_count, locations, departments, 
+                    last_seen, last_updated
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
                 ON CONFLICT (id) DO UPDATE SET
+                    last_job_count = companies.job_count,
                     job_count = EXCLUDED.job_count,
                     remote_count = EXCLUDED.remote_count,
                     hybrid_count = EXCLUDED.hybrid_count,
                     onsite_count = EXCLUDED.onsite_count,
                     locations = EXCLUDED.locations,
                     departments = EXCLUDED.departments,
-                    last_seen = CURRENT_TIMESTAMP,
-                    last_updated = CURRENT_TIMESTAMP
+                    last_seen = NOW(),
+                    last_updated = NOW()
             """, (
-                company_data['id'],
-                company_data['ats_type'],
-                company_data['token'],
-                company_data['company_name'],
-                company_data.get('job_count', 0),
-                company_data.get('remote_count', 0),
-                company_data.get('hybrid_count', 0),
-                company_data.get('onsite_count', 0),
-                company_data.get('job_count', 0), # last_job_count is initially the same as job_count
-                json.dumps(company_data.get('locations', [])),
-                json.dumps(company_data.get('departments', []))
+                data['id'], data['ats_type'], data['token'], data['company_name'],
+                data['job_count'], data['remote_count'], data['hybrid_count'], data['onsite_count'],
+                data['job_count'], # Initial last_job_count
+                json.dumps(data.get('locations', [])),
+                json.dumps(data.get('departments', []))
             ))
 
-    def update_company_job_count(self, company_id: str, new_count: int):
-        """Update job count and last_job_count."""
-        # ... (implementation omitted for brevity, no changes needed)
-        with self.get_cursor() as cursor:
-            # First, fetch the current job_count
-            cursor.execute("SELECT job_count FROM companies WHERE id = %s", (company_id,))
-            row = cursor.fetchone()
-            if row:
-                last_count = row['job_count']
+    def upsert_seed_company(self, name: str, token_slug: str, source: str, tier: int, priority: int):
+        """Insert seed with token slug logic."""
+        try:
+            with self.get_cursor() as cursor:
                 cursor.execute("""
-                    UPDATE companies 
-                    SET 
-                        job_count = %s,
-                        last_job_count = %s,
-                        last_updated = CURRENT_TIMESTAMP
-                    WHERE id = %s
-                """, (new_count, last_count, company_id))
+                    INSERT INTO seed_companies (name, token_slug, source, source_tier, priority)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (name) DO NOTHING
+                """, (name, token_slug, source, tier, priority))
+                
+                # Update source stats discovery count
+                if cursor.rowcount > 0:
+                    cursor.execute("""
+                        INSERT INTO source_stats (source, tier, seeds_discovered) 
+                        VALUES (%s, %s, 1)
+                        ON CONFLICT (source) DO UPDATE SET 
+                            seeds_discovered = source_stats.seeds_discovered + 1
+                    """, (source, tier))
+        except Exception as e:
+            logger.error(f"Seed upsert error: {e}")
 
-    def delete_stale_jobs(self, company_id: str, last_seen_before: datetime):
-        """Delete jobs for a company that haven't been seen since last_seen_before."""
-        # ... (implementation omitted for brevity, no changes needed)
-        with self.get_cursor() as cursor:
-            cursor.execute("""
-                DELETE FROM jobs 
-                WHERE company_id = %s AND last_seen < %s
-            """, (company_id, last_seen_before))
+    # --- SEED FETCHING FOR COLLECTOR ---
 
-    def upsert_job(self, job_data: Dict):
-        """Insert or update a job record."""
-        # ... (implementation omitted for brevity, no changes needed)
-        with self.get_cursor() as cursor:
-            cursor.execute("""
-                INSERT INTO jobs (
-                    id, company_id, title, location, department, work_type, url, first_seen, last_seen
-                ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-                )
-                ON CONFLICT (id) DO UPDATE SET
-                    title = EXCLUDED.title,
-                    location = EXCLUDED.location,
-                    department = EXCLUDED.department,
-                    work_type = EXCLUDED.work_type,
-                    url = EXCLUDED.url,
-                    last_seen = CURRENT_TIMESTAMP
-            """, (
-                job_data['id'],
-                job_data['company_id'],
-                job_data['title'],
-                job_data.get('location'),
-                job_data.get('department'),
-                job_data.get('work_type'),
-                job_data.get('url')
-            ))
-
-    def get_seeds_for_collection(self, limit: int = 500) -> List[Dict]:
+    def get_seeds_for_collection(self, limit: int = 500) -> List[Tuple[int, str, str, str]]:
         """
-        Selects seeds for collection based on priority and recency.
-        Prioritizes: 1. Untested, 2. High Priority, 3. Oldest last_tested.
+        Returns list of (id, name, token_slug, source).
+        Prioritizes: Untested -> High Priority -> Oldest Tested
         """
-        # ... (implementation omitted for brevity, no changes needed)
         with self.get_cursor() as cursor:
             cursor.execute("""
-                SELECT name, source, source_tier, priority 
+                SELECT id, name, token_slug, source 
                 FROM seed_companies
+                WHERE (last_tested IS NULL OR last_tested < NOW() - INTERVAL '7 days')
+                AND tested_count < 5
                 ORDER BY 
-                    CASE WHEN tested_count = 0 THEN 0 ELSE 1 END, -- Untested first
-                    priority DESC,                           -- Then by priority
-                    last_tested ASC                          -- Then by staleness
+                    CASE WHEN tested_count = 0 THEN 0 ELSE 1 END ASC,
+                    priority DESC,
+                    last_tested ASC
                 LIMIT %s
             """, (limit,))
-            return list(cursor.fetchall())
-            
-    def update_seed_stats(self, name: str, success: bool):
-        """Update seed company's tested and success counts."""
-        # ... (implementation omitted for brevity, no changes needed)
-        try:
-            with self.get_cursor() as cursor:
-                if success:
-                    cursor.execute("""
-                        UPDATE seed_companies 
-                        SET tested_count = tested_count + 1, 
-                            success_count = success_count + 1,
-                            last_tested = CURRENT_TIMESTAMP
-                        WHERE name = %s
-                    """, (name,))
-                else:
-                    cursor.execute("""
-                        UPDATE seed_companies 
-                        SET tested_count = tested_count + 1,
-                            last_tested = CURRENT_TIMESTAMP
-                        WHERE name = %s
-                    """, (name,))
-        except Exception as e:
-            logger.error(f"Error updating seed stats for {name}: {e}")
-            
-    def upsert_seed_companies(self, companies: List[str], source: str, tier: int, priority: Optional[int] = None) -> int:
-        """Insert new seed companies with priority."""
-        # ... (implementation omitted for brevity, no changes needed)
-        # Default priorities by tier
-        if priority is None:
-            priority = {1: 80, 2: 50, 3: 30}.get(tier, 50)
-            
-        added = 0
-        try:
-            with self.get_cursor() as cursor:
-                for company in companies:
-                    try:
-                        cursor.execute("""
-                            INSERT INTO seed_companies (name, source, source_tier, priority)
-                            VALUES (%s, %s, %s, %s)
-                            ON CONFLICT (name) DO NOTHING
-                        """, (company, source, tier, priority))
-                        added += cursor.rowcount
-                    except Exception as e:
-                        logger.error(f"Error upserting seed {company}: {e}")
-            self.update_source_stats(source, added, 0, 0.0)
-        except Exception as e:
-            logger.error(f"Error upserting batch for source {source}: {e}")
-            
-        return added
+            # Ensure token_slug is populated (fallback to name if null)
+            return [(r['id'], r['name'], r['token_slug'] or r['name'].lower(), r['source']) for r in cursor]
 
-    def update_source_stats(self, source: str, discovered: int, tested: int, hit_rate: float):
-        """Update statistics for a seed source."""
-        # ... (implementation omitted for brevity, no changes needed)
-        try:
-            with self.get_cursor() as cursor:
-                # Use a transaction to ensure integrity
-                cursor.execute("""
-                    INSERT INTO source_stats (source, seeds_discovered, seeds_tested, hit_rate)
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (source) DO UPDATE SET
-                        seeds_discovered = source_stats.seeds_discovered + EXCLUDED.seeds_discovered,
-                        seeds_tested = source_stats.seeds_tested + EXCLUDED.seeds_tested,
-                        hit_rate = EXCLUDED.hit_rate,
-                        last_run = CURRENT_TIMESTAMP
-                """, (source, discovered, tested, hit_rate))
-        except Exception as e:
-            logger.error(f"Error updating source stats for {source}: {e}")
+    def mark_seed_result(self, seed_id: int, source: str, found: bool):
+        """Updates seed metrics and source stats."""
+        with self.get_cursor() as cursor:
+            # Update seed
+            cursor.execute("""
+                UPDATE seed_companies 
+                SET tested_count = tested_count + 1,
+                    hit_count = hit_count + %s,
+                    last_tested = NOW()
+                WHERE id = %s
+            """, (1 if found else 0, seed_id))
             
-    def get_source_stats(self) -> List[Dict]:
-        """Get source statistics."""
-        # ... (implementation omitted for brevity, no changes needed)
-        try:
-            with self.get_cursor() as cursor:
-                cursor.execute("""
-                    SELECT source, seeds_discovered, seeds_tested, hit_rate, enabled, last_run
-                    FROM source_stats
-                    ORDER BY hit_rate DESC
-                """)
-                return list(cursor.fetchall())
-        except:
-            return []
+            # Update Source Stats
+            cursor.execute("""
+                UPDATE source_stats
+                SET seeds_tested = seeds_tested + 1,
+                    seeds_found = seeds_found + %s,
+                    hit_rate = (seeds_found + %s)::decimal / (seeds_tested + 1),
+                    last_updated = NOW()
+                WHERE source = %s
+            """, (1 if found else 0, 1 if found else 0, source))
 
-    def get_high_performing_sources(self, min_tested: int, min_hit_rate: float) -> List[str]:
-        """Get sources with good hit rates."""
-        # ... (implementation omitted for brevity, no changes needed)
-        try:
-            with self.get_cursor() as cursor:
-                cursor.execute("""
-                    SELECT source FROM source_stats
-                    WHERE seeds_tested >= %s AND hit_rate >= %s AND enabled = TRUE
-                    ORDER BY hit_rate DESC
-                """, (min_tested, min_hit_rate))
-                return [row['source'] for row in cursor]
-        except:
-            return []
-    
-    def disable_low_performing_source(self, source: str):
-        """Disable a source with poor hit rate."""
-        # ... (implementation omitted for brevity, no changes needed)
-        try:
-            with self.get_cursor() as cursor:
-                cursor.execute("""
-                    UPDATE source_stats SET enabled = FALSE WHERE source = %s
-                """, (source,))
-                logger.info(f"Disabled low-performing source: {source}")
-        except Exception as e:
-            logger.error(f"Error disabling source: {e}")
+    # --- ANALYTICS QUERIES FOR APP.PY (RESTORED) ---
+
+    def get_stats(self) -> Dict:
+        """Global stats for dashboard."""
+        with self.get_cursor() as cursor:
+            stats = {}
+            # Totals
+            cursor.execute("SELECT COUNT(*) as c, SUM(job_count) as j, SUM(remote_count) as r, SUM(hybrid_count) as h, SUM(onsite_count) as o FROM companies")
+            row = cursor.fetchone()
+            stats['total_companies'] = row['c'] or 0
+            stats['total_jobs'] = row['j'] or 0
+            stats['remote_jobs'] = row['r'] or 0
+            stats['hybrid_jobs'] = row['h'] or 0
+            stats['onsite_jobs'] = row['o'] or 0
             
-    def create_monthly_snapshot(self):
-        """Create a new monthly job snapshot for all companies."""
-        # ... (implementation omitted for brevity, no changes needed)
-        now = datetime.utcnow()
-        year = now.year
-        month = now.month
+            # ATS Breakdown
+            cursor.execute("SELECT ats_type, COUNT(*) as c, SUM(job_count) as j FROM companies GROUP BY ats_type")
+            for r in cursor:
+                stats[f"{r['ats_type']}_companies"] = r['c']
+                stats[f"{r['ats_type']}_jobs"] = r['j']
+            
+            # Seed Stats (Using correct column names)
+            cursor.execute("SELECT COUNT(*) as total, SUM(tested_count) as tested FROM seed_companies")
+            s_row = cursor.fetchone()
+            stats['total_seeds'] = s_row['total'] or 0
+            stats['seeds_tested'] = s_row['tested'] or 0 # The fix for the error log
+            
+            # Top Hiring
+            cursor.execute("SELECT company_name, ats_type, location, job_count, remote_count FROM companies ORDER BY job_count DESC LIMIT 5")
+            stats['top_hiring_companies'] = list(cursor)
+            
+            return stats
+
+    def get_history(self, days: int = 7) -> List[Dict]:
+        """Get daily aggregates for charts."""
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        with self.get_cursor() as cursor:
+            # Union snapshots_6h (recent) with averaged monthly for older data if needed
+            # Simplified: just query snapshots_6h aggregated by day
+            cursor.execute("""
+                SELECT 
+                    DATE_TRUNC('day', snapshot_time) as timestamp,
+                    SUM(job_count) as total_jobs,
+                    SUM(remote_count) as remote_jobs,
+                    SUM(hybrid_count) as hybrid_jobs,
+                    SUM(onsite_count) as onsite_jobs,
+                    SUM(CASE WHEN c.ats_type='greenhouse' THEN s.job_count ELSE 0 END) as greenhouse_jobs,
+                    SUM(CASE WHEN c.ats_type='lever' THEN s.job_count ELSE 0 END) as lever_jobs
+                FROM snapshots_6h s
+                JOIN companies c ON s.company_id = c.id
+                WHERE snapshot_time > %s
+                GROUP BY 1
+                ORDER BY 1
+            """, (cutoff,))
+            return list(cursor)
+
+    def get_companies(self, search_term: str = "", platform_filter: str = "", sort_by: str = "jobs", limit: int = 100) -> List[Dict]:
+        """Rich filtering for companies page."""
+        query = "SELECT * FROM companies WHERE 1=1"
+        params = []
+        
+        if search_term:
+            query += " AND (company_name ILIKE %s OR ats_type ILIKE %s)"
+            params.extend([f"%{search_term}%", f"%{search_term}%"])
+        if platform_filter:
+            query += " AND ats_type = %s"
+            params.append(platform_filter)
+            
+        if sort_by == 'jobs':
+            query += " ORDER BY job_count DESC"
+        elif sort_by == 'remote':
+            query += " ORDER BY remote_count DESC"
+        elif sort_by == 'name':
+            query += " ORDER BY company_name ASC"
+            
+        query += " LIMIT %s"
+        params.append(limit)
         
         with self.get_cursor() as cursor:
-            # Insert the latest job count for all companies
+            cursor.execute(query, tuple(params))
+            return list(cursor)
+
+    def get_job_count_changes(self, days: int, change_percent_threshold: float) -> Tuple[List, List]:
+        """Get surges and declines."""
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        with self.get_cursor() as cursor:
+            # Surges
+            cursor.execute("""
+                SELECT j.*, c.company_name, c.ats_type 
+                FROM job_count_changes j JOIN companies c ON j.company_id = c.id
+                WHERE detected_at > %s AND change_type = 'surge'
+                ORDER BY change_percent DESC LIMIT 50
+            """, (cutoff,))
+            surges = list(cursor)
+            
+            # Declines
+            cursor.execute("""
+                SELECT j.*, c.company_name, c.ats_type 
+                FROM job_count_changes j JOIN companies c ON j.company_id = c.id
+                WHERE detected_at > %s AND change_type = 'decline'
+                ORDER BY change_percent ASC LIMIT 50
+            """, (cutoff,))
+            declines = list(cursor)
+            return surges, declines
+
+    def get_location_expansions(self, days: int) -> List[Dict]:
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        with self.get_cursor() as cursor:
+            cursor.execute("""
+                SELECT l.*, c.company_name, c.ats_type
+                FROM location_expansions l JOIN companies c ON l.company_id = c.id
+                WHERE detected_at > %s
+                ORDER BY detected_at DESC LIMIT 50
+            """, (cutoff,))
+            return list(cursor)
+
+    def get_location_stats(self, top_n: int = None) -> List[Dict]:
+        """Unpack JSON locations and count them."""
+        with self.get_cursor() as cursor:
+            # This query unpacks the JSON array of locations and counts frequency
+            cursor.execute("""
+                SELECT 
+                    TRIM(jsonb_array_elements_text(locations)) as location,
+                    COUNT(*) as total_companies
+                FROM companies
+                WHERE locations IS NOT NULL
+                GROUP BY 1
+                ORDER BY 2 DESC
+                LIMIT %s
+            """, (top_n or 100,))
+            return list(cursor)
+
+    def get_source_stats(self) -> List[Dict]:
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT * FROM source_stats ORDER BY hit_rate DESC")
+            return list(cursor)
+    
+    def get_high_performing_sources(self, min_tested=50, min_hit_rate=0.01):
+        with self.get_cursor() as cursor:
+            cursor.execute("SELECT source FROM source_stats WHERE seeds_tested > %s AND hit_rate > %s", (min_tested, min_hit_rate))
+            return [r['source'] for r in cursor]
+
+    # --- SNAPSHOT LOGIC ---
+    def create_6h_snapshots(self):
+        with self.get_cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO snapshots_6h (company_id, job_count, remote_count, hybrid_count, onsite_count)
+                SELECT id, job_count, remote_count, hybrid_count, onsite_count FROM companies
+            """)
+            # Cleanup > 30 days
+            cursor.execute("DELETE FROM snapshots_6h WHERE snapshot_time < NOW() - INTERVAL '30 days'")
+
+    def create_monthly_snapshot(self):
+        with self.get_cursor() as cursor:
+            now = datetime.utcnow()
             cursor.execute("""
                 INSERT INTO monthly_snapshots (company_id, year, month, job_count, remote_count, hybrid_count, onsite_count)
                 SELECT id, %s, %s, job_count, remote_count, hybrid_count, onsite_count FROM companies
-                ON CONFLICT (company_id, year, month) DO UPDATE SET
-                    job_count = EXCLUDED.job_count,
-                    remote_count = EXCLUDED.remote_count,
-                    hybrid_count = EXCLUDED.hybrid_count,
-                    onsite_count = EXCLUDED.onsite_count
-            """, (year, month))
-            
-            # Also create a market-wide hourly snapshot
-            self.create_market_snapshot()
-            
-    def create_market_snapshot(self):
-        """Create an hourly market trend snapshot."""
-        # ... (implementation omitted for brevity, no changes needed)
-        now = datetime.utcnow()
-        snapshot_time = now.replace(minute=0, second=0, microsecond=0)
-        
-        with self.get_cursor() as cursor:
-            # Calculate total stats
-            cursor.execute("""
-                SELECT 
-                    COUNT(id) as total_companies, 
-                    COALESCE(SUM(job_count), 0) as total_jobs,
-                    COALESCE(SUM(remote_count), 0) as total_remote,
-                    COALESCE(SUM(hybrid_count), 0) as total_hybrid,
-                    COALESCE(SUM(onsite_count), 0) as total_onsite
-                FROM companies
-            """)
-            total_stats = cursor.fetchone()
-            
-            # Calculate ATS-specific stats
-            cursor.execute("""
-                SELECT ats_type, COUNT(id) as count, COALESCE(SUM(job_count), 0) as jobs 
-                FROM companies GROUP BY ats_type
-            """)
-            ats_stats = {row['ats_type']: row for row in cursor}
-            
-            greenhouse_companies = ats_stats.get('greenhouse', {}).get('count', 0)
-            greenhouse_jobs = ats_stats.get('greenhouse', {}).get('jobs', 0)
-            lever_companies = ats_stats.get('lever', {}).get('count', 0)
-            lever_jobs = ats_stats.get('lever', {}).get('jobs', 0)
-            
-            cursor.execute("""
-                INSERT INTO market_snapshots (snapshot_time, total_companies, total_jobs, total_remote, total_hybrid, total_onsite, greenhouse_companies, greenhouse_jobs, lever_companies, lever_jobs)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (snapshot_time) DO UPDATE SET
-                    total_companies = EXCLUDED.total_companies,
-                    total_jobs = EXCLUDED.total_jobs,
-                    total_remote = EXCLUDED.total_remote,
-                    total_hybrid = EXCLUDED.total_hybrid,
-                    total_onsite = EXCLUDED.total_onsite,
-                    greenhouse_companies = EXCLUDED.greenhouse_companies,
-                    greenhouse_jobs = EXCLUDED.greenhouse_jobs,
-                    lever_companies = EXCLUDED.lever_companies,
-                    lever_jobs = EXCLUDED.lever_jobs
-            """, (
-                snapshot_time,
-                total_stats['total_companies'],
-                total_stats['total_jobs'],
-                total_stats['total_remote'],
-                total_stats['total_hybrid'],
-                total_stats['total_onsite'],
-                greenhouse_companies,
-                greenhouse_jobs,
-                lever_companies,
-                lever_jobs
-            ))
-            
-    def get_stats(self) -> Dict:
-        """Get database statistics."""
-        # ... (implementation omitted for brevity, no changes needed)
-        try:
-            with self.get_cursor() as cursor:
-                stats = {}
-                
-                # Company counts by ATS type
-                cursor.execute("""
-                    SELECT ats_type, COUNT(*) as count, COALESCE(SUM(job_count), 0) as jobs 
-                    FROM companies 
-                    GROUP BY ats_type
-                """)
-                for row in cursor:
-                    stats[f"{row['ats_type']}_companies"] = row['count']
-                    stats[f"{row['ats_type']}_jobs"] = row['jobs']
-                    
-                # Total counts
-                stats['total_companies'] = stats.get('greenhouse_companies', 0) + stats.get('lever_companies', 0)
-                stats['total_jobs'] = stats.get('greenhouse_jobs', 0) + stats.get('lever_jobs', 0)
-                
-                # Work type breakdown
-                cursor.execute("""
-                    SELECT 
-                        COALESCE(SUM(remote_count), 0) as total_remote,
-                        COALESCE(SUM(hybrid_count), 0) as total_hybrid,
-                        COALESCE(SUM(onsite_count), 0) as total_onsite
-                    FROM companies
-                """)
-                work_type_stats = cursor.fetchone()
-                stats.update(work_type_stats)
-                
-                # Seed stats
-                cursor.execute("""
-                    SELECT COUNT(*) as total_seeds, COALESCE(SUM(tested_count), 0) as seeds_tested 
-                    FROM seed_companies
-                """)
-                seed_stats = cursor.fetchone()
-                stats.update(seed_stats)
-                
-                # Market Trend (Last 7 days)
-                cursor.execute("""
-                    SELECT total_jobs FROM market_snapshots
-                    WHERE snapshot_time >= (NOW() - INTERVAL '7 days')
-                    ORDER BY snapshot_time DESC
-                """)
-                jobs_history = [row['total_jobs'] for row in cursor]
-                stats['job_trend'] = jobs_history
-                
-                return stats
-        except Exception as e:
-            logger.error(f"Error fetching stats: {e}")
-            return {}
+                ON CONFLICT (company_id, year, month) DO UPDATE SET job_count = EXCLUDED.job_count
+            """, (now.year, now.month))
 
-    def get_company_details(self, company_id: str) -> Optional[Dict]:
-        """Get all details for a single company."""
-        # ... (implementation omitted for brevity, no changes needed)
-        try:
-            with self.get_cursor() as cursor:
-                # Get company core data
-                cursor.execute("SELECT * FROM companies WHERE id = %s", (company_id,))
-                company = cursor.fetchone()
-                if not company:
-                    return None
-                    
-                # Get job list
-                cursor.execute("""
-                    SELECT title, location, department, work_type, url 
-                    FROM jobs 
-                    WHERE company_id = %s 
-                    ORDER BY title ASC
-                """, (company_id,))
-                company['jobs'] = list(cursor.fetchall())
-                
-                # Get monthly snapshots
-                cursor.execute("""
-                    SELECT year, month, job_count, remote_count, hybrid_count, onsite_count, snapshot_date FROM monthly_snapshots
-                    WHERE company_id = %s 
-                    ORDER BY year DESC, month DESC 
-                    LIMIT 24
-                """, (company_id,))
-                company['snapshots'] = list(cursor.fetchall())
-                
-                # Get location expansions
-                cursor.execute("""
-                    SELECT new_location, detected_at, job_count_at_detection FROM location_expansions 
-                    WHERE company_id = %s 
-                    ORDER BY detected_at DESC
-                """, (company_id,))
-                company['expansions'] = list(cursor.fetchall())
-                
-                # Get job count changes
-                cursor.execute("""
-                    SELECT previous_count, current_count, change_percent, change_type, detected_at 
-                    FROM job_count_changes 
-                    WHERE company_id = %s 
-                    ORDER BY detected_at DESC
-                    LIMIT 10
-                """, (company_id,))
-                company['changes'] = list(cursor.fetchall())
-                
-                return dict(company)
-        except Exception as e:
-            logger.error(f"Error fetching company details for {company_id}: {e}")
-            return None
-
-    def get_market_trends(self, days: int = 30) -> List[Dict]:
-        """Get market trends for charting."""
-        # ... (implementation omitted for brevity, no changes needed)
-        try:
-            with self.get_cursor() as cursor:
-                cursor.execute("""
-                    SELECT snapshot_time, total_jobs, total_companies, total_remote, total_hybrid, total_onsite
-                    FROM market_snapshots
-                    WHERE snapshot_time >= (NOW() - INTERVAL '30 days')
-                    ORDER BY snapshot_time ASC
-                """, (days,))
-                return list(cursor.fetchall())
-        except Exception as e:
-            logger.error(f"Error fetching market trends: {e}")
-            return []
-            
-    def test_connection(self):
-        """Test the connection by running a simple query."""
-        with self.get_cursor(dict_cursor=False) as cursor:
-            cursor.execute("SELECT 1")
-            return cursor.fetchone()[0] == 1
-            
-    def close(self):
-        """Close all connections."""
-        if self.pool:
-            self.pool.closeall()
-
-
-# Singleton instance
-_db_instance: Optional[Database] = None
-
-
-def get_db(max_retries: int = 15, delay: int = 2) -> Database:
-    """
-    Get or create database instance with connection retry logic for deployment resilience.
-    
-    This function waits for the database service to be ready, preventing
-    a fatal error on initial container startup.
-    """
+# Singleton
+_db_instance = None
+def get_db(max_retries=15, delay=2):
     global _db_instance
-    
     if _db_instance is None:
-        logger.info("Attempting to initialize database connection pool...")
-        
-        # FIX: Added retry logic
         for attempt in range(max_retries):
             try:
                 _db_instance = Database()
-                logger.info("Database connection pool initialized successfully.")
                 return _db_instance
             except Exception as e:
                 if attempt < max_retries - 1:
-                    logger.warning(f"Database connection failed (Attempt {attempt + 1}/{max_retries}). Retrying in {delay}s. Error: {e}")
                     time.sleep(delay)
                 else:
-                    logger.error(f"FATAL: Database connection failed after {max_retries} attempts.")
-                    raise ValueError("Could not connect to the database. Check DATABASE_URL and service health.") from e
-
+                    raise e
     return _db_instance
-
-
-def init_db(database_url: str = None) -> Database:
-    """Initialize database with optional URL override."""
-    # This function is now deprecated in favor of the retry logic in get_db().
-    raise NotImplementedError("Use get_db() to initialize the database connection for resilient deployment.")
