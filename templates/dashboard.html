@@ -1,171 +1,179 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="h-full bg-gray-50">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Job Intel Dashboard - Alerts & Summary</title>
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f7f9fc; color: #1f2937; margin: 0; padding: 20px; }
-        .container { max-width: 1200px; margin: 0 auto; }
-        .card { background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); padding: 20px; margin-bottom: 20px; }
-        .grid-4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; }
-        .metric-value { font-size: 2.5rem; font-weight: 700; color: #10b981; }
-        .metric-label { font-size: 0.9rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 5px; }
-        h2 { border-bottom: 2px solid #e5e7eb; padding-bottom: 10px; margin-bottom: 20px; color: #3b82f6; }
-        h3 { margin-top: 0; font-size: 1.1rem; }
-        .alert-item { padding: 10px; border-radius: 4px; margin-bottom: 8px; font-size: 0.9rem; }
-        .surge { background-color: #ecfdf5; border-left: 5px solid #10b981; }
-        .decline { background-color: #fef2f2; border-left: 5px solid #ef4444; }
-        .expansion { background-color: #eff6ff; border-left: 5px solid #3b82f6; }
-        .ats-bar { background-color: #e5e7eb; height: 10px; border-radius: 5px; margin-bottom: 4px; }
-        .loading { color: #9ca3af; }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Job Intelligence Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+  </style>
 </head>
-<body>
-    <div class="container">
-        <h1>Job Intelligence Dashboard</h1>
-        <p style="color:#6b7280;">Last Updated: <span id="last-updated" class="loading">...</span></p>
+<body class="h-full">
+  <div class="min-h-full">
+    <!-- Header -->
+    <header class="bg-white shadow-sm border-b border-gray-200">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+        <h1 class="text-3xl font-bold text-gray-900">Job Intelligence Dashboard</h1>
+        <p class="text-gray-600 mt-1">Real-time job market tracking • Autonomous growth engine</p>
+      </div>
+    </header>
 
-        <div class="grid-4">
-            <div class="card">
-                <div class="metric-value" id="total-jobs">...</div>
-                <div class="metric-label">Total Open Jobs</div>
-            </div>
-            <div class="card">
-                <div class="metric-value" id="total-companies">...</div>
-                <div class="metric-label">Companies Tracked</div>
-            </div>
-            <div class="card" style="background-color: #f0fdf4;">
-                <div class="metric-value" id="remote-jobs">...</div>
-                <div class="metric-label" style="color:#22c55e;">Remote Jobs</div>
-            </div>
-            <div class="card" style="background-color: #eef2ff;">
-                <div class="metric-value" id="onsite-jobs">...</div>
-                <div class="metric-label" style="color:#6366f1;">Onsite Jobs</div>
-            </div>
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <!-- Stats Grid -->
+      <div id="stats-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <!-- Cards populated by JS -->
+      </div>
+
+      <!-- Progress Bar (when running) -->
+      <div id="progress-container" class="hidden mb-8">
+        <div class="bg-white rounded-lg shadow p-6">
+          <div class="flex justify-between items-center mb-2">
+            <h3 class="text-lg font-semibold text-gray-900" id="progress-title">Collection Running...</h3>
+            <span class="text-sm text-gray-500" id="progress-mode"></span>
+          </div>
+          <div class="w-full bg-gray-200 rounded-full h-4">
+            <div id="progress-bar" class="bg-indigo-600 h-4 rounded-full transition-all duration-500" style="width: 0%"></div>
+          </div>
+          <p class="text-sm text-gray-600 mt-2" id="progress-text">0% complete</p>
         </div>
+      </div>
 
-        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 20px;">
-            <div class="card">
-                <h2>📈 Market Alerts (Past 7 Days)</h2>
-                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px;">
-                    <div>
-                        <h3 style="color:#10b981;">Surges</h3>
-                        <div id="surge-list" class="loading">Loading...</div>
-                    </div>
-                    <div>
-                        <h3 style="color:#ef4444;">Declines</h3>
-                        <div id="decline-list" class="loading">Loading...</div>
-                    </div>
-                    <div>
-                        <h3 style="color:#3b82f6;">Expansions</h3>
-                        <div id="expansion-list" class="loading">Loading...</div>
-                    </div>
-                </div>
-            </div>
+      <!-- Action Buttons -->
+      <div class="flex flex-wrap gap-4 mb-8">
+        <button onclick="triggerAction('collect')" class="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium">Run Discovery</button>
+        <button onclick="triggerAction('refresh')" class="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium">Refresh Companies</button>
+        <button onclick="triggerAction('expand-seeds', {tier: 'full'})" class="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium">Expand Seeds (Full)</button>
+      </div>
 
-            <div class="card">
-                <h2>📊 ATS Platform Breakdown</h2>
-                <div id="ats-breakdown-chart" class="loading">Loading...</div>
-            </div>
+      <!-- Live Charts -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div class="bg-white rounded-lg shadow p-6">
+          <h3 class="text-xl font-semibold mb-4">Total Jobs Over Time</h3>
+          <canvas id="jobsChart"></canvas>
         </div>
+        <div class="bg-white rounded-lg shadow p-6">
+          <h3 class="text-xl font-semibold mb-4">Top Hiring Companies (Surges)</h3>
+          <div id="surges-list" class="space-y-3"></div>
+        </div>
+      </div>
 
-    </div>
+      <div class="mt-8 bg-white rounded-lg shadow p-6">
+        <h3 class="text-xl font-semibold mb-4">Hot Skills Right Now</h3>
+        <div id="skills-list" class="grid grid-cols-2 md:grid-cols-4 gap-4"></div>
+      </div>
+    </main>
+  </div>
 
-    <script>
-        async function fetchAPI(endpoint) {
-            const response = await fetch(endpoint);
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status} from ${endpoint}`);
-            }
-            return response.json();
-        }
+  <script>
+    let jobsChart = null;
 
-        function renderSummary(data) {
-            document.getElementById('total-jobs').textContent = (data.total_jobs || 0).toLocaleString();
-            document.getElementById('total-companies').textContent = (data.total_companies || 0).toLocaleString();
-            document.getElementById('remote-jobs').textContent = (data.remote_jobs || 0).toLocaleString();
-            document.getElementById('onsite-jobs').textContent = (data.onsite_jobs || 0).toLocaleString();
-            
-            const lastUpdatedTime = data.last_updated ? new Date(data.last_updated).toLocaleTimeString() : 'N/A';
-            document.getElementById('last-updated').textContent = `DB ${lastUpdatedTime}`;
-        }
+    async function fetchStats() {
+      const res = await fetch('/api/stats');
+      const data = await res.json();
 
-        function renderAlerts(intelData) {
-            const formatAlerts = (list, type) => {
-                const typeClass = type === 'surge' ? 'surge' : type === 'decline' ? 'decline' : 'expansion';
-                if (list.length === 0) return `<div style="color: #6b7280;">No ${type} alerts.</div>`;
+      // Update stat cards
+      const grid = document.getElementById('stats-grid');
+      grid.innerHTML = `
+        <div class="bg-white rounded-lg shadow p-6">
+          <p class="text-sm text-gray-600">Total Companies</p>
+          <p class="text-3xl font-bold text-indigo-600">${data.total_companies || 0}</p>
+        </div>
+        <div class="bg-white rounded-lg shadow p-6">
+          <p class="text-sm text-gray-600">Active Jobs</p>
+          <p class="text-3xl font-bold text-green-600">${data.total_jobs || 0}</p>
+        </div>
+        <div class="bg-white rounded-lg shadow p-6">
+          <p class="text-sm text-gray-600">Remote Jobs</p>
+          <p class="text-3xl font-bold text-blue-600">${data.remote_jobs || 0}</p>
+        </div>
+        <div class="bg-white rounded-lg shadow p-6">
+          <p class="text-sm text-gray-600">Seeds (Untested)</p>
+          <p class="text-3xl font-bold text-purple-600">${data.untested_seeds || 0}</p>
+        </div>
+      `;
 
-                return list.slice(0, 10).map(item => {
-                    let text = `<strong>${item.company_name}</strong>`;
-                    if (type === 'surge' || type === 'decline') {
-                        const sign = item.change_percent >= 0 ? '+' : '';
-                        text += ` ${sign}${(item.change_percent * 100).toFixed(1)}% (${item.current_count} jobs)`;
-                    } else if (type === 'expansion') {
-                        text += ` expanded to <strong>${item.new_location}</strong>`;
-                    }
-                    return `<div class="alert-item ${typeClass}">${text}</div>`;
-                }).join('');
-            };
+      // Progress bar
+      const progressContainer = document.getElementById('progress-container');
+      if (data.is_running) {
+        progressContainer.classList.remove('hidden');
+        document.getElementById('progress-title').textContent = data.mode === 'discovery' ? 'Discovering New Companies' : data.mode.includes('refresh') ? 'Refreshing Data' : 'Expanding Seeds';
+        document.getElementById('progress-mode').textContent = data.mode || '';
+        document.getElementById('progress-bar').style.width = `${data.current_progress || 0}%`;
+        document.getElementById('progress-text').textContent = `${Math.round(data.current_progress || 0)}% complete`;
+      } else {
+        progressContainer.classList.add('hidden');
+      }
 
-            document.getElementById('surge-list').innerHTML = formatAlerts(intelData.surges || [], 'surge');
-            document.getElementById('decline-list').innerHTML = formatAlerts(intelData.declines || [], 'decline');
-            document.getElementById('expansion-list').innerHTML = formatAlerts(intelData.expansions || [], 'expansion');
-        }
+      // Update charts and lists
+      updateCharts();
+      updateSurges();
+      updateSkills();
+    }
 
-        function renderATSBreakdown(sourceData) {
-            const atsData = {};
-            // Aggregate job counts by ats_type from the 'sources' or 'high_performers' list
-            (sourceData.high_performers || sourceData.sources || []).forEach(item => {
-                if (item.source.toLowerCase().includes('greenhouse')) atsData['Greenhouse'] = (atsData['Greenhouse'] || 0) + item.successful_tests;
-                else if (item.source.toLowerCase().includes('lever')) atsData['Lever'] = (atsData['Lever'] || 0) + item.successful_tests;
-                else if (item.source.toLowerCase().includes('workday')) atsData['Workday'] = (atsData['Workday'] || 0) + item.successful_tests;
-                else atsData[item.source] = (atsData[item.source] || 0) + item.successful_tests;
-            });
+    async function updateCharts() {
+      const res = await fetch('/api/trends?days=30');
+      const data = await res.json();
+      const labels = data.granular.map(d => new Date(d.date).toLocaleDateString());
+      const jobs = data.granular.map(d => d.total_jobs);
 
-            const totalAts = Object.values(atsData).reduce((sum, count) => sum + count, 0);
-            const atsChartDiv = document.getElementById('ats-breakdown-chart');
-            atsChartDiv.innerHTML = '';
-            
-            if (totalAts === 0) {
-                atsChartDiv.innerHTML = '<div style="color: #6b7280;">No source data available.</div>';
-                return;
-            }
+      if (jobsChart) jobsChart.destroy();
+      jobsChart = new Chart(document.getElementById('jobsChart'), {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: 'Total Open Jobs',
+            data: jobs,
+            borderColor: '#4f46e5',
+            backgroundColor: 'rgba(79, 70, 229, 0.1)',
+            tension: 0.3,
+            fill: true
+          }]
+        },
+        options: { responsive: true, scales: { y: { beginAtZero: false } } }
+      });
+    }
 
-            Object.entries(atsData).sort(([, a], [, b]) => b - a).forEach(([ats, count]) => {
-                const percent = (count / totalAts) * 100;
-                atsChartDiv.innerHTML += `
-                    <div style="margin-bottom: 15px;">
-                        <div style="display: flex; justify-content: space-between; font-size: 0.9em; margin-bottom: 3px;">
-                            <span>${ats}</span>
-                            <span>${count.toLocaleString()} (${percent.toFixed(1)}%)</span>
-                        </div>
-                        <div class="ats-bar">
-                            <div style="width: ${percent}%; background-color: #3b82f6; height: 100%; border-radius: 5px;"></div>
-                        </div>
-                    </div>
-                `;
-            });
-        }
+    async function updateSurges() {
+      const res = await fetch('/api/intel?days=14');
+      const data = await res.json();
+      const list = document.getElementById('surges-list');
+      list.innerHTML = (data.surges || []).slice(0, 10).map(c => `
+        <div class="flex justify-between items-center py-2 border-b border-gray-100">
+          <span class="font-medium">${c.company_name}</span>
+          <span class="text-green-600 font-bold">+${c.change_amount} jobs</span>
+        </div>
+      `).join('') || '<p class="text-gray-500">No recent surges</p>';
+    }
 
-        document.addEventListener('DOMContentLoaded', async () => {
-            try {
-                // Fetch all data concurrently
-                const [statsData, intelData, sourceData] = await Promise.all([
-                    fetchAPI('/api/stats'),
-                    fetchAPI('/api/intel?days=7'),
-                    fetchAPI('/api/source-stats')
-                ]);
-                
-                renderSummary(statsData);
-                renderAlerts(intelData);
-                renderATSBreakdown(sourceData);
+    async function updateSkills() {
+      const res = await fetch('/api/advanced-analytics');
+      const data = await res.json();
+      const list = document.getElementById('skills-list');
+      const skills = Object.entries(data.top_skills || {}).slice(0, 12);
+      list.innerHTML = skills.map(([skill, count]) => `
+        <div class="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-lg p-4 text-center">
+          <p class="text-2xl font-bold text-indigo-700">${count}</p>
+          <p class="text-sm text-gray-700 capitalize">${skill.replace('_', ' ')}</p>
+        </div>
+      `).join('') || '<p class="text-gray-500">Loading skills...</p>';
+    }
 
-            } catch (error) {
-                console.error("Failed to load dashboard data:", error);
-                document.body.innerHTML = '<h1>Error loading dashboard data. Check console.</h1>';
-            }
-        });
-    </script>
+    async function triggerAction(action, payload = {}) {
+      await fetch(`/api/${action}`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+      });
+      fetchStats();
+    }
+
+    // Poll every 10 seconds
+    fetchStats();
+    setInterval(fetchStats, 10000);
+  </script>
 </body>
 </html>
