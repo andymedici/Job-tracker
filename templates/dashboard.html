@@ -3,130 +3,169 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Job Market Intelligence</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>.glass { background: rgba(17, 24, 39, 0.7); backdrop-filter: blur(10px); }</style>
+    <title>Job Intel Dashboard - Alerts & Summary</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f7f9fc; color: #1f2937; margin: 0; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .card { background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); padding: 20px; margin-bottom: 20px; }
+        .grid-4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; }
+        .metric-value { font-size: 2.5rem; font-weight: 700; color: #10b981; }
+        .metric-label { font-size: 0.9rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 5px; }
+        h2 { border-bottom: 2px solid #e5e7eb; padding-bottom: 10px; margin-bottom: 20px; color: #3b82f6; }
+        h3 { margin-top: 0; font-size: 1.1rem; }
+        .alert-item { padding: 10px; border-radius: 4px; margin-bottom: 8px; font-size: 0.9rem; }
+        .surge { background-color: #ecfdf5; border-left: 5px solid #10b981; }
+        .decline { background-color: #fef2f2; border-left: 5px solid #ef4444; }
+        .expansion { background-color: #eff6ff; border-left: 5px solid #3b82f6; }
+        .ats-bar { background-color: #e5e7eb; height: 10px; border-radius: 5px; margin-bottom: 4px; }
+        .loading { color: #9ca3af; }
+    </style>
 </head>
-<body class="bg-gray-900 text-gray-100 font-sans min-h-screen">
-    <nav class="border-b border-gray-800 bg-gray-950 p-4">
-        <div class="container mx-auto flex justify-between items-center">
-            <h1 class="text-xl font-bold text-blue-500 tracking-wider">JOB<span class="text-white">INTEL</span></h1>
-            <div class="space-x-4">
-                <a href="/dashboard" class="text-white hover:text-blue-400">Dashboard</a>
-                <a href="/analytics" class="text-gray-400 hover:text-white">Analytics</a>
-            </div>
-        </div>
-    </nav>
+<body>
+    <div class="container">
+        <h1>Job Intelligence Dashboard</h1>
+        <p style="color:#6b7280;">Last Updated: <span id="last-updated" class="loading">...</span></p>
 
-    <main class="container mx-auto p-6 space-y-8">
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div class="glass p-6 rounded-lg border border-gray-800">
-                <div class="text-gray-400 text-sm">Total Jobs</div>
-                <div class="text-3xl font-bold text-green-400" id="stat-jobs">-</div>
+        <div class="grid-4">
+            <div class="card">
+                <div class="metric-value" id="total-jobs">...</div>
+                <div class="metric-label">Total Open Jobs</div>
             </div>
-            <div class="glass p-6 rounded-lg border border-gray-800">
-                <div class="text-gray-400 text-sm">Tracked Companies</div>
-                <div class="text-3xl font-bold text-blue-400" id="stat-companies">-</div>
+            <div class="card">
+                <div class="metric-value" id="total-companies">...</div>
+                <div class="metric-label">Companies Tracked</div>
             </div>
-             <div class="glass p-6 rounded-lg border border-gray-800">
-                <div class="text-gray-400 text-sm">Untested Seeds</div>
-                <div class="text-3xl font-bold text-yellow-400" id="stat-seeds">-</div>
+            <div class="card" style="background-color: #f0fdf4;">
+                <div class="metric-value" id="remote-jobs">...</div>
+                <div class="metric-label" style="color:#22c55e;">Remote Jobs</div>
             </div>
-             <div class="glass p-6 rounded-lg border border-gray-800">
-                <div class="text-gray-400 text-sm">System Status</div>
-                <div class="text-xl font-bold" id="stat-status">Checking...</div>
+            <div class="card" style="background-color: #eef2ff;">
+                <div class="metric-value" id="onsite-jobs">...</div>
+                <div class="metric-label" style="color:#6366f1;">Onsite Jobs</div>
             </div>
         </div>
 
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div class="glass p-6 rounded-lg border border-gray-800">
-                <h3 class="text-lg font-semibold mb-4">Market Trend (7 Days)</h3>
-                <canvas id="trendChart"></canvas>
+        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 20px;">
+            <div class="card">
+                <h2>📈 Market Alerts (Past 7 Days)</h2>
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px;">
+                    <div>
+                        <h3 style="color:#10b981;">Surges</h3>
+                        <div id="surge-list" class="loading">Loading...</div>
+                    </div>
+                    <div>
+                        <h3 style="color:#ef4444;">Declines</h3>
+                        <div id="decline-list" class="loading">Loading...</div>
+                    </div>
+                    <div>
+                        <h3 style="color:#3b82f6;">Expansions</h3>
+                        <div id="expansion-list" class="loading">Loading...</div>
+                    </div>
+                </div>
             </div>
-            <div class="glass p-6 rounded-lg border border-gray-800">
-                <h3 class="text-lg font-semibold mb-4">Recent Expansions</h3>
-                <div class="overflow-y-auto h-64" id="expansions-list"></div>
+
+            <div class="card">
+                <h2>📊 ATS Platform Breakdown</h2>
+                <div id="ats-breakdown-chart" class="loading">Loading...</div>
             </div>
         </div>
 
-        <div class="glass p-6 rounded-lg border border-gray-800">
-            <h3 class="text-lg font-semibold mb-4">System Controls</h3>
-            <div class="flex gap-4">
-                <button onclick="triggerAction('/api/collect')" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white">Start Discovery</button>
-                <button onclick="triggerAction('/api/refresh')" class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-white">Refresh Data</button>
-                <button onclick="triggerAction('/api/expand-seeds')" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded text-white">Auto Ingest Seeds</button>
-            </div>
-            <div id="action-msg" class="mt-2 text-sm text-gray-400"></div>
-        </div>
-    </main>
+    </div>
 
     <script>
-        async function fetchStats() {
-            try {
-                const res = await fetch('/api/stats');
-                const data = await res.json();
-                document.getElementById('stat-jobs').textContent = data.total_jobs.toLocaleString();
-                document.getElementById('stat-companies').textContent = data.total_companies.toLocaleString();
-                document.getElementById('stat-seeds').textContent = data.untested_seeds.toLocaleString();
-                
-                const statusEl = document.getElementById('stat-status');
-                if (data.is_running) {
-                    statusEl.textContent = 'RUNNING';
-                    statusEl.className = 'text-xl font-bold text-green-500 animate-pulse';
-                } else {
-                    statusEl.textContent = 'IDLE';
-                    statusEl.className = 'text-xl font-bold text-gray-500';
-                }
-            } catch (e) { console.error(e); }
+        async function fetchAPI(endpoint) {
+            const response = await fetch(endpoint);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status} from ${endpoint}`);
+            }
+            return response.json();
         }
 
-        async function fetchTrends() {
-            const res = await fetch('/api/trends?days=7');
-            const data = await res.json();
-            const ctx = document.getElementById('trendChart').getContext('2d');
-            new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: data.granular.map(d => new Date(d.timestamp).toLocaleDateString()),
-                    datasets: [{
-                        label: 'Total Jobs',
-                        data: data.granular.map(d => d.total_jobs),
-                        borderColor: '#3b82f6',
-                        tension: 0.4
-                    }]
-                },
-                options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { grid: { color: '#374151' } }, x: { grid: { display: false } } } }
+        function renderSummary(data) {
+            document.getElementById('total-jobs').textContent = (data.total_jobs || 0).toLocaleString();
+            document.getElementById('total-companies').textContent = (data.total_companies || 0).toLocaleString();
+            document.getElementById('remote-jobs').textContent = (data.remote_jobs || 0).toLocaleString();
+            document.getElementById('onsite-jobs').textContent = (data.onsite_jobs || 0).toLocaleString();
+            
+            const lastUpdatedTime = data.last_updated ? new Date(data.last_updated).toLocaleTimeString() : 'N/A';
+            document.getElementById('last-updated').textContent = `DB ${lastUpdatedTime}`;
+        }
+
+        function renderAlerts(intelData) {
+            const formatAlerts = (list, type) => {
+                const typeClass = type === 'surge' ? 'surge' : type === 'decline' ? 'decline' : 'expansion';
+                if (list.length === 0) return `<div style="color: #6b7280;">No ${type} alerts.</div>`;
+
+                return list.slice(0, 10).map(item => {
+                    let text = `<strong>${item.company_name}</strong>`;
+                    if (type === 'surge' || type === 'decline') {
+                        const sign = item.change_percent >= 0 ? '+' : '';
+                        text += ` ${sign}${(item.change_percent * 100).toFixed(1)}% (${item.current_count} jobs)`;
+                    } else if (type === 'expansion') {
+                        text += ` expanded to <strong>${item.new_location}</strong>`;
+                    }
+                    return `<div class="alert-item ${typeClass}">${text}</div>`;
+                }).join('');
+            };
+
+            document.getElementById('surge-list').innerHTML = formatAlerts(intelData.surges || [], 'surge');
+            document.getElementById('decline-list').innerHTML = formatAlerts(intelData.declines || [], 'decline');
+            document.getElementById('expansion-list').innerHTML = formatAlerts(intelData.expansions || [], 'expansion');
+        }
+
+        function renderATSBreakdown(sourceData) {
+            const atsData = {};
+            // Aggregate job counts by ats_type from the 'sources' or 'high_performers' list
+            (sourceData.high_performers || sourceData.sources || []).forEach(item => {
+                if (item.source.toLowerCase().includes('greenhouse')) atsData['Greenhouse'] = (atsData['Greenhouse'] || 0) + item.successful_tests;
+                else if (item.source.toLowerCase().includes('lever')) atsData['Lever'] = (atsData['Lever'] || 0) + item.successful_tests;
+                else if (item.source.toLowerCase().includes('workday')) atsData['Workday'] = (atsData['Workday'] || 0) + item.successful_tests;
+                else atsData[item.source] = (atsData[item.source] || 0) + item.successful_tests;
+            });
+
+            const totalAts = Object.values(atsData).reduce((sum, count) => sum + count, 0);
+            const atsChartDiv = document.getElementById('ats-breakdown-chart');
+            atsChartDiv.innerHTML = '';
+            
+            if (totalAts === 0) {
+                atsChartDiv.innerHTML = '<div style="color: #6b7280;">No source data available.</div>';
+                return;
+            }
+
+            Object.entries(atsData).sort(([, a], [, b]) => b - a).forEach(([ats, count]) => {
+                const percent = (count / totalAts) * 100;
+                atsChartDiv.innerHTML += `
+                    <div style="margin-bottom: 15px;">
+                        <div style="display: flex; justify-content: space-between; font-size: 0.9em; margin-bottom: 3px;">
+                            <span>${ats}</span>
+                            <span>${count.toLocaleString()} (${percent.toFixed(1)}%)</span>
+                        </div>
+                        <div class="ats-bar">
+                            <div style="width: ${percent}%; background-color: #3b82f6; height: 100%; border-radius: 5px;"></div>
+                        </div>
+                    </div>
+                `;
             });
         }
-        
-        async function fetchExpansions() {
-            const res = await fetch('/api/expansions?days=7');
-            const data = await res.json();
-            const list = document.getElementById('expansions-list');
-            list.innerHTML = data.expansions.map(e => `
-                <div class="flex justify-between items-center py-2 border-b border-gray-800">
-                    <div>
-                        <div class="font-bold text-white">${e.company_name}</div>
-                        <div class="text-xs text-gray-500">Expanded to <span class="text-blue-400">${e.new_location}</span></div>
-                    </div>
-                    <div class="text-xs text-gray-600">${new Date(e.detected_at).toLocaleDateString()}</div>
-                </div>
-            `).join('');
-        }
 
-        async function triggerAction(endpoint) {
-            const msg = document.getElementById('action-msg');
-            msg.textContent = "Requesting...";
+        document.addEventListener('DOMContentLoaded', async () => {
             try {
-                const res = await fetch(endpoint, { method: 'POST' });
-                const data = await res.json();
-                msg.textContent = data.message || data.error || data.status;
-                setTimeout(fetchStats, 1000);
-            } catch (e) { msg.textContent = "Error: " + e; }
-        }
+                // Fetch all data concurrently
+                const [statsData, intelData, sourceData] = await Promise.all([
+                    fetchAPI('/api/stats'),
+                    fetchAPI('/api/intel?days=7'),
+                    fetchAPI('/api/source-stats')
+                ]);
+                
+                renderSummary(statsData);
+                renderAlerts(intelData);
+                renderATSBreakdown(sourceData);
 
-        fetchStats(); fetchTrends(); fetchExpansions(); setInterval(fetchStats, 5000);
+            } catch (error) {
+                console.error("Failed to load dashboard data:", error);
+                document.body.innerHTML = '<h1>Error loading dashboard data. Check console.</h1>';
+            }
+        });
     </script>
 </body>
 </html>
