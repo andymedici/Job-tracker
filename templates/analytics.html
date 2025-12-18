@@ -2,22 +2,164 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Analytics - JobIntel</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Job Intel Analytics - Trends & Forecasting</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f7f9fc; color: #1f2937; margin: 0; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .card { background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); padding: 25px; margin-bottom: 20px; }
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        h1 { color: #1f2937; }
+        h2 { border-bottom: 2px solid #e5e7eb; padding-bottom: 10px; margin-bottom: 20px; color: #3b82f6; }
+        h3 { color: #4b5563; font-size: 1rem; margin-top: 0; }
+        .tt-fill-value { font-size: 3rem; font-weight: 700; color: #f97316; }
+        .tt-fill-label { font-size: 1rem; color: #6b7280; text-transform: uppercase; margin-top: 5px; }
+        .chart-bar { background-color: #e0f2f1; margin-bottom: 10px; padding: 5px; border-radius: 4px; display: flex; align-items: center; }
+        .bar-label { width: 150px; font-weight: 500; font-size: 0.9em; color: #1f2937; }
+        .bar-fill { height: 100%; background-color: #0d9488; border-radius: 4px; padding: 5px 0; }
+        .bar-text { color: #ffffff; font-size: 0.8em; text-align: right; padding-right: 5px; font-weight: 600; }
+        .color-1 { background-color: #2563eb; } .color-2 { background-color: #10b981; } .color-3 { background-color: #f59e0b; } .color-4 { background-color: #ef4444; }
+        .loading { color: #9ca3af; }
+    </style>
 </head>
-<body class="bg-gray-900 text-gray-100 font-sans">
-    <nav class="border-b border-gray-800 bg-gray-950 p-4">
-        <div class="container mx-auto flex justify-between items-center">
-            <h1 class="text-xl font-bold text-blue-500">JOB<span class="text-white">INTEL</span></h1>
-            <div class="space-x-4">
-                <a href="/dashboard" class="text-gray-400 hover:text-white">Dashboard</a>
-                <a href="/analytics" class="text-white">Analytics</a>
+<body>
+    <div class="container">
+        <h1>Advanced Job Market Intelligence</h1>
+        <p style="color:#6b7280;">Deep-dive trends for strategic talent planning and competitive analysis.</p>
+
+        <div class="card">
+            <h2>⏳ Time-to-Fill (TTF) Metrics</h2>
+            <div style="display: flex; gap: 40px; align-items: flex-start;">
+                <div>
+                    <div class="tt-fill-value" id="overall-ttf" class="loading">...</div>
+                    <div class="tt-fill-label">Overall Avg TTF (Days)</div>
+                </div>
+                
+                <div style="flex-grow: 1;">
+                    <h3 style="margin-top: 0; color: #4b5563;">TTF by Work Type</h3>
+                    <div id="ttf-work-type" class="loading">Loading...</div>
+
+                    <h3 style="margin-top: 20px; color: #4b5563;">TTF by Top Hiring Country</h3>
+                    <div id="ttf-country" class="loading">Loading...</div>
+                </div>
             </div>
         </div>
-    </nav>
-    <div class="container mx-auto p-10 text-center">
-        <h2 class="text-2xl mb-4">Deep Dive Analytics</h2>
-        <p class="text-gray-400">Advanced table views coming soon.</p>
+
+        <div class="grid-2">
+            <div class="card">
+                <h2>💻 Top 10 Demanded Skills (Aggregate)</h2>
+                <div id="top-skills-chart" class="loading">Loading...</div>
+            </div>
+            
+            <div class="card">
+                <h2>🌎 Top 10 Hiring Regions (Location Count)</h2>
+                <div id="top-regions-chart" class="loading">Loading...</div>
+            </div>
+        </div>
     </div>
+
+    <script>
+        async function fetchAPI(endpoint) {
+            const response = await fetch(endpoint);
+            if (!response.ok) {
+                // If 500 error from /api/advanced-analytics, check if it's the "not implemented" error
+                const errorBody = await response.json().catch(() => ({}));
+                if (errorBody.error && errorBody.error.includes('not yet implemented')) {
+                    console.warn(`API call to ${endpoint} returned a placeholder error: ${errorBody.error}`);
+                    // Return the placeholder structure for graceful rendering
+                    return errorBody; 
+                }
+                throw new Error(`HTTP error! status: ${response.status} from ${endpoint}`);
+            }
+            return response.json();
+        }
+
+        // --- Chart Rendering Utility ---
+        function renderBarChart(elementId, data, isTime, colorClass) {
+            const chartDiv = document.getElementById(elementId);
+            chartDiv.innerHTML = '';
+            
+            if (Object.keys(data).length === 0) {
+                chartDiv.innerHTML = '<div style="color: #6b7280;">No data available.</div>';
+                return;
+            }
+
+            const values = Object.values(data).filter(v => v !== null);
+            if (values.length === 0) {
+                chartDiv.innerHTML = '<div style="color: #6b7280;">No data available.</div>';
+                return;
+            }
+            
+            const maxVal = Math.max(...values);
+            
+            // Sort: TTF (isTime=true) lowest days first; Skills/Regions (isTime=false) highest count first.
+            Object.entries(data)
+                .filter(([, v]) => v !== null)
+                .sort(([, a], [, b]) => (isTime ? a - b : b - a))
+                .forEach(([label, value]) => {
+                
+                const barWidth = (value / maxVal) * 100;
+                const displayValue = isTime ? `${value.toFixed(1)} days` : value.toLocaleString();
+                
+                chartDiv.innerHTML += `
+                    <div class="chart-bar" style="background-color: #f3f4f6;">
+                        <span class="bar-label">${label}</span>
+                        <div style="flex-grow: 1;">
+                            <div class="bar-fill ${colorClass}" style="width: ${barWidth.toFixed(1)}%; min-width: 10px;">
+                                <span class="bar-text">${displayValue}</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+        }
+
+
+        async function renderAnalytics(analyticsData, locationsData) {
+            // Time-to-Fill Metrics
+            const overallTtfElement = document.getElementById('overall-ttf');
+            if (analyticsData.overall_avg_ttf_days) {
+                overallTtfElement.textContent = analyticsData.overall_avg_ttf_days.toFixed(1);
+            } else {
+                overallTtfElement.textContent = 'N/A';
+                overallTtfElement.style.fontSize = '1.5rem';
+                document.getElementById('ttf-work-type').innerHTML = '<div style="color: #ef4444;">TTF data not yet implemented.</div>';
+                document.getElementById('ttf-country').innerHTML = '<div style="color: #ef4444;">TTF data not yet implemented.</div>';
+            }
+
+            // TTF by Work Type
+            renderBarChart('ttf-work-type', analyticsData.avg_ttf_by_work_type || {}, true, 'color-3');
+            
+            // TTF by Country
+            renderBarChart('ttf-country', analyticsData.avg_ttf_by_top_countries || {}, true, 'color-4');
+
+            // Top Skills
+            renderBarChart('top-skills-chart', analyticsData.top_skills || {}, false, 'color-1');
+
+            // Top Hiring Regions (Processing locations-stats for top N)
+            const topRegions = {};
+            // locationsData.locations is an array of {location: str, job_count: int}
+            (locationsData.locations || []).slice(0, 10).forEach(item => {
+                topRegions[item.location] = item.job_count;
+            });
+            renderBarChart('top-regions-chart', topRegions, false, 'color-2');
+        }
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            try {
+                // Fetch Advanced Analytics and Location Stats concurrently
+                const [analyticsData, locationsData] = await Promise.all([
+                    fetchAPI('/api/advanced-analytics'),
+                    fetchAPI('/api/locations-stats')
+                ]);
+                
+                renderAnalytics(analyticsData, locationsData);
+
+            } catch (error) {
+                console.error("Failed to load analytics data:", error);
+                document.body.innerHTML = '<h1>Error loading analytics data. Check console.</h1>';
+            }
+        });
+    </script>
 </body>
 </html>
