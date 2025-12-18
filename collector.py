@@ -6,13 +6,12 @@ import os
 import re
 import time
 import random
-import hashlib # ADDED for job hashing (B)
+import hashlib 
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Set, Tuple, Any
 from dataclasses import dataclass, field, asdict
 from urllib.parse import urlparse, quote
 
-# ADDED: Import BeautifulSoup for HTML parsing
 from bs4 import BeautifulSoup 
 
 logging.basicConfig(
@@ -305,9 +304,6 @@ class JobIntelCollector:
     # ============================================================================
     # ATS SPECIFIC FETCHING AND PROCESSING (A)
     # ============================================================================
-
-    # NOTE: The job processing logic for all ATS is now generic in _process_job_data
-    # The ATS specific methods are only responsible for fetching and mapping fields.
 
     async def _fetch_greenhouse_jobs(self, token: str) -> Optional[List[Dict]]:
         url = f"https://boards-api.greenhouse.io/v1/boards/{quote(token)}/jobs?content=true"
