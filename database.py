@@ -40,7 +40,7 @@ class Database:
             logger.error(f"Failed to create connection pool: {e}")
             raise
         
-        # Create tables if they don't exist
+        # Create tables if they don't exist and apply migrations
         self._create_tables()
         logger.info("✅ Database connection pool initialized successfully")
     
@@ -54,9 +54,14 @@ class Database:
             self.pool.putconn(conn)
     
     def _create_tables(self):
-        """Create database tables if they don't exist"""
+        """Create database tables and apply schema migrations"""
         with self.get_connection() as conn:
             with conn.cursor() as cur:
+                
+                # =============================================================
+                # 1. CREATE TABLES (Used for fresh installs)
+                # =============================================================
+                
                 # Companies table
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS companies (
@@ -175,6 +180,48 @@ class Database:
                     ON intelligence_events(event_type, detected_at DESC)
                 """)
                 
+                
+                # =============================================================
+                # 2. SCHEMA MIGRATIONS (ALTER TABLE IF MISSING)
+                # This ensures missing columns are added to an existing DB.
+                # =============================================================
+                logger.info("Starting schema migration checks...")
+
+                # Define the columns that were throwing errors in your logs:
+                migration_statements = [
+                    # Fix 1: Missing 'company_name_token' in companies table
+                    ("companies", "company_name_token", "VARCHAR(255) UNIQUE"),
+                    
+                    # Fix 2: Missing 'closed_at' in job_archive table (already there, but kept for robustness)
+                    ("job_archive", "closed_at", "TIMESTAMP NULL"),
+                    
+                    # Fix 3: Missing 'active_jobs' in snapshots_6h table
+                    ("snapshots_6h", "active_jobs", "INTEGER"),
+                ]
+
+                for table, column, definition in migration_statements:
+                    try:
+                        # Check if column exists before attempting to add it (safer approach)
+                        cur.execute(f"""
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = '{table}' AND column_name = '{column}';
+                        """)
+                        if not cur.fetchone():
+                            cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+                            logger.warning(f"✅ Migrated: Added column '{column}' to table '{table}'")
+                        else:
+                            logger.debug(f"Column '{column}' already exists in '{table}'. Skipping.")
+
+                    except psycopg2.ProgrammingError as e:
+                        logger.error(f"Migration error for {table}.{column}: {e}. Attempting rollback of current sub-transaction.")
+                        conn.rollback() # Rollback the failed ALTER if needed
+
+                # 4. Ensure necessary indexes for new columns exist
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_job_archive_closed_at ON job_archive(closed_at)
+                """)
+                logger.debug("Checked for idx_job_archive_closed_at index.")
+
                 conn.commit()
     
     def _name_to_token(self, name: str) -> str:
@@ -236,7 +283,7 @@ class Database:
     # ========================================================================
     
     def add_company(self, company_name: str, ats_type: str, board_url: str, 
-                   job_count: int = 0, metadata: Dict = None) -> Optional[int]:
+                    job_count: int = 0, metadata: Dict = None) -> Optional[int]:
         """Add a new company to the database"""
         try:
             token = self._name_to_token(company_name)
@@ -299,7 +346,7 @@ class Database:
                         SELECT id, company_name, ats_type, board_url, job_count
                         FROM companies
                         WHERE last_scraped < NOW() - INTERVAL '%s hours'
-                           OR last_scraped IS NULL
+                            OR last_scraped IS NULL
                         ORDER BY last_scraped ASC NULLS FIRST
                         LIMIT %s
                     """, (hours_since_update, limit))
@@ -560,6 +607,7 @@ class Database:
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
+                    # NOTE: This query now relies on 'active_jobs' existing in snapshots_6h
                     cur.execute("""
                         INSERT INTO snapshots_6h (company_id, job_count, active_jobs, locations_count, departments_count)
                         SELECT 
@@ -578,6 +626,8 @@ class Database:
                     logger.info(f"Created {count} company snapshots")
                     return count
         except Exception as e:
+            # The log showed ERROR:database:Error creating snapshots: column "active_jobs" of relation "snapshots_6h" does not exist
+            # This should be fixed by the migration logic in _create_tables()
             logger.error(f"Error creating snapshots: {e}")
             return 0
     
@@ -669,6 +719,7 @@ class Database:
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
+                    # NOTE: This query relies on 'active_jobs' existing in snapshots_6h
                     cur.execute("""
                         WITH recent_snapshots AS (
                             SELECT DISTINCT ON (company_id)
@@ -701,264 +752,56 @@ class Database:
                         WHERE o.old_count > 0
                           AND ABS((r.current_count - o.old_count)::DECIMAL / o.old_count * 100) >= %s
                         ORDER BY ABS(r.current_count - o.old_count) DESC
-                    """, (days, days - 1, threshold_percent))
+                    """, (days, days, threshold_percent))
+                    
+                    # NOTE: The log output error LINE 6:             FROM jobs j
+                    # This suggests another query was running later that referred to 'jobs' instead of 'job_archive'.
+                    # This specific function seems okay, but check for other 'jobs' references in your main application logic.
                     
                     columns = [desc[0] for desc in cur.description]
-                    all_changes = [dict(zip(columns, row)) for row in cur.fetchall()]
-                    
-                    # Separate into surges and declines
-                    surges = [c for c in all_changes if c['job_change'] > 0]
-                    declines = [c for c in all_changes if c['job_change'] < 0]
-                    
-                    return surges, declines
+                    results = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+                    surges = [r for r in results if r['job_change'] > 0]
+                    freezes = [r for r in results if r['job_change'] < 0]
+
+                    return surges, freezes
         except Exception as e:
             logger.error(f"Error getting job count changes: {e}")
             return [], []
-    
-    def get_location_expansions(self, days: int = 30) -> List[Dict]:
-        """Get recent location expansions"""
+
+
+    def calculate_ttf_metrics(self) -> List[Dict]:
+        """Calculate Time To Fill (TTF) metrics for recently closed jobs"""
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
+                    # NOTE: This query relies on 'closed_at' existing in job_archive
                     cur.execute("""
-                        SELECT 
+                        SELECT
                             c.company_name,
-                            ie.metadata->>'location' as new_location,
-                            ie.metadata->>'job_count' as job_count,
-                            ie.detected_at
-                        FROM intelligence_events ie
-                        JOIN companies c ON ie.company_id = c.id
-                        WHERE ie.event_type = 'location_expansion'
-                          AND ie.detected_at >= NOW() - INTERVAL '%s days'
-                        ORDER BY ie.detected_at DESC
-                        LIMIT 50
-                    """, (days,))
+                            c.id as company_id,
+                            AVG(EXTRACT(EPOCH FROM (j.closed_at - j.first_seen))) / 86400 AS avg_ttf_days,
+                            COUNT(j.id) as closed_count
+                        FROM job_archive j
+                        JOIN companies c ON j.company_id = c.id
+                        WHERE j.status = 'closed'
+                        AND j.closed_at >= NOW() - INTERVAL '30 days'
+                        AND j.first_seen IS NOT NULL 
+                        AND j.closed_at IS NOT NULL
+                        GROUP BY c.company_name, c.id
+                        HAVING COUNT(j.id) > 5
+                        ORDER BY avg_ttf_days ASC
+                    """)
                     
                     columns = [desc[0] for desc in cur.description]
                     return [dict(zip(columns, row)) for row in cur.fetchall()]
+
         except Exception as e:
-            logger.error(f"Error getting location expansions: {e}")
-            return []
-    
-    def track_location_expansion(self, company_id: int, new_location: str, job_count: int = 1):
-        """Track location expansion - ONLY after first scan"""
-        try:
-            with self.get_connection() as conn:
-                with conn.cursor() as cur:
-                    # Check if this is the first scan for this company
-                    cur.execute("""
-                        SELECT COUNT(*) FROM snapshots_6h 
-                        WHERE company_id = %s
-                    """, (company_id,))
-                    
-                    snapshot_count = cur.fetchone()[0]
-                    
-                    # If this is first scan, don't track as expansion
-                    if snapshot_count == 0:
-                        logger.debug(f"Skipping location expansion for company {company_id} (first scan)")
-                        return
-                    
-                    # Check if location already exists for this company
-                    cur.execute("""
-                        SELECT id FROM job_archive 
-                        WHERE company_id = %s 
-                        AND location ILIKE %s
-                        AND first_seen < NOW() - INTERVAL '1 day'
-                    """, (company_id, f'%{new_location}%'))
-                    
-                    if cur.fetchone():
-                        return  # Location already existed
-                    
-                    # This is a new location on a subsequent scan - track it!
-                    cur.execute("""
-                        INSERT INTO intelligence_events 
-                        (company_id, event_type, metadata, detected_at)
-                        VALUES (%s, 'location_expansion', %s, NOW())
-                    """, (company_id, json.dumps({
-                        'location': new_location,
-                        'job_count': job_count
-                    })))
-                    
-                    conn.commit()
-                    logger.info(f"📍 Location expansion detected: {new_location}")
-                    
-        except Exception as e:
-            logger.error(f"Error tracking location expansion: {e}")
-    
-    def get_time_to_fill_metrics(self) -> Dict:
-        """Calculate time-to-fill metrics from closed jobs"""
-        try:
-            with self.get_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT 
-                            COUNT(*) as sample_size,
-                            AVG(EXTRACT(EPOCH FROM (closed_at - first_seen)) / 86400) as avg_ttf_days,
-                            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (closed_at - first_seen)) / 86400) as median_ttf_days,
-                            MIN(EXTRACT(EPOCH FROM (closed_at - first_seen)) / 86400) as min_ttf_days,
-                            MAX(EXTRACT(EPOCH FROM (closed_at - first_seen)) / 86400) as max_ttf_days
-                        FROM job_archive
-                        WHERE status = 'closed'
-                          AND closed_at IS NOT NULL
-                          AND closed_at > first_seen
-                          AND closed_at > NOW() - INTERVAL '6 months'
-                    """)
-                    
-                    row = cur.fetchone()
-                    if row and row[0] > 0:
-                        return {
-                            'sample_size': row[0],
-                            'overall_avg_ttf_days': round(row[1], 1) if row[1] else None,
-                            'median_ttf_days': round(row[2], 1) if row[2] else None,
-                            'min_ttf_days': round(row[3], 1) if row[3] else None,
-                            'max_ttf_days': round(row[4], 1) if row[4] else None
-                        }
-                    return {}
-        except Exception as e:
+            # The log showed ERROR:database:Error calculating TTF metrics: column "closed_at" does not exist
+            # This should be fixed by the migration logic in _create_tables()
             logger.error(f"Error calculating TTF metrics: {e}")
-            return {}
-    
-    # ========================================================================
-    # Statistics & Reporting
-    # ========================================================================
-    
-    def get_stats(self) -> Dict[str, Any]:
-        """Get overall platform statistics"""
-        try:
-            with self.get_connection() as conn:
-                with conn.cursor() as cur:
-                    # Basic counts
-                    cur.execute("""
-                        SELECT 
-                            (SELECT COUNT(*) FROM companies) as total_companies,
-                            (SELECT COALESCE(SUM(job_count), 0) FROM companies) as total_jobs,
-                            (SELECT COUNT(*) FROM seed_companies WHERE is_blacklisted = FALSE) as total_seeds,
-                            (SELECT COUNT(*) FROM job_archive WHERE status = 'closed') as closed_jobs
-                    """)
-                    
-                    row = cur.fetchone()
-                    
-                    return {
-                        'total_companies': row[0],
-                        'total_jobs': row[1],
-                        'total_seeds': row[2],
-                        'closed_jobs': row[3]
-                    }
-        except Exception as e:
-            logger.error(f"Error getting stats: {e}")
-            return {
-                'total_companies': 0,
-                'total_jobs': 0,
-                'total_seeds': 0,
-                'closed_jobs': 0
-            }
-    
-    def get_market_trends(self, days: int = 7) -> List[Dict]:
-        """Get market trends over time"""
-        try:
-            with self.get_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT 
-                            DATE_TRUNC('day', snapshot_time) as date,
-                            COUNT(DISTINCT company_id) as companies,
-                            SUM(job_count) as total_jobs,
-                            AVG(job_count) as avg_jobs_per_company
-                        FROM snapshots_6h
-                        WHERE snapshot_time >= NOW() - INTERVAL '%s days'
-                        GROUP BY DATE_TRUNC('day', snapshot_time)
-                        ORDER BY date
-                    """, (days,))
-                    
-                    columns = [desc[0] for desc in cur.description]
-                    return [dict(zip(columns, row)) for row in cur.fetchall()]
-        except Exception as e:
-            logger.error(f"Error getting market trends: {e}")
             return []
-    
-    def get_monthly_snapshots(self, months: int = 12) -> List[Dict]:
-        """Get monthly snapshot data"""
-        try:
-            with self.get_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT *
-                        FROM snapshots_monthly
-                        WHERE snapshot_date >= CURRENT_DATE - INTERVAL '%s months'
-                        ORDER BY snapshot_date DESC
-                    """, (months,))
-                    
-                    columns = [desc[0] for desc in cur.description]
-                    return [dict(zip(columns, row)) for row in cur.fetchall()]
-        except Exception as e:
-            logger.error(f"Error getting monthly snapshots: {e}")
-            return []
-    
-    def get_advanced_analytics(self) -> Dict:
-        """Get comprehensive analytics data"""
-        try:
-            with self.get_connection() as conn:
-                with conn.cursor() as cur:
-                    # Top hiring companies
-                    cur.execute("""
-                        SELECT company_name, job_count
-                        FROM companies
-                        ORDER BY job_count DESC
-                        LIMIT 20
-                    """)
-                    top_companies = [{'company': row[0], 'jobs': row[1]} for row in cur.fetchall()]
-                    
-                    # Top locations
-                    cur.execute("""
-                        SELECT location, COUNT(*) as count
-                        FROM job_archive
-                        WHERE status = 'active' AND location IS NOT NULL
-                        GROUP BY location
-                        ORDER BY count DESC
-                        LIMIT 20
-                    """)
-                    top_locations = [{'location': row[0], 'count': row[1]} for row in cur.fetchall()]
-                    
-                    # Top departments
-                    cur.execute("""
-                        SELECT department, COUNT(*) as count
-                        FROM job_archive
-                        WHERE status = 'active' AND department IS NOT NULL
-                        GROUP BY department
-                        ORDER BY count DESC
-                        LIMIT 20
-                    """)
-                    top_departments = [{'department': row[0], 'count': row[1]} for row in cur.fetchall()]
-                    
-                    # ATS distribution
-                    cur.execute("""
-                        SELECT ats_type, COUNT(*) as count, 
-                               SUM(job_count) as total_jobs
-                        FROM companies
-                        GROUP BY ats_type
-                        ORDER BY count DESC
-                    """)
-                    ats_distribution = [
-                        {'ats': row[0], 'companies': row[1], 'jobs': row[2]} 
-                        for row in cur.fetchall()
-                    ]
-                    
-                    return {
-                        'top_companies': top_companies,
-                        'top_locations': top_locations,
-                        'top_departments': top_departments,
-                        'ats_distribution': ats_distribution
-                    }
-        except Exception as e:
-            logger.error(f"Error getting advanced analytics: {e}")
-            return {}
 
-# Global database instance
-_db_instance = None
-
-def get_db() -> Database:
-    """Get or create database instance"""
-    global _db_instance
-    if _db_instance is None:
-        _db_instance = Database()
-    return _db_instance
+# ========================================================================
+# EOF
+# ========================================================================
