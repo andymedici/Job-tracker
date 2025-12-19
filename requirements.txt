@@ -6,6 +6,7 @@ waitress==2.1.2
 
 # Database
 psycopg2-binary==2.9.9
+sqlalchemy==2.0.23
 
 # Scheduler
 apscheduler==3.10.4
