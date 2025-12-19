@@ -1,5 +1,3 @@
-# Dockerfile - Incorporating Fixes for Stability and Production Readiness
-
 FROM python:3.12-slim
 
 # 1. Install System Dependencies
@@ -14,27 +12,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# 2. Install Python Dependencies (Ensure gunicorn is in requirements.txt or installed here)
+# 2. Install Python Dependencies (Ensure gunicorn is in requirements.txt!)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 3. Fix Playwright Installation: Rely on system packages and install browser only
-# This is less likely to fail than the --with-deps version
+# 3. Fix Playwright Installation
 RUN playwright install chromium || true
 
 # 4. Copy application code
 COPY . /app/
 
-# Verification (Keep this for confidence)
-RUN echo "======== VERIFICATION START ========" && \
-    test -d /app/templates && echo "✅ templates/ EXISTS" || (echo "❌ NOT FOUND" && exit 1) && \
-    test -f /app/templates/dashboard.html && echo "✅ dashboard.html EXISTS" || (echo "❌ NOT FOUND" && exit 1) && \
-    test -f /app/templates/analytics.html && echo "✅ analytics.html EXISTS" || (echo "❌ NOT FOUND" && exit 1) && \
-    echo "======== VERIFICATION SUCCESS ========"
-
 # 5. User setup and Permissions
 RUN useradd -m -u 1000 appuser
-
 RUN chown -R appuser:appuser /app && \
     chmod -R 755 /app
 
@@ -43,8 +32,5 @@ USER appuser
 EXPOSE 8080
 
 # 6. CRITICAL FIX: Use Gunicorn to launch the server
-# You must replace 'main:app' with your actual entry point:
-# - If your Flask/FastAPI instance is called 'app' in 'main.py', use 'main:app'.
-# - If your instance is called 'server' in 'application.py', use 'application:server'.
-# This command binds to the Railway-provided $PORT, solving the "unavailable" error.
+# Target is confirmed as 'main:app'
 CMD ["gunicorn", "--bind", "0.0.0.0:$PORT", "--workers", "4", "main:app"]
