@@ -40,26 +40,66 @@
     </style>
 </head>
 <body class="bg-gray-50">
-    <!-- Navigation -->
-    <nav class="bg-white shadow-sm border-b border-gray-200">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div class="flex justify-between h-16">
-                <div class="flex items-center">
-                    <h1 class="text-2xl font-bold text-gray-900">
-                        📊 Job Intelligence Platform
-                    </h1>
-                </div>
-                <div class="flex items-center space-x-4">
-                    <a href="/dashboard" class="text-blue-600 font-medium">Dashboard</a>
-                    <a href="/analytics" class="text-gray-600 hover:text-gray-900">Analytics</a>
-                    <div id="connection-status" class="flex items-center">
-                        <span class="pulse-dot h-2 w-2 bg-green-500 rounded-full mr-2"></span>
-                        <span class="text-sm text-gray-600">Connected</span>
-                    </div>
+   <!-- Navigation -->
+<nav class="bg-white shadow-sm border-b border-gray-200">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="flex justify-between h-16">
+            <div class="flex items-center space-x-8">
+                <h1 class="text-2xl font-bold text-gray-900">
+                    📊 Job Intelligence Platform
+                </h1>
+                <div class="hidden md:flex items-center space-x-1">
+                    <a href="/dashboard" class="nav-link active px-3 py-2 rounded-md text-sm font-medium">
+                        📈 Dashboard
+                    </a>
+                    <a href="/analytics" class="nav-link px-3 py-2 rounded-md text-sm font-medium">
+                        📊 Analytics
+                    </a>
+                    <a href="/companies" class="nav-link px-3 py-2 rounded-md text-sm font-medium">
+                        🏢 Companies
+                    </a>
+                    <a href="/jobs" class="nav-link px-3 py-2 rounded-md text-sm font-medium">
+                        💼 Jobs
+                    </a>
                 </div>
             </div>
+            <div class="flex items-center space-x-3">
+                <div id="connection-status" class="hidden md:flex items-center space-x-2 text-sm">
+                    <div class="w-2 h-2 bg-green-500 rounded-full"></div>
+                    <span class="text-gray-600">Connected</span>
+                </div>
+                <button id="settings-btn" class="text-gray-600 hover:text-gray-900 p-2">
+                    ⚙️
+                </button>
+            </div>
         </div>
-    </nav>
+    </div>
+</nav>
+
+<style>
+    .nav-link {
+        color: #6b7280;
+        transition: all 0.2s;
+        position: relative;
+    }
+    .nav-link:hover {
+        color: #1f2937;
+        background-color: #f3f4f6;
+    }
+    .nav-link.active {
+        color: #3b82f6;
+        background-color: #eff6ff;
+    }
+    .nav-link.active::after {
+        content: '';
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 2px;
+        background-color: #3b82f6;
+    }
+</style>
 
     <!-- Main Content -->
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
