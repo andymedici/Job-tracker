@@ -367,6 +367,12 @@ def ready():
     except Exception as e:
         return jsonify({'status': 'not_ready', 'error': str(e)}), 503
 
+@app.route('/submit-seed')
+@require_admin_key
+def submit_seed_page():
+    """Manual seed submission page (Admin only)"""
+    return render_template('submit-seed.html')
+
 # ============================================================================
 # API Routes - Statistics (Read)
 # ============================================================================
