@@ -849,6 +849,38 @@ def api_job_detail(job_id):
         logger.error(f"Error getting job detail: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/debug/tables')
+@limiter.exempt
+def debug_tables():
+    """Debug endpoint to check table status"""
+    try:
+        db = get_db()
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                # Check companies
+                cur.execute("SELECT COUNT(*) FROM companies")
+                company_count = cur.fetchone()[0]
+                
+                # Check seeds
+                cur.execute("SELECT COUNT(*) FROM seed_companies")
+                seed_count = cur.fetchone()[0]
+                
+                # Check if job_archive exists
+                try:
+                    cur.execute("SELECT COUNT(*) FROM job_archive")
+                    job_count = cur.fetchone()[0]
+                except:
+                    job_count = "Table doesn't exist"
+                
+                return jsonify({
+                    'companies': company_count,
+                    'seeds': seed_count,
+                    'jobs': job_count,
+                    'status': 'ok'
+                })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 # ============================================================================
 # API Routes - Seeds Management
 # ============================================================================
