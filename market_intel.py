@@ -184,11 +184,26 @@ def run_daily_maintenance():
         db = get_db()
         ttf_metrics = db.get_time_to_fill_metrics()
         
-        logger.info(f"📊 Intelligence Summary:")
+        # Log summary
+        logger.info("📊 Intelligence Summary:")
         logger.info(f"   - Hiring Surges: {len(surges)}")
         logger.info(f"   - Hiring Freezes: {len(declines)}")
         logger.info(f"   - Location Expansions: {len(expansions)}")
-        logger.info(f"   - Avg Time-to-Fill: {ttf_metrics.get('overall_avg_ttf_days', 0):.1f} days")
+
+        # Get TTF metrics safely
+        avg_ttf = ttf_metrics.get('overall_avg_ttf_days')
+        median_ttf = ttf_metrics.get('median_ttf_days')
+        sample_size = ttf_metrics.get('sample_size', 0)
+
+        if avg_ttf is not None and median_ttf is not None:
+            logger.info(f"   - Avg Time-to-Fill: {avg_ttf:.1f} days")
+            logger.info(f"   - Median Time-to-Fill: {median_ttf:.1f} days")
+            logger.info(f"   - Sample Size: {sample_size}")
+        else:
+            logger.info("   - Time-to-Fill: No data yet (need closed jobs)")
+
+        logger.info("============================================================")
+        
         
         # Cleanup (only run during off-peak hours)
         current_hour = datetime.utcnow().hour
