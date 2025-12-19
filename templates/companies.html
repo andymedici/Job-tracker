@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Companies - Job Intelligence Platform</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50">
+    <!-- Navigation -->
+    <nav class="bg-white shadow-sm border-b border-gray-200">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center space-x-8">
+                    <h1 class="text-2xl font-bold text-gray-900">📊 Job Intelligence</h1>
+                    <div class="flex space-x-4">
+                        <a href="/dashboard" class="text-gray-600 hover:text-gray-900">Dashboard</a>
+                        <a href="/analytics" class="text-gray-600 hover:text-gray-900">Analytics</a>
+                        <a href="/companies" class="text-blue-600 font-medium">Companies</a>
+                        <a href="/jobs" class="text-gray-600 hover:text-gray-900">Jobs</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <!-- Search & Filters -->
+        <div class="bg-white rounded-lg shadow p-6 mb-6">
+            <h2 class="text-lg font-semibold text-gray-900 mb-4">Browse Companies</h2>
+            
+            <div class="flex space-x-4">
+                <input 
+                    type="text" 
+                    id="search-input" 
+                    placeholder="Search companies..." 
+                    class="flex-1 border-gray-300 rounded-md shadow-sm"
+                >
+                
+                <select id="ats-filter" class="border-gray-300 rounded-md shadow-sm">
+                    <option value="">All ATS Types</option>
+                    <option value="greenhouse">Greenhouse</option>
+                    <option value="lever">Lever</option>
+                    <option value="workday">Workday</option>
+                    <option value="ashby">Ashby</option>
+                </select>
+                
+                <button id="search-btn" class="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700">
+                    Search
+                </button>
+            </div>
+        </div>
+
+        <!-- Companies Grid -->
+        <div id="companies-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div class="text-center py-12 col-span-full">
+                <p class="text-gray-500">Loading companies...</p>
+            </div>
+        </div>
+
+        <!-- Pagination -->
+        <div class="flex justify-center mt-8 space-x-2">
+            <button id="prev-page" class="px-4 py-2 border rounded hover:bg-gray-50" disabled>Previous</button>
+            <span id="page-info" class="px-4 py-2">Page 1</span>
+            <button id="next-page" class="px-4 py-2 border rounded hover:bg-gray-50" disabled>Next</button>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+        let API_KEY = localStorage.getItem('api_key') || '';
+        let currentPage = 1;
+
+        async function apiRequest(endpoint) {
+            const response = await fetch(`${API_BASE}${endpoint}`, {
+                headers: { 'X-API-Key': API_KEY }
+            });
+            
+            if (response.status === 401) {
+                window.location.href = '/dashboard';
+                throw new Error('Authentication required');
+            }
+            
+            return await response.json();
+        }
+
+        async function loadCompanies() {
+            const search = document.getElementById('search-input').value;
+            const atsType = document.getElementById('ats-filter').value;
+
+            const params = new URLSearchParams({
+                page: currentPage,
+                per_page: 30,
+                ...(search && { search }),
+                ...(atsType && { ats_type: atsType })
+            });
+
+            try {
+                const data = await apiRequest(`/api/companies?${params}`);
+                displayCompanies(data.companies);
+                updatePagination(data.pagination);
+            } catch (error) {
+                console.error('Error loading companies:', error);
+            }
+        }
+
+        function displayCompanies(companies) {
+            const container = document.getElementById('companies-container');
+            
+            if (companies.length === 0) {
+                container.innerHTML = '<div class="text-center py-12 col-span-full"><p class="text-gray-500">No companies found</p></div>';
+                return;
+            }
+
+            container.innerHTML = companies.map(company => `
+                <a href="/company/${company.id}" class="block bg-white rounded-lg shadow p-6 hover:shadow-lg transition">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-2">${company.company_name}</h3>
+                    <div class="space-y-2 text-sm text-gray-600">
+                        <div class="flex justify-between">
+                            <span>ATS:</span>
+                            <span class="font-medium text-green-600">${company.ats_type}</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>Active Jobs:</span>
+                            <span class="font-semibold text-blue-600">${company.active_jobs || 0}</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>Last Updated:</span>
+                            <span>${new Date(company.last_scraped).toLocaleDateString()}</span>
+                        </div>
+                    </div>
+                    <div class="mt-4 pt-4 border-t">
+                        <span class="text-blue-600 text-sm font-medium">View Jobs →</span>
+                    </div>
+                </a>
+            `).join('');
+        }
+
+        function updatePagination(pagination) {
+            document.getElementById('page-info').textContent = `Page ${pagination.page} of ${pagination.pages}`;
+            document.getElementById('prev-page').disabled = pagination.page === 1;
+            document.getElementById('next-page').disabled = pagination.page === pagination.pages;
+        }
+
+        document.getElementById('search-btn').addEventListener('click', () => {
+            currentPage = 1;
+            loadCompanies();
+        });
+
+        document.getElementById('prev-page').addEventListener('click', () => {
+            if (currentPage > 1) {
+                currentPage--;
+                loadCompanies();
+            }
+        });
+
+        document.getElementById('next-page').addEventListener('click', () => {
+            currentPage++;
+            loadCompanies();
+        });
+
+        if (!API_KEY) {
+            window.location.href = '/dashboard';
+        } else {
+            loadCompanies();
+        }
+    </script>
+</body>
+</html>
