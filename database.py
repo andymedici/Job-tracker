@@ -802,6 +802,21 @@ class Database:
             logger.error(f"Error calculating TTF metrics: {e}")
             return []
 
+# ... (rest of your existing database.py code) ...
+
+# Global instance of the Database class
+# This will initialize the pool and create tables when the module is imported.
+DB_CLIENT = Database() 
+
+# Function wrapper required by main.py's import statement
+def get_db() -> Database:
+    """Returns the globally initialized Database client instance."""
+    return DB_CLIENT
+
+# Context manager wrapper for database connections (if needed in main.py)
+# This is equivalent to your existing get_connection method, but exposed globally.
+get_connection = DB_CLIENT.get_connection
+
 # ========================================================================
 # EOF
 # ========================================================================
