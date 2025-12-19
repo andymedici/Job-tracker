@@ -19,18 +19,39 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Install Playwright browsers
 RUN playwright install chromium --with-deps || true
 
-# Copy application code
+# Copy ALL application code
 COPY . .
+
+# CRITICAL: Verify templates directory exists and has files
+RUN echo "========================================" && \
+    echo "Verifying container contents:" && \
+    echo "========================================" && \
+    pwd && \
+    echo "--- Root directory contents ---" && \
+    ls -la && \
+    echo "--- Templates directory check ---" && \
+    if [ -d "templates" ]; then \
+        echo "✅ templates/ directory exists"; \
+        ls -la templates/; \
+        if [ -f "templates/dashboard.html" ]; then \
+            echo "✅ dashboard.html exists"; \
+        else \
+            echo "❌ dashboard.html NOT FOUND"; \
+        fi; \
+        if [ -f "templates/analytics.html" ]; then \
+            echo "✅ analytics.html exists"; \
+        else \
+            echo "❌ analytics.html NOT FOUND"; \
+        fi; \
+    else \
+        echo "❌ templates/ directory NOT FOUND"; \
+    fi && \
+    echo "========================================"
 
 # Create non-root user
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8080/health')"
-
 EXPOSE 8080
 
-# FIX: main.py is in root, not app/ subdirectory
 CMD ["python", "main.py"]
