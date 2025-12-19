@@ -1,10 +1,34 @@
-flask
-waitress
-psycopg2-binary
-sqlalchemy
-apscheduler
-aiohttp
-beautifulsoup4
-fake-useragent
-playwright
-python-dotenv  # if using .env locally
+# Job Intelligence Platform - Production Dependencies
+
+# Core Framework
+flask==3.0.0
+waitress==2.1.2
+
+# Database
+psycopg2-binary==2.9.9
+
+# Scheduler
+apscheduler==3.10.4
+
+# HTTP & Scraping
+aiohttp==3.9.1
+beautifulsoup4==4.12.2
+fake-useragent==1.4.0
+playwright==1.40.0
+
+# Security & Validation
+pydantic==2.5.3
+flask-limiter==3.5.0
+flask-cors==4.0.0
+
+# Monitoring (Optional)
+sentry-sdk[flask]==1.39.1
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+
+# Utilities
+python-dotenv==1.0.0
+redis==5.0.1
