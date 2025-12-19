@@ -214,8 +214,8 @@ def run_daily_maintenance():
     logger.info("=" * 60)
         
         
-        # Cleanup (only run during off-peak hours)
-        current_hour = datetime.utcnow().hour
+    # Cleanup (only run during off-peak hours)
+    current_hour = datetime.utcnow().hour
         if 0 <= current_hour <= 4:  # Run between midnight and 4am UTC
             purged_jobs = purge_old_job_details(days_to_keep=90)
             marked_inactive = purge_stale_companies(inactive_days=180)
