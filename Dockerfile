@@ -32,4 +32,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 
 EXPOSE 8080
 
-CMD ["python", "app/main.py"]
+# FIX: main.py is in root, not app/ subdirectory
+CMD ["python", "main.py"]
