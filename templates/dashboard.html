@@ -370,7 +370,10 @@
                 <span class="text-2xl mr-2">🔧</span>
                 Admin Actions
             </h3>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <button id="run-migrations-btn" class="bg-yellow-500 border-2 border-yellow-600 text-white px-6 py-3 rounded-lg hover:bg-yellow-600 transition font-medium shadow-md">
+                    🔧 Run Migrations
+                </button>
                 <button id="expand-tier1-btn" class="bg-white border-2 border-purple-200 text-purple-700 px-6 py-3 rounded-lg hover:bg-purple-50 transition font-medium">
                     🌱 Expand Seeds (Tier 1)
                 </button>
@@ -718,8 +721,43 @@
             }
         });
 
+        // Run Migrations Button (NEW)
+        document.getElementById('run-migrations-btn').addEventListener('click', async () => {
+            if (!ADMIN_API_KEY) {
+                alert('Admin API key required for this action');
+                showApiKeyModal();
+                return;
+            }
+
+            if (!confirm('Run database migrations? This will add missing columns to your database.')) {
+                return;
+            }
+
+            try {
+                const response = await apiRequest('/api/admin/run-migrations', {
+                    method: 'POST',
+                    admin: true
+                });
+
+                if (response.success) {
+                    alert('✅ Migrations completed successfully!\n\n' + response.message);
+                    loadDashboard(); // Refresh the dashboard
+                } else {
+                    alert('❌ Migration failed: ' + (response.error || 'Unknown error'));
+                }
+            } catch (error) {
+                alert('❌ Error running migrations: ' + error.message);
+            }
+        });
+
         // Seed Expansion Actions
         document.getElementById('expand-tier1-btn').addEventListener('click', async () => {
+            if (!ADMIN_API_KEY) {
+                alert('Admin API key required');
+                showApiKeyModal();
+                return;
+            }
+
             if (!confirm('Expand Tier 1 seeds (premium tech companies)?')) return;
             
             try {
@@ -735,6 +773,12 @@
         });
 
         document.getElementById('expand-tier2-btn').addEventListener('click', async () => {
+            if (!ADMIN_API_KEY) {
+                alert('Admin API key required');
+                showApiKeyModal();
+                return;
+            }
+
             if (!confirm('Expand Tier 2 seeds (public companies)?')) return;
             
             try {
@@ -750,6 +794,12 @@
         });
 
         document.getElementById('expand-all-btn').addEventListener('click', async () => {
+            if (!ADMIN_API_KEY) {
+                alert('Admin API key required');
+                showApiKeyModal();
+                return;
+            }
+
             if (!confirm('Expand ALL seed tiers? This may take a while.')) return;
             
             try {
