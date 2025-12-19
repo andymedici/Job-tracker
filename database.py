@@ -222,6 +222,8 @@ class Database:
                 "CREATE INDEX IF NOT EXISTS idx_companies_skills_gin ON companies USING GIN(extracted_skills)",
                 "CREATE INDEX IF NOT EXISTS idx_companies_locations_gin ON companies USING GIN(normalized_locations)",
                 "CREATE INDEX IF NOT EXISTS idx_companies_departments_gin ON companies USING GIN(department_distribution)",
+                ALTER TABLE seed_companies ADD COLUMN IF NOT EXISTS website_url TEXT;
+
             ]
             
             for idx_sql in indexes:
@@ -706,15 +708,43 @@ class Database:
                 WHERE id = %s
             """, (seed_id,))
 
-    def add_manual_seed(self, company_name: str) -> bool:
-        """Add a manual seed from the UI"""
-        token_slug = _name_to_token(company_name)
-        try:
-            self.insert_seeds([(company_name, token_slug, 'manual', 1)])
-            return True
-        except Exception as e:
-            logger.error(f"Failed to add manual seed {company_name}: {e}")
-            return False
+    def add_manual_seed(self, company_name: str, website_url: str = None) -> bool:
+    """Add a manual seed company"""
+    try:
+        token = self._name_to_token(company_name)
+        
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                # Check if already exists
+                cur.execute("""
+                    SELECT 1 FROM seed_companies 
+                    WHERE company_name_token = %s OR company_name ILIKE %s
+                """, (token, company_name))
+                
+                if cur.fetchone():
+                    logger.info(f"Seed already exists: {company_name}")
+                    return False
+                
+                # Check if already tracked
+                cur.execute("SELECT 1 FROM companies WHERE company_name ILIKE %s", (company_name,))
+                if cur.fetchone():
+                    logger.info(f"Company already tracked: {company_name}")
+                    return False
+                
+                # Insert new seed
+                cur.execute("""
+                    INSERT INTO seed_companies (company_name, company_name_token, source, tier, website_url)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (company_name_token) DO NOTHING
+                """, (company_name, token, 'manual', 0, website_url))
+                
+                conn.commit()
+                logger.info(f"Added manual seed: {company_name}")
+                return True
+                
+    except Exception as e:
+        logger.error(f"Error adding manual seed: {e}")
+        return False
 
     def get_companies_for_refresh(self, hours_since_update: int, limit: int) -> List[Dict[str, Any]]:
         """Get companies that need refreshing"""
