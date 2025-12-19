@@ -46,3 +46,12 @@ EXPOSE 8080
 # Use Gunicorn as the production WSGI server, binding to the port provided by the platform
 # 'main:app' assumes your Flask application object is named 'app' in 'main.py'
 CMD ["gunicorn", "--bind", "0.0.0.0:$PORT", "--workers", "4", "main:app"]
+
+# ... (rest of Dockerfile)
+
+EXPOSE 8080
+
+# The CMD command is the last thing that needs to be right.
+# Use shell form (no square brackets) and explicitly use the required port (8080)
+# or fallback to an explicit port (like 5000 if 8080 is not the target).
+CMD gunicorn --bind 0.0.0.0:${PORT:-8080} --workers 4 main:app
