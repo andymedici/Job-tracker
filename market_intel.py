@@ -212,26 +212,3 @@ def run_daily_maintenance():
     logger.info("=" * 60)
     logger.info("✅ Daily maintenance complete")
     logger.info("=" * 60)
-        
-        
-    # Cleanup (only run during off-peak hours)
-    current_hour = datetime.utcnow().hour
-    if 0 <= current_hour <= 4:  # Run between midnight and 4am UTC
-        purged_jobs = purge_old_job_details(days_to_keep=90)
-        marked_inactive = purge_stale_companies(inactive_days=180)
-        logger.info(f"🧹 Cleanup: {purged_jobs} jobs purged, {marked_inactive} companies marked inactive")
-        
-        logger.info("=" * 60)
-        logger.info("✅ Daily Maintenance Complete")
-        logger.info("=" * 60)
-        
-        return {
-            'surges': len(surges),
-            'declines': len(declines),
-            'expansions': len(expansions),
-            'avg_ttf': ttf_metrics.get('overall_avg_ttf_days', 0)
-        }
-        
-    except Exception as e:
-        logger.error(f"❌ Daily maintenance failed: {e}", exc_info=True)
-        return None
