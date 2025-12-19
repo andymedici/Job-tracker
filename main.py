@@ -473,12 +473,81 @@ def api_advanced_analytics():
 
 # Add these routes after your existing dashboard/analytics routes
 
-@app.route('/companies')
-@optional_auth
-def companies_page():
-    """Companies browser page"""
-    return render_template('companies.html')
-
+@app.route('/api/companies')
+@limiter.limit(RATE_LIMITS['authenticated_read'])
+@require_api_key
+def api_companies():
+    """Get list of tracked companies with job counts"""
+    try:
+        page = request.args.get('page', 1, type=int)
+        per_page = min(request.args.get('per_page', 50, type=int), 100)
+        search = request.args.get('search', '').strip()
+        ats_type = request.args.get('ats_type', '').strip()
+        
+        db = get_db()
+        
+        # Build query - FIXED to handle missing jobs
+        query = """
+            SELECT 
+                c.id,
+                c.company_name,
+                c.ats_type,
+                c.board_url,
+                c.job_count,
+                c.last_scraped,
+                c.created_at,
+                COALESCE(c.job_count, 0) as active_jobs
+            FROM companies c
+            WHERE 1=1
+        """
+        params = []
+        
+        if search:
+            query += " AND c.company_name ILIKE %s"
+            params.append(f'%{search}%')
+        
+        if ats_type:
+            query += " AND c.ats_type = %s"
+            params.append(ats_type)
+        
+        query += """
+            ORDER BY c.job_count DESC NULLS LAST, c.company_name
+            LIMIT %s OFFSET %s
+        """
+        params.extend([per_page, (page - 1) * per_page])
+        
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, params)
+                columns = [desc[0] for desc in cur.description]
+                companies = [dict(zip(columns, row)) for row in cur.fetchall()]
+                
+                # Get total count
+                count_query = "SELECT COUNT(*) FROM companies WHERE 1=1"
+                count_params = []
+                if search:
+                    count_query += " AND company_name ILIKE %s"
+                    count_params.append(f'%{search}%')
+                if ats_type:
+                    count_query += " AND ats_type = %s"
+                    count_params.append(ats_type)
+                
+                cur.execute(count_query, count_params)
+                total = cur.fetchone()[0]
+        
+        return jsonify({
+            'companies': companies,
+            'pagination': {
+                'page': page,
+                'per_page': per_page,
+                'total': total,
+                'pages': (total + per_page - 1) // per_page if total > 0 else 1
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting companies: {e}", exc_info=True)
+        return jsonify({'error': str(e), 'details': 'Check if companies table exists'}), 500
 @app.route('/company/<int:company_id>')
 @optional_auth
 def company_page(company_id):
