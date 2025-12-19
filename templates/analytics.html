@@ -1,138 +1,1050 @@
 <!DOCTYPE html>
-<html lang="en" class="h-full bg-gray-50">
+<html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Market Intelligence Analytics</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <style>
-    body { font-family: 'Inter', sans-serif; }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Analytics - Job Intelligence Platform</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        .chart-container {
+            position: relative;
+            height: 350px;
+        }
+        .metric-card {
+            transition: all 0.3s ease;
+        }
+        .metric-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        }
+        .tab-button {
+            transition: all 0.2s;
+        }
+        .tab-button.active {
+            border-bottom: 2px solid #3b82f6;
+            color: #3b82f6;
+        }
+        .loading-spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3b82f6;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .skill-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            margin: 0.25rem;
+        }
+        .data-table {
+            width: 100%;
+        }
+        .data-table th {
+            background-color: #f9fafb;
+            padding: 0.75rem;
+            text-align: left;
+            font-weight: 600;
+            color: #374151;
+            border-bottom: 2px solid #e5e7eb;
+        }
+        .data-table td {
+            padding: 0.75rem;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .data-table tr:hover {
+            background-color: #f9fafb;
+        }
+    </style>
 </head>
-<body class="h-full">
-  <div class="min-h-full">
-    <header class="bg-white shadow-sm border-b border-gray-200">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-        <h1 class="text-3xl font-bold text-gray-900">Market Intelligence Analytics</h1>
-        <p class="text-gray-600 mt-1">Deep insights into hiring trends, velocity, and market dynamics</p>
-      </div>
-    </header>
-
-    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <!-- Key Metrics -->
-      <div id="metrics-grid" class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <!-- Filled by JS -->
-      </div>
-
-      <!-- Charts Row -->
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-        <div class="bg-white rounded-lg shadow p-6">
-          <h3 class="text-xl font-semibold mb-4">Hiring Surges & Declines (Last 14 Days)</h3>
-          <canvas id="surgeChart"></canvas>
+<body class="bg-gray-50">
+    <!-- Navigation -->
+    <nav class="bg-white shadow-sm border-b border-gray-200">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <h1 class="text-2xl font-bold text-gray-900">
+                        📊 Job Intelligence Platform
+                    </h1>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <a href="/dashboard" class="text-gray-600 hover:text-gray-900">Dashboard</a>
+                    <a href="/analytics" class="text-blue-600 font-medium">Analytics</a>
+                    <button id="export-data-btn" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition text-sm">
+                        📥 Export Data
+                    </button>
+                </div>
+            </div>
         </div>
-        <div class="bg-white rounded-lg shadow p-6">
-          <h3 class="text-xl font-semibold mb-4">Average Time-to-Fill by Role Type</h3>
-          <canvas id="ttfChart"></canvas>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        
+        <!-- Alert/Status Bar -->
+        <div id="alert-bar" class="hidden mb-6 rounded-lg p-4"></div>
+
+        <!-- Tab Navigation -->
+        <div class="bg-white rounded-lg shadow mb-6">
+            <div class="border-b border-gray-200">
+                <nav class="flex -mb-px">
+                    <button class="tab-button active px-6 py-4 text-sm font-medium" data-tab="overview">
+                        📊 Overview
+                    </button>
+                    <button class="tab-button px-6 py-4 text-sm font-medium" data-tab="time-to-fill">
+                        ⏱️ Time to Fill
+                    </button>
+                    <button class="tab-button px-6 py-4 text-sm font-medium" data-tab="skills">
+                        💻 Skills Demand
+                    </button>
+                    <button class="tab-button px-6 py-4 text-sm font-medium" data-tab="regions">
+                        🌍 Regional Trends
+                    </button>
+                    <button class="tab-button px-6 py-4 text-sm font-medium" data-tab="growth">
+                        📈 Growth Analysis
+                    </button>
+                    <button class="tab-button px-6 py-4 text-sm font-medium" data-tab="historical">
+                        📚 Historical Data
+                    </button>
+                </nav>
+            </div>
         </div>
-      </div>
 
-      <!-- Top Lists -->
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div class="bg-white rounded-lg shadow p-6">
-          <h3 class="text-xl font-semibold mb-4">Fastest Growing Companies</h3>
-          <div id="top-surges" class="space-y-3"></div>
+        <!-- Tab Content: Overview -->
+        <div id="tab-overview" class="tab-content">
+            <!-- Key Metrics -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                <div class="metric-card bg-white rounded-lg shadow p-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-sm font-medium text-gray-600">Avg Time to Fill</p>
+                            <p id="metric-avg-ttf" class="text-3xl font-bold text-gray-900 mt-2">-</p>
+                            <p class="text-xs text-gray-500 mt-1">days</p>
+                        </div>
+                        <div class="bg-blue-100 rounded-full p-3">
+                            <svg class="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="metric-card bg-white rounded-lg shadow p-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-sm font-medium text-gray-600">Median Time to Fill</p>
+                            <p id="metric-median-ttf" class="text-3xl font-bold text-gray-900 mt-2">-</p>
+                            <p class="text-xs text-gray-500 mt-1">days</p>
+                        </div>
+                        <div class="bg-green-100 rounded-full p-3">
+                            <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="metric-card bg-white rounded-lg shadow p-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-sm font-medium text-gray-600">Jobs Closed (90d)</p>
+                            <p id="metric-closed-jobs" class="text-3xl font-bold text-gray-900 mt-2">-</p>
+                            <p class="text-xs text-gray-500 mt-1">positions filled</p>
+                        </div>
+                        <div class="bg-purple-100 rounded-full p-3">
+                            <svg class="w-8 h-8 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="metric-card bg-white rounded-lg shadow p-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-sm font-medium text-gray-600">Top Hiring Region</p>
+                            <p id="metric-top-region" class="text-2xl font-bold text-gray-900 mt-2">-</p>
+                            <p id="metric-top-region-jobs" class="text-xs text-gray-500 mt-1">- jobs</p>
+                        </div>
+                        <div class="bg-yellow-100 rounded-full p-3">
+                            <svg class="w-8 h-8 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Charts Row 1 -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+                <!-- Top Skills -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">Top In-Demand Skills</h3>
+                    <div class="chart-container">
+                        <canvas id="top-skills-chart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Department Distribution -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">Department Distribution</h3>
+                    <div class="chart-container">
+                        <canvas id="department-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Charts Row 2 -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+                <!-- Regional Distribution -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">Top Hiring Regions</h3>
+                    <div class="chart-container">
+                        <canvas id="regions-chart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Work Type Breakdown -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">Work Type Distribution</h3>
+                    <div class="chart-container">
+                        <canvas id="worktype-detail-chart"></canvas>
+                    </div>
+                    <div class="mt-4 grid grid-cols-3 gap-4 text-center">
+                        <div>
+                            <p class="text-2xl font-bold text-purple-600" id="remote-percent">-</p>
+                            <p class="text-xs text-gray-600">Remote</p>
+                        </div>
+                        <div>
+                            <p class="text-2xl font-bold text-blue-600" id="hybrid-percent">-</p>
+                            <p class="text-xs text-gray-600">Hybrid</p>
+                        </div>
+                        <div>
+                            <p class="text-2xl font-bold text-gray-600" id="onsite-percent">-</p>
+                            <p class="text-xs text-gray-600">Onsite</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Fastest Growing Companies -->
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">Fastest Growing Companies (Last 14 Days)</h3>
+                <div id="fastest-growing-table" class="overflow-x-auto">
+                    <div class="loading-spinner"></div>
+                </div>
+            </div>
         </div>
-        <div class="bg-white rounded-lg shadow p-6">
-          <h3 class="text-xl font-semibold mb-4">Top Hiring Locations</h3>
-          <div id="top-locations" class="space-y-3"></div>
+
+        <!-- Tab Content: Time to Fill -->
+        <div id="tab-time-to-fill" class="tab-content hidden">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h4 class="text-sm font-medium text-gray-600 mb-2">Overall Average</h4>
+                    <p id="ttf-overall" class="text-4xl font-bold text-gray-900">-</p>
+                    <p class="text-sm text-gray-500 mt-1">days to fill</p>
+                </div>
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h4 class="text-sm font-medium text-gray-600 mb-2">Fastest Fill</h4>
+                    <p id="ttf-min" class="text-4xl font-bold text-green-600">-</p>
+                    <p class="text-sm text-gray-500 mt-1">days</p>
+                </div>
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h4 class="text-sm font-medium text-gray-600 mb-2">Slowest Fill</h4>
+                    <p id="ttf-max" class="text-4xl font-bold text-red-600">-</p>
+                    <p class="text-sm text-gray-500 mt-1">days</p>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- TTF by Work Type -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">Time to Fill by Work Type</h3>
+                    <div class="chart-container">
+                        <canvas id="ttf-worktype-chart"></canvas>
+                    </div>
+                </div>
+
+                <!-- TTF by Department -->
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">Time to Fill by Department (Top 10)</h3>
+                    <div class="chart-container">
+                        <canvas id="ttf-department-chart"></canvas>
+                    </div>
+                </div>
+            </div>
         </div>
-        <div class="bg-white rounded-lg shadow p-6">
-          <h3 class="text-xl font-semibold mb-4">Most In-Demand Skills</h3>
-          <div id="top-skills" class="space-y-3"></div>
+
+        <!-- Tab Content: Skills -->
+        <div id="tab-skills" class="tab-content hidden">
+            <div class="bg-white rounded-lg shadow p-6 mb-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold text-gray-900">Skill Demand Analysis</h3>
+                    <div class="flex space-x-2">
+                        <select id="skill-timeframe" class="border-gray-300 rounded-md shadow-sm text-sm">
+                            <option value="30">Last 30 Days</option>
+                            <option value="90" selected>Last 90 Days</option>
+                            <option value="180">Last 6 Months</option>
+                            <option value="365">Last Year</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="top-skills-list" class="mb-6">
+                    <div class="loading-spinner"></div>
+                </div>
+            </div>
+
+            <!-- Skill Categories -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">Frontend Technologies</h3>
+                    <div id="frontend-skills" class="space-y-2">
+                        <div class="loading-spinner"></div>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">Backend Technologies</h3>
+                    <div id="backend-skills" class="space-y-2">
+                        <div class="loading-spinner"></div>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">Cloud & DevOps</h3>
+                    <div id="cloud-skills" class="space-y-2">
+                        <div class="loading-spinner"></div>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">Data & AI/ML</h3>
+                    <div id="data-skills" class="space-y-2">
+                        <div class="loading-spinner"></div>
+                    </div>
+                </div>
+            </div>
         </div>
-      </div>
-    </main>
-  </div>
 
-  <script>
-    let surgeChart = null;
-    let ttfChart = null;
+        <!-- Tab Content: Regions -->
+        <div id="tab-regions" class="tab-content hidden">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">Jobs by Country</h3>
+                    <div class="chart-container">
+                        <canvas id="country-chart"></canvas>
+                    </div>
+                </div>
 
-    async function loadAnalytics() {
-      const [intelRes, advRes] = await Promise.all([
-        fetch('/api/intel?days=14'),
-        fetch('/api/advanced-analytics')
-      ]);
-      const intel = await intelRes.json();
-      const adv = await advRes.json();
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-900 mb-4">Top Cities</h3>
+                    <div class="chart-container">
+                        <canvas id="city-chart"></canvas>
+                    </div>
+                </div>
+            </div>
 
-      // Metrics
-      document.getElementById('metrics-grid').innerHTML = `
-        <div class="bg-white rounded-lg shadow p-6">
-          <p class="text-sm text-gray-600">Avg Time-to-Fill</p>
-          <p class="text-3xl font-bold text-indigo-600">${adv.overall_avg_ttf_days ? Math.round(adv.overall_avg_ttf_days) + ' days' : 'N/A'}</p>
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">Regional Breakdown</h3>
+                <div id="regional-table" class="overflow-x-auto">
+                    <div class="loading-spinner"></div>
+                </div>
+            </div>
         </div>
-        <div class="bg-white rounded-lg shadow p-6">
-          <p class="text-sm text-gray-600">Companies Hiring Surge</p>
-          <p class="text-3xl font-bold text-green-600">${intel.surges?.length || 0}</p>
+
+        <!-- Tab Content: Growth Analysis -->
+        <div id="tab-growth" class="tab-content hidden">
+            <div class="bg-white rounded-lg shadow p-6 mb-6">
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">Company Growth Trajectories</h3>
+                <p class="text-sm text-gray-600 mb-4">Select a company to view detailed hiring history:</p>
+                <div class="mb-4">
+                    <input 
+                        type="text" 
+                        id="company-search" 
+                        placeholder="Search for a company..." 
+                        class="w-full border-gray-300 rounded-md shadow-sm"
+                    >
+                </div>
+                <div id="company-results" class="space-y-2 mb-6">
+                    <p class="text-sm text-gray-500">Enter a company name to search</p>
+                </div>
+            </div>
+
+            <div id="growth-chart-container" class="hidden bg-white rounded-lg shadow p-6">
+                <h3 id="selected-company-name" class="text-lg font-semibold text-gray-900 mb-4"></h3>
+                <div class="chart-container" style="height: 400px;">
+                    <canvas id="growth-chart"></canvas>
+                </div>
+                <div class="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div class="bg-gray-50 rounded-lg p-4">
+                        <p class="text-sm text-gray-600">Total Growth</p>
+                        <p id="growth-total" class="text-2xl font-bold text-gray-900 mt-1">-</p>
+                    </div>
+                    <div class="bg-gray-50 rounded-lg p-4">
+                        <p class="text-sm text-gray-600">Peak Jobs</p>
+                        <p id="growth-peak" class="text-2xl font-bold text-gray-900 mt-1">-</p>
+                    </div>
+                    <div class="bg-gray-50 rounded-lg p-4">
+                        <p class="text-sm text-gray-600">Current Jobs</p>
+                        <p id="growth-current" class="text-2xl font-bold text-gray-900 mt-1">-</p>
+                    </div>
+                </div>
+            </div>
         </div>
-        <div class="bg-white rounded-lg shadow p-6">
-          <p class="text-sm text-gray-600">Location Expansions</p>
-          <p class="text-3xl font-bold text-purple-600">${intel.expansions?.length || 0}</p>
+
+        <!-- Tab Content: Historical Data -->
+        <div id="tab-historical" class="tab-content hidden">
+            <div class="bg-white rounded-lg shadow p-6 mb-6">
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">Export Historical Job Data</h3>
+                <p class="text-sm text-gray-600 mb-4">
+                    Download complete historical dataset for offline analysis. Includes all job postings, 
+                    company information, and timeline data.
+                </p>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
+                        <input type="date" id="export-start-date" class="w-full border-gray-300 rounded-md shadow-sm">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">End Date</label>
+                        <input type="date" id="export-end-date" class="w-full border-gray-300 rounded-md shadow-sm">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Company (Optional)</label>
+                        <input type="text" id="export-company" placeholder="Leave blank for all companies" class="w-full border-gray-300 rounded-md shadow-sm">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Format</label>
+                        <select id="export-format" class="w-full border-gray-300 rounded-md shadow-sm">
+                            <option value="json">JSON</option>
+                            <option value="csv">CSV</option>
+                        </select>
+                    </div>
+                </div>
+
+                <button id="export-historical-btn" class="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition">
+                    📥 Download Historical Data
+                </button>
+            </div>
+
+            <!-- Recent Intelligence Events -->
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">Recent Intelligence Events</h3>
+                <div id="events-timeline" class="space-y-4">
+                    <div class="loading-spinner"></div>
+                </div>
+            </div>
         </div>
-      `;
 
-      // Surge Chart
-      const surgeNames = intel.surges?.slice(0, 10).map(c => c.company_name) || [];
-      const surgeValues = intel.surges?.slice(0, 10).map(c => c.change_amount) || [];
-      if (surgeChart) surgeChart.destroy();
-      surgeChart = new Chart(document.getElementById('surgeChart'), {
-        type: 'bar',
-        data: {
-          labels: surgeNames,
-          datasets: [{
-            label: 'Job Increase',
-            data: surgeValues,
-            backgroundColor: '#10b981'
-          }]
-        },
-        options: { responsive: true, indexAxis: 'y' }
-      });
+    </div>
 
-      // TTF Chart
-      const ttfLabels = Object.keys(adv.avg_ttf_by_work_type || {});
-      const ttfData = Object.values(adv.avg_ttf_by_work_type || {});
-      if (ttfChart) ttfChart.destroy();
-      ttfChart = new Chart(document.getElementById('ttfChart'), {
-        type: 'doughnut',
-        data: {
-          labels: ttfLabels.map(l => l.charAt(0).toUpperCase() + l.slice(1)),
-          datasets: [{
-            data: ttfData,
-            backgroundColor: ['#6366f1', '#10b981', '#f59e0b']
-          }]
-        },
-        options: { responsive: true }
-      });
+    <!-- Export Modal -->
+    <div id="export-modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+        <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+            <div class="mt-3">
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">Quick Export</h3>
+                <p class="text-sm text-gray-600 mb-4">Choose what data to export:</p>
+                <div class="space-y-3">
+                    <button class="w-full text-left px-4 py-3 border rounded-lg hover:bg-gray-50 transition" data-export="stats">
+                        📊 Current Statistics (JSON)
+                    </button>
+                    <button class="w-full text-left px-4 py-3 border rounded-lg hover:bg-gray-50 transition" data-export="trends">
+                        📈 Market Trends (CSV)
+                    </button>
+                    <button class="w-full text-left px-4 py-3 border rounded-lg hover:bg-gray-50 transition" data-export="companies">
+                        🏢 Company List (CSV)
+                    </button>
+                    <button class="w-full text-left px-4 py-3 border rounded-lg hover:bg-gray-50 transition" data-export="intelligence">
+                        🔍 Intelligence Events (JSON)
+                    </button>
+                </div>
+                <div class="mt-4">
+                    <button id="close-export-modal" class="w-full bg-gray-300 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-400">
+                        Close
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 
-      // Lists
-      document.getElementById('top-surges').innerHTML = (intel.surges || []).slice(0, 10).map(c => `
-        <div class="flex justify-between"><span>${c.company_name}</span><span class="text-green-600 font-bold">+${c.change_amount}</span></div>
-      `).join('');
-
-      document.getElementById('top-locations').innerHTML = Object.entries(adv.top_hiring_regions || {}).slice(0, 10).map(([loc, count]) => `
-        <div class="flex justify-between"><span>${loc}</span><span class="font-medium">${count} jobs</span></div>
-      `).join('');
-
-      document.getElementById('top-skills').innerHTML = Object.entries(adv.top_skills || {}).slice(0, 10).map(([skill, count]) => `
-        <div class="flex justify-between"><span class="capitalize">${skill.replace('_', ' ')}</span><span class="font-medium">${count}</span></div>
-      `).join('');
-    }
-
-    loadAnalytics();
-    setInterval(loadAnalytics, 30000); // Refresh every 30s
-  </script>
+    <script>
+        // Configuration
+        const API_BASE = window.location.origin;
+        let API_KEY = localStorage.getItem('api_key') || '';
+        
+        // Chart instances
+        let charts = {};
+        
+        // Current tab
+        let currentTab = 'overview';
+        
+        // Utility: API Request
+        async function apiRequest(endpoint, options = {}) {
+            const headers = {
+                'Content-Type': 'application/json',
+                'X-API-Key': API_KEY,
+                ...options.headers
+            };
+            
+            try {
+                const response = await fetch(`${API_BASE}${endpoint}`, {
+                    ...options,
+                    headers
+                });
+                
+                if (response.status === 401) {
+                    window.location.href = '/dashboard';
+                    throw new Error('Authentication required');
+                }
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.message || 'API request failed');
+                }
+                
+                return await response.json();
+            } catch (error) {
+                console.error('API Error:', error);
+                throw error;
+            }
+        }
+        
+        // Show Alert
+        function showAlert(message, type = 'info') {
+            const alertBar = document.getElementById('alert-bar');
+            const colors = {
+                success: 'bg-green-100 text-green-800 border-green-200',
+                error: 'bg-red-100 text-red-800 border-red-200',
+                warning: 'bg-yellow-100 text-yellow-800 border-yellow-200',
+                info: 'bg-blue-100 text-blue-800 border-blue-200'
+            };
+            
+            alertBar.className = `mb-6 rounded-lg p-4 border ${colors[type]}`;
+            alertBar.textContent = message;
+            alertBar.classList.remove('hidden');
+            
+            setTimeout(() => {
+                alertBar.classList.add('hidden');
+            }, 5000);
+        }
+        
+        // Tab Switching
+        document.querySelectorAll('.tab-button').forEach(button => {
+            button.addEventListener('click', () => {
+                const tab = button.dataset.tab;
+                
+                // Update button states
+                document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
+                button.classList.add('active');
+                
+                // Update content
+                document.querySelectorAll('.tab-content').forEach(content => {
+                    content.classList.add('hidden');
+                });
+                document.getElementById(`tab-${tab}`).classList.remove('hidden');
+                
+                currentTab = tab;
+                
+                // Load tab-specific data
+                loadTabData(tab);
+            });
+        });
+        
+        // Load Analytics Data
+        async function loadAnalytics() {
+            try {
+                const data = await apiRequest('/api/advanced-analytics');
+                
+                // Update Overview Tab
+                updateOverviewMetrics(data);
+                updateOverviewCharts(data);
+                
+                // Store for other tabs
+                window.analyticsData = data;
+                
+            } catch (error) {
+                showAlert(`Failed to load analytics: ${error.message}`, 'error');
+            }
+        }
+        
+        // Update Overview Metrics
+        function updateOverviewMetrics(data) {
+            const ttf = data.time_to_fill || {};
+            
+            document.getElementById('metric-avg-ttf').textContent = 
+                ttf.overall_avg_ttf_days ? ttf.overall_avg_ttf_days.toFixed(1) : '-';
+            
+            document.getElementById('metric-median-ttf').textContent = 
+                ttf.median_ttf_days ? ttf.median_ttf_days.toFixed(1) : '-';
+            
+            document.getElementById('metric-closed-jobs').textContent = 
+                (ttf.sample_size || 0).toLocaleString();
+            
+            const topRegions = data.top_hiring_regions || {};
+            const regions = Object.entries(topRegions).sort((a, b) => b[1] - a[1]);
+            if (regions.length > 0) {
+                document.getElementById('metric-top-region').textContent = regions[0][0];
+                document.getElementById('metric-top-region-jobs').textContent = `${regions[0][1].toLocaleString()} jobs`;
+            }
+        }
+        
+        // Update Overview Charts
+        function updateOverviewCharts(data) {
+            // Top Skills Chart
+            const skillsCtx = document.getElementById('top-skills-chart').getContext('2d');
+            if (charts.topSkills) charts.topSkills.destroy();
+            
+            const skills = Object.entries(data.top_skills || {}).slice(0, 10);
+            charts.topSkills = new Chart(skillsCtx, {
+                type: 'bar',
+                data: {
+                    labels: skills.map(s => s[0]),
+                    datasets: [{
+                        label: 'Demand',
+                        data: skills.map(s => s[1]),
+                        backgroundColor: '#3b82f6'
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    }
+                }
+            });
+            
+            // Department Chart
+            const deptCtx = document.getElementById('department-chart').getContext('2d');
+            if (charts.department) charts.department.destroy();
+            
+            const depts = Object.entries(data.department_distribution || {}).slice(0, 8);
+            charts.department = new Chart(deptCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: depts.map(d => d[0]),
+                    datasets: [{
+                        data: depts.map(d => d[1]),
+                        backgroundColor: [
+                            '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6',
+                            '#ef4444', '#06b6d4', '#f97316', '#6b7280'
+                        ]
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'right' }
+                    }
+                }
+            });
+            
+            // Regions Chart
+            const regionsCtx = document.getElementById('regions-chart').getContext('2d');
+            if (charts.regions) charts.regions.destroy();
+            
+            const regions = Object.entries(data.top_hiring_regions || {}).slice(0, 10);
+            charts.regions = new Chart(regionsCtx, {
+                type: 'bar',
+                data: {
+                    labels: regions.map(r => r[0]),
+                    datasets: [{
+                        label: 'Jobs',
+                        data: regions.map(r => r[1]),
+                        backgroundColor: '#10b981'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    }
+                }
+            });
+            
+            // Work Type Chart
+            const worktypeCtx = document.getElementById('worktype-detail-chart').getContext('2d');
+            if (charts.worktype) charts.worktype.destroy();
+            
+            const worktype = data.work_type_distribution || {};
+            charts.worktype = new Chart(worktypeCtx, {
+                type: 'pie',
+                data: {
+                    labels: ['Remote', 'Hybrid', 'Onsite'],
+                    datasets: [{
+                        data: [
+                            worktype.remote || 0,
+                            worktype.hybrid || 0,
+                            worktype.onsite || 0
+                        ],
+                        backgroundColor: ['#8b5cf6', '#3b82f6', '#6b7280']
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'bottom' }
+                    }
+                }
+            });
+            
+            // Update percentages
+            document.getElementById('remote-percent').textContent = `${worktype.remote_percent || 0}%`;
+            document.getElementById('hybrid-percent').textContent = `${worktype.hybrid_percent || 0}%`;
+            document.getElementById('onsite-percent').textContent = `${worktype.onsite_percent || 0}%`;
+            
+            // Fastest Growing Table
+            const growingTable = document.getElementById('fastest-growing-table');
+            const growing = data.fastest_growing || [];
+            
+            if (growing.length > 0) {
+                growingTable.innerHTML = `
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Company</th>
+                                <th>ATS</th>
+                                <th>Growth</th>
+                                <th>Current Jobs</th>
+                                <th>Jobs/Day</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${growing.map(c => `
+                                <tr>
+                                    <td class="font-medium">${c.company_name}</td>
+                                    <td><span class="text-xs px-2 py-1 bg-gray-100 rounded">${c.ats_type}</span></td>
+                                    <td class="text-green-600 font-semibold">+${c.job_change}</td>
+                                    <td>${c.current_jobs}</td>
+                                    <td>${c.jobs_per_day}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+            } else {
+                growingTable.innerHTML = '<p class="text-center text-gray-500 py-4">No data available</p>';
+            }
+        }
+        
+        // Load Tab Data
+        function loadTabData(tab) {
+            switch(tab) {
+                case 'time-to-fill':
+                    loadTimeToFillData();
+                    break;
+                case 'skills':
+                    loadSkillsData();
+                    break;
+                case 'regions':
+                    loadRegionalData();
+                    break;
+                case 'growth':
+                    // Growth loaded on search
+                    break;
+                case 'historical':
+                    loadHistoricalEvents();
+                    break;
+            }
+        }
+        
+        // Load Time to Fill Data
+        function loadTimeToFillData() {
+            const data = window.analyticsData;
+            if (!data) return;
+            
+            const ttf = data.time_to_fill || {};
+            
+            document.getElementById('ttf-overall').textContent = 
+                ttf.overall_avg_ttf_days ? ttf.overall_avg_ttf_days.toFixed(1) : '-';
+            document.getElementById('ttf-min').textContent = 
+                ttf.min_ttf_days ? ttf.min_ttf_days.toFixed(1) : '-';
+            document.getElementById('ttf-max').textContent = 
+                ttf.max_ttf_days ? ttf.max_ttf_days.toFixed(1) : '-';
+            
+            // TTF by Work Type
+            const worktypeCtx = document.getElementById('ttf-worktype-chart').getContext('2d');
+            if (charts.ttfWorktype) charts.ttfWorktype.destroy();
+            
+            const byWorkType = Object.entries(ttf.by_work_type || {});
+            charts.ttfWorktype = new Chart(worktypeCtx, {
+                type: 'bar',
+                data: {
+                    labels: byWorkType.map(w => w[0]),
+                    datasets: [{
+                        label: 'Avg Days',
+                        data: byWorkType.map(w => w[1]),
+                        backgroundColor: '#3b82f6'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    }
+                }
+            });
+            
+            // TTF by Department
+            const deptCtx = document.getElementById('ttf-department-chart').getContext('2d');
+            if (charts.ttfDepartment) charts.ttfDepartment.destroy();
+            
+            const byDept = Object.entries(ttf.by_department || {}).slice(0, 10);
+            charts.ttfDepartment = new Chart(deptCtx, {
+                type: 'bar',
+                data: {
+                    labels: byDept.map(d => d[0]),
+                    datasets: [{
+                        label: 'Avg Days',
+                        data: byDept.map(d => d[1]),
+                        backgroundColor: '#10b981'
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    }
+                }
+            });
+        }
+        
+        // Load Skills Data
+        function loadSkillsData() {
+            const data = window.analyticsData;
+            if (!data) return;
+            
+            const skills = data.top_skills || {};
+            const skillEntries = Object.entries(skills).sort((a, b) => b[1] - a[1]);
+            
+            // Top Skills List
+            const skillsList = document.getElementById('top-skills-list');
+            skillsList.innerHTML = skillEntries.map(([skill, count]) => {
+                const percentage = Math.min(100, (count / skillEntries[0][1]) * 100);
+                return `
+                    <div class="mb-3">
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="font-medium text-gray-900">${skill}</span>
+                            <span class="text-gray-600">${count.toLocaleString()} mentions</span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-2">
+                            <div class="bg-blue-600 h-2 rounded-full" style="width: ${percentage}%"></div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            // Categorize skills
+            const categories = {
+                frontend: ['javascript', 'react', 'vue', 'angular', 'typescript', 'frontend'],
+                backend: ['python', 'java', 'go', 'rust', 'backend', 'api'],
+                cloud: ['cloud', 'aws', 'azure', 'gcp', 'devops', 'kubernetes', 'docker'],
+                data: ['data', 'ai_ml', 'database', 'spark', 'sql']
+            };
+            
+            for (const [category, keywords] of Object.entries(categories)) {
+                const categorySkills = skillEntries.filter(([skill]) => 
+                    keywords.some(kw => skill.toLowerCase().includes(kw.toLowerCase()))
+                );
+                
+                const container = document.getElementById(`${category}-skills`);
+                container.innerHTML = categorySkills.length > 0
+                    ? categorySkills.map(([skill, count]) => `
+                        <div class="flex justify-between items-center p-2 bg-gray-50 rounded">
+                            <span class="font-medium">${skill}</span>
+                            <span class="text-sm text-gray-600">${count}</span>
+                        </div>
+                    `).join('')
+                    : '<p class="text-sm text-gray-500">No data</p>';
+            }
+        }
+        
+        // Load Regional Data
+        function loadRegionalData() {
+            const data = window.analyticsData;
+            if (!data) return;
+            
+            const regions = data.top_hiring_regions || {};
+            const regionEntries = Object.entries(regions).sort((a, b) => b[1] - a[1]);
+            
+            // Country Chart (already loaded in overview, skip)
+            
+            // Regional Table
+            const table = document.getElementById('regional-table');
+            table.innerHTML = `
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Country/Region</th>
+                            <th>Total Jobs</th>
+                            <th>Percentage</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${regionEntries.map(([region, count]) => {
+                            const total = regionEntries.reduce((sum, [, c]) => sum + c, 0);
+                            const percent = ((count / total) * 100).toFixed(1);
+                            return `
+                                <tr>
+                                    <td class="font-medium">${region}</td>
+                                    <td>${count.toLocaleString()}</td>
+                                    <td>
+                                        <div class="flex items-center">
+                                            <span class="mr-2">${percent}%</span>
+                                            <div class="flex-1 bg-gray-200 rounded-full h-2 max-w-xs">
+                                                <div class="bg-blue-600 h-2 rounded-full" style="width: ${percent}%"></div>
+                                            </div>
+                                        </div>
+                                    </td>
+                                </tr>
+                            `;
+                        }).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+        
+        // Load Historical Events
+        async function loadHistoricalEvents() {
+            try {
+                const data = window.analyticsData;
+                if (!data) return;
+                
+                const events = data.recent_events || [];
+                const timeline = document.getElementById('events-timeline');
+                
+                if (events.length > 0) {
+                    timeline.innerHTML = events.map(event => `
+                        <div class="flex items-start space-x-3 p-4 bg-gray-50 rounded-lg">
+                            <div class="flex-shrink-0 mt-1">
+                                ${event.event_type === 'hiring_surge' ? '📈' : 
+                                  event.event_type === 'hiring_freeze' ? '📉' : 
+                                  event.event_type === 'location_expansion' ? '🌍' : '📊'}
+                            </div>
+                            <div class="flex-1">
+                                <h4 class="font-medium text-gray-900">${event.event_type.replace('_', ' ').toUpperCase()}</h4>
+                                <p class="text-sm text-gray-600 mt-1">${event.event_count} events detected</p>
+                                <p class="text-xs text-gray-500 mt-1">Last: ${new Date(event.last_detected).toLocaleString()}</p>
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    timeline.innerHTML = '<p class="text-center text-gray-500 py-4">No recent events</p>';
+                }
+            } catch (error) {
+                console.error('Failed to load events:', error);
+            }
+        }
+        
+        // Export Modal
+        document.getElementById('export-data-btn').addEventListener('click', () => {
+            document.getElementById('export-modal').classList.remove('hidden');
+        });
+        
+        document.getElementById('close-export-modal').addEventListener('click', () => {
+            document.getElementById('export-modal').classList.add('hidden');
+        });
+        
+        // Quick Export Buttons
+        document.querySelectorAll('[data-export]').forEach(button => {
+            button.addEventListener('click', async () => {
+                const type = button.dataset.export;
+                await performExport(type);
+            });
+        });
+        
+        // Perform Export
+        async function performExport(type) {
+            try {
+                let data, filename;
+                
+                switch(type) {
+                    case 'stats':
+                        data = await apiRequest('/api/stats');
+                        filename = 'job-intel-stats.json';
+                        downloadJSON(data, filename);
+                        break;
+                    case 'trends':
+                        data = await apiRequest('/api/trends?days=90');
+                        filename = 'job-intel-trends.csv';
+                        downloadCSV(data.granular, filename);
+                        break;
+                    case 'intelligence':
+                        data = await apiRequest('/api/intel?days=30');
+                        filename = 'job-intel-events.json';
+                        downloadJSON(data, filename);
+                        break;
+                }
+                
+                showAlert('Export completed successfully!', 'success');
+                document.getElementById('export-modal').classList.add('hidden');
+                
+            } catch (error) {
+                showAlert(`Export failed: ${error.message}`, 'error');
+            }
+        }
+        
+        // Download JSON
+        function downloadJSON(data, filename) {
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+        
+        // Download CSV
+        function downloadCSV(data, filename) {
+            if (!data || data.length === 0) return;
+            
+            const headers = Object.keys(data[0]);
+            const csv = [
+                headers.join(','),
+                ...data.map(row => headers.map(h => JSON.stringify(row[h] || '')).join(','))
+            ].join('\n');
+            
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+        
+        // Set default dates for export
+        const today = new Date();
+        const thirtyDaysAgo = new Date(today);
+        thirtyDaysAgo.setDate(today.getDate() - 30);
+        
+        document.getElementById('export-end-date').valueAsDate = today;
+        document.getElementById('export-start-date').valueAsDate = thirtyDaysAgo;
+        
+        // Initialize
+        if (!API_KEY) {
+            window.location.href = '/dashboard';
+        } else {
+            loadAnalytics();
+        }
+    </script>
 </body>
 </html>
