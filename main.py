@@ -311,6 +311,53 @@ logger.info("   - Tier 2 Expansion: Monthly (1st at 4:00 AM UTC)")
 # Web Routes (Public)
 # ============================================================================
 
+@app.route('/api/admin/run-migrations', methods=['POST'])
+@limiter.exempt
+@require_admin_key
+def run_migrations_endpoint():
+    """Run database migrations to add missing columns"""
+    try:
+        db = get_db()
+        
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                logger.info("Running database migrations...")
+                
+                # Add metadata column to intelligence_events if missing
+                try:
+                    cur.execute("""
+                        ALTER TABLE intelligence_events 
+                        ADD COLUMN IF NOT EXISTS metadata JSONB
+                    """)
+                    logger.info("✅ Added metadata column to intelligence_events")
+                except Exception as e:
+                    logger.warning(f"metadata column may already exist: {e}")
+                
+                # Verify job_archive has location column
+                try:
+                    cur.execute("""
+                        ALTER TABLE job_archive 
+                        ADD COLUMN IF NOT EXISTS location TEXT
+                    """)
+                    logger.info("✅ Added location column to job_archive")
+                except Exception as e:
+                    logger.warning(f"location column may already exist: {e}")
+                
+                conn.commit()
+                logger.info("✅ All migrations complete!")
+        
+        return jsonify({
+            'success': True,
+            'message': 'Database migrations completed successfully'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Migration failed: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 @app.route('/')
 @app.route('/dashboard')
 @optional_auth
