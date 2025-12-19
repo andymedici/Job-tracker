@@ -164,45 +164,54 @@ def create_monthly_snapshot():
         return 0
 
 def run_daily_maintenance():
-    """
-    Run all intelligence and maintenance tasks
-    COMPLETE IMPLEMENTATION
-    """
+    """Run daily maintenance and intelligence gathering"""
+    db = get_db()
+    
     logger.info("=" * 60)
     logger.info("🔧 Starting Daily Maintenance")
     logger.info("=" * 60)
     
+    # Create snapshots
+    created = db.create_company_snapshots()
+    logger.info(f"📸 Created {created} 6-hour snapshots")
+    
+    # Detect job count changes
+    surges, declines = db.get_job_count_changes(days=14)
+    logger.info(f"📈 Found {len(surges)} hiring surges and {len(declines)} hiring freezes")
+    
+    # Log top surges
+    if surges:
+        logger.info("🚀 Top Hiring Surges:")
+        for surge in surges[:5]:
+            logger.info(f"   • {surge['company_name']}: +{surge['job_change']} jobs (+{surge['percent_change']}%)")
+    
+    # Log top declines
+    if declines:
+        logger.info("📉 Top Job Declines:")
+        for decline in declines[:5]:
+            logger.info(f"   • {decline['company_name']}: {decline['job_change']} jobs ({decline['percent_change']}%)")
+    
+    # Location expansions
+    expansions = db.get_location_expansions(days=30)
+    logger.info(f"📍 Found {len(expansions)} location expansions")
+    
+    # Time to fill metrics
+    ttf_metrics = db.get_time_to_fill_metrics()
+    avg_ttf = ttf_metrics.get('overall_avg_ttf_days')
+    if avg_ttf:
+        logger.info(f"⏱️ Avg Time-to-Fill: {avg_ttf:.1f} days")
+    
+    # Blacklist poor seeds
     try:
-        # Create snapshots
-        create_6h_snapshots()
-        
-        # Check for intelligence events
-        surges, declines = check_for_job_count_change(days=7)
-        expansions = check_for_location_expansion(days=30)
-        
-        # Get analytics
-        db = get_db()
-        ttf_metrics = db.get_time_to_fill_metrics()
-        
-        # Log summary
-        logger.info("📊 Intelligence Summary:")
-        logger.info(f"   - Hiring Surges: {len(surges)}")
-        logger.info(f"   - Hiring Freezes: {len(declines)}")
-        logger.info(f"   - Location Expansions: {len(expansions)}")
-
-        # Get TTF metrics safely
-        avg_ttf = ttf_metrics.get('overall_avg_ttf_days')
-        median_ttf = ttf_metrics.get('median_ttf_days')
-        sample_size = ttf_metrics.get('sample_size', 0)
-
-        if avg_ttf is not None and median_ttf is not None:
-            logger.info(f"   - Avg Time-to-Fill: {avg_ttf:.1f} days")
-            logger.info(f"   - Median Time-to-Fill: {median_ttf:.1f} days")
-            logger.info(f"   - Sample Size: {sample_size}")
-        else:
-            logger.info("   - Time-to-Fill: No data yet (need closed jobs)")
-
-        logger.info("============================================================")
+        blacklisted = db.blacklist_poor_seeds(min_tests=3, max_success_rate=5.0)
+        if blacklisted:
+            logger.info(f"🚫 Blacklisted {blacklisted} poor-performing seeds")
+    except Exception as e:
+        logger.debug(f"Seed blacklisting not available: {e}")
+    
+    logger.info("=" * 60)
+    logger.info("✅ Daily maintenance complete")
+    logger.info("=" * 60)
         
         
         # Cleanup (only run during off-peak hours)
