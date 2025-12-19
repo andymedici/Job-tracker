@@ -1,866 +1,964 @@
 """
-Enhanced Database Layer with Security, Performance, and Advanced Analytics
+Database Interface for Job Intelligence Platform
+Handles PostgreSQL connection, queries, and data management
 """
+
 import os
-import json
 import logging
-import time
-import re
+import json
+from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Tuple
 from contextlib import contextmanager
-from urllib.parse import urlparse
-
 import psycopg2
-from psycopg2.extras import RealDictCursor, execute_values
-from psycopg2 import pool
-from psycopg2.extensions import ISOLATION_LEVEL_READ_COMMITTED
+from psycopg2.extras import execute_batch
+from psycopg2.pool import ThreadedConnectionPool
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def _name_to_token(name: str) -> str:
-    """Convert company name to URL-friendly token"""
-    token = name.lower()
-    token = re.sub(r'\s+(inc|llc|ltd|co|corp|gmbh|sa)\.?$', '', token, flags=re.IGNORECASE)
-    token = re.sub(r'[^a-z0-9\s-]', '', token)
-    token = re.sub(r'[\s-]+', '-', token).strip('-')
-    return token
-
 class Database:
-    """Enhanced database with connection pooling, advanced analytics, and monitoring"""
+    """PostgreSQL database interface with connection pooling"""
     
     def __init__(self, database_url: str = None):
+        """Initialize database connection pool"""
         self.database_url = database_url or os.getenv('DATABASE_URL')
         if not self.database_url:
-            raise ValueError("DATABASE_URL environment variable is required")
+            raise ValueError("DATABASE_URL environment variable not set")
         
-        # Fix Railway/Heroku postgres:// URLs
-        if self.database_url.startswith('postgres://'):
-            self.database_url = self.database_url.replace('postgres://', 'postgresql://', 1)
-        
-        self.conn_params = self._parse_database_url(self.database_url)
-        
-        # Enhanced connection pool with better settings
+        # Initialize connection pool
         pool_size = int(os.getenv('DB_POOL_SIZE', 15))
         max_overflow = int(os.getenv('DB_MAX_OVERFLOW', 25))
         
-        self.pool = pool.ThreadedConnectionPool(
-            minconn=2,
-            maxconn=pool_size + max_overflow,
-            **self.conn_params
-        )
+        try:
+            self.pool = ThreadedConnectionPool(
+                minconn=5,
+                maxconn=pool_size + max_overflow,
+                dsn=self.database_url
+            )
+            logger.info(f"Database initialized with pool size: {pool_size}, max overflow: {max_overflow}")
+        except Exception as e:
+            logger.error(f"Failed to create connection pool: {e}")
+            raise
         
-        self._init_schema()
-        logger.info(f"Database initialized with pool size: {pool_size}, max overflow: {max_overflow}")
-    
-    def _parse_database_url(self, url: str) -> Dict[str, Any]:
-        """Parse DATABASE_URL into connection parameters"""
-        parsed = urlparse(url)
-        return {
-            'host': parsed.hostname,
-            'port': parsed.port or 5432,
-            'database': parsed.path[1:] if parsed.path else '',
-            'user': parsed.username,
-            'password': parsed.password,
-            'sslmode': 'require',
-            'connect_timeout': 10,
-            'options': '-c statement_timeout=30000'  # 30 second query timeout
-        }
+        # Create tables if they don't exist
+        self._create_tables()
+        logger.info("✅ Database connection pool initialized successfully")
     
     @contextmanager
-    def get_cursor(self, dict_cursor: bool = True):
-        """Thread-safe cursor context manager with automatic commit/rollback"""
-        conn = None
+    def get_connection(self):
+        """Get a connection from the pool"""
+        conn = self.pool.getconn()
         try:
-            conn = self.pool.getconn()
-            conn.set_isolation_level(ISOLATION_LEVEL_READ_COMMITTED)
-            
-            cursor_factory = RealDictCursor if dict_cursor else None
-            with conn.cursor(cursor_factory=cursor_factory) as cursor:
-                yield cursor
-                conn.commit()
-        except Exception as e:
-            if conn:
-                conn.rollback()
-            logger.error(f"Database transaction failed: {e}", exc_info=True)
-            raise
+            yield conn
         finally:
-            if conn:
-                self.pool.putconn(conn)
+            self.pool.putconn(conn)
     
-    def _init_schema(self):
-        """Initialize database schema with all tables and indexes"""
-        with self.get_cursor(dict_cursor=False) as cursor:
-            # Seeds Table (enhanced with hit tracking)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS seeds (
-                    id SERIAL PRIMARY KEY,
-                    company_name TEXT NOT NULL UNIQUE,
-                    token_slug TEXT NOT NULL,
-                    source TEXT NOT NULL,
-                    tier INTEGER NOT NULL,
-                    last_expanded TIMESTAMP,
-                    last_tested TIMESTAMP,
-                    is_hit BOOLEAN DEFAULT FALSE,
-                    enabled BOOLEAN DEFAULT TRUE,
-                    hit_rate REAL DEFAULT 0.0,
-                    total_tested INTEGER DEFAULT 0,
-                    total_hits INTEGER DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT NOW()
-                )
-            """)
-
-            # Companies Table (enhanced with more tracking)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS companies (
-                    id TEXT PRIMARY KEY,
-                    company_name TEXT NOT NULL UNIQUE,
-                    ats_type TEXT NOT NULL,
-                    token TEXT NOT NULL,
-                    job_count INTEGER DEFAULT 0,
-                    remote_count INTEGER DEFAULT 0,
-                    hybrid_count INTEGER DEFAULT 0,
-                    onsite_count INTEGER DEFAULT 0,
-                    locations JSONB DEFAULT '[]'::jsonb,
-                    departments JSONB DEFAULT '[]'::jsonb,
-                    normalized_locations JSONB DEFAULT '{}'::jsonb,
-                    extracted_skills JSONB DEFAULT '{}'::jsonb,
-                    department_distribution JSONB DEFAULT '{}'::jsonb,
-                    careers_url TEXT DEFAULT '',
-                    first_discovered TIMESTAMP DEFAULT NOW(),
-                    last_updated TIMESTAMP DEFAULT NOW(),
-                    active BOOLEAN DEFAULT TRUE,
-                    refresh_count INTEGER DEFAULT 0
-                )
-            """)
-
-            # Enhanced Snapshots (6-hourly for trend detection)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS snapshots_6h (
-                    id SERIAL PRIMARY KEY,
-                    snapshot_time TIMESTAMP DEFAULT NOW(),
-                    company_id TEXT NOT NULL,
-                    job_count INTEGER,
-                    remote_count INTEGER,
-                    hybrid_count INTEGER,
-                    onsite_count INTEGER,
-                    normalized_locations JSONB DEFAULT '{}'::jsonb,
-                    department_distribution JSONB DEFAULT '{}'::jsonb,
-                    FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
-                )
-            """)
+    def _create_tables(self):
+        """Create database tables if they don't exist"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                # Companies table
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS companies (
+                        id SERIAL PRIMARY KEY,
+                        company_name VARCHAR(255) NOT NULL UNIQUE,
+                        company_name_token VARCHAR(255) UNIQUE,
+                        ats_type VARCHAR(50),
+                        board_url TEXT,
+                        job_count INTEGER DEFAULT 0,
+                        last_scraped TIMESTAMP,
+                        created_at TIMESTAMP DEFAULT NOW(),
+                        metadata JSONB
+                    )
+                """)
+                
+                # Job archive table
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS job_archive (
+                        id SERIAL PRIMARY KEY,
+                        company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+                        job_id VARCHAR(255),
+                        title TEXT,
+                        location TEXT,
+                        department TEXT,
+                        work_type VARCHAR(50),
+                        job_url TEXT,
+                        posted_date DATE,
+                        status VARCHAR(20) DEFAULT 'active',
+                        first_seen TIMESTAMP DEFAULT NOW(),
+                        last_seen TIMESTAMP DEFAULT NOW(),
+                        closed_at TIMESTAMP,
+                        metadata JSONB,
+                        UNIQUE(company_id, job_id)
+                    )
+                """)
+                
+                # Create index on status for faster queries
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_job_archive_status 
+                    ON job_archive(status)
+                """)
+                
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_job_archive_company_status 
+                    ON job_archive(company_id, status)
+                """)
+                
+                # Seed companies table
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS seed_companies (
+                        id SERIAL PRIMARY KEY,
+                        company_name VARCHAR(255) NOT NULL,
+                        company_name_token VARCHAR(255) UNIQUE,
+                        source VARCHAR(100),
+                        tier INTEGER DEFAULT 4,
+                        website_url TEXT,
+                        times_tested INTEGER DEFAULT 0,
+                        times_successful INTEGER DEFAULT 0,
+                        last_tested_at TIMESTAMP,
+                        success_rate DECIMAL(5,2) DEFAULT 0,
+                        is_blacklisted BOOLEAN DEFAULT FALSE,
+                        created_at TIMESTAMP DEFAULT NOW(),
+                        UNIQUE(company_name_token)
+                    )
+                """)
+                
+                # 6-hour snapshots table
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS snapshots_6h (
+                        id SERIAL PRIMARY KEY,
+                        company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+                        snapshot_time TIMESTAMP DEFAULT NOW(),
+                        job_count INTEGER,
+                        active_jobs INTEGER,
+                        locations_count INTEGER,
+                        departments_count INTEGER,
+                        metadata JSONB
+                    )
+                """)
+                
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_snapshots_company_time 
+                    ON snapshots_6h(company_id, snapshot_time DESC)
+                """)
+                
+                # Monthly snapshots table
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS snapshots_monthly (
+                        id SERIAL PRIMARY KEY,
+                        snapshot_date DATE NOT NULL UNIQUE,
+                        total_companies INTEGER,
+                        total_jobs INTEGER,
+                        avg_jobs_per_company DECIMAL(10,2),
+                        top_locations JSONB,
+                        top_departments JSONB,
+                        ats_distribution JSONB,
+                        metadata JSONB,
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                """)
+                
+                # Intelligence events table
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS intelligence_events (
+                        id SERIAL PRIMARY KEY,
+                        company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+                        event_type VARCHAR(50),
+                        severity VARCHAR(20) DEFAULT 'info',
+                        metadata JSONB,
+                        detected_at TIMESTAMP DEFAULT NOW()
+                    )
+                """)
+                
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_intel_events_type_time 
+                    ON intelligence_events(event_type, detected_at DESC)
+                """)
+                
+                conn.commit()
+    
+    def _name_to_token(self, name: str) -> str:
+        """Convert company name to URL-friendly token"""
+        import re
+        token = name.lower()
+        token = re.sub(r'\s+(inc|llc|ltd|co|corp|corporation|gmbh|sa|ag|plc)\.?$', '', token, flags=re.IGNORECASE)
+        token = re.sub(r'[^a-z0-9\s-]', '', token)
+        token = re.sub(r'[\s-]+', '-', token).strip('-')
+        return token
+    
+    # ========================================================================
+    # Distributed Locking (for scheduled jobs)
+    # ========================================================================
+    
+    def acquire_advisory_lock(self, lock_name: str, timeout: int = 0) -> bool:
+        """Acquire a PostgreSQL advisory lock"""
+        try:
+            # Convert lock name to integer hash
+            lock_id = hash(lock_name) % (2**31)
             
-            # Monthly Snapshots (long-term trends)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS monthly_snapshots (
-                    id SERIAL PRIMARY KEY,
-                    year INTEGER NOT NULL,
-                    month INTEGER NOT NULL,
-                    company_id TEXT NOT NULL,
-                    job_count INTEGER,
-                    remote_count INTEGER,
-                    hybrid_count INTEGER,
-                    onsite_count INTEGER,
-                    normalized_locations JSONB DEFAULT '{}'::jsonb,
-                    department_distribution JSONB DEFAULT '{}'::jsonb,
-                    created_at TIMESTAMP DEFAULT NOW(),
-                    UNIQUE (company_id, year, month),
-                    FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
-                )
-            """)
-
-            # Enhanced Job Archive (with time-to-fill tracking)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS job_archive (
-                    job_hash TEXT PRIMARY KEY,
-                    company_id TEXT NOT NULL,
-                    job_title TEXT,
-                    department TEXT,
-                    city TEXT,
-                    region TEXT,
-                    country TEXT,
-                    work_type TEXT,
-                    skills TEXT[] DEFAULT '{}'::TEXT[],
-                    first_seen TIMESTAMP NOT NULL DEFAULT NOW(),
-                    last_seen TIMESTAMP NOT NULL DEFAULT NOW(),
-                    status TEXT DEFAULT 'open',
-                    time_to_fill_days NUMERIC(10,2),
-                    archived_at TIMESTAMP DEFAULT NOW(),
-                    FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
-                )
-            """)
-
-            # NEW: Intelligence Events Table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS intelligence_events (
-                    id SERIAL PRIMARY KEY,
-                    event_type TEXT NOT NULL,
-                    company_id TEXT NOT NULL,
-                    company_name TEXT NOT NULL,
-                    event_data JSONB NOT NULL,
-                    detected_at TIMESTAMP DEFAULT NOW(),
-                    FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
-                )
-            """)
-
-            # Performance Indexes (optimized for common queries)
-            indexes = [
-                "CREATE INDEX IF NOT EXISTS idx_job_archive_company ON job_archive(company_id)",
-                "CREATE INDEX IF NOT EXISTS idx_job_archive_status ON job_archive(status)",
-                "CREATE INDEX IF NOT EXISTS idx_job_archive_last_seen ON job_archive(last_seen)",
-                "CREATE INDEX IF NOT EXISTS idx_job_archive_ttf ON job_archive(time_to_fill_days) WHERE time_to_fill_days IS NOT NULL",
-                "CREATE INDEX IF NOT EXISTS idx_companies_last_updated ON companies(last_updated)",
-                "CREATE INDEX IF NOT EXISTS idx_companies_active ON companies(active) WHERE active = TRUE",
-                "CREATE INDEX IF NOT EXISTS idx_seeds_untested ON seeds(last_tested) WHERE last_tested IS NULL",
-                "CREATE INDEX IF NOT EXISTS idx_snapshots_time ON snapshots_6h(snapshot_time DESC)",
-                "CREATE INDEX IF NOT EXISTS idx_snapshots_company_time ON snapshots_6h(company_id, snapshot_time DESC)",
-                "CREATE INDEX IF NOT EXISTS idx_monthly_snapshots ON monthly_snapshots(year DESC, month DESC)",
-                "CREATE INDEX IF NOT EXISTS idx_intelligence_events_type ON intelligence_events(event_type, detected_at DESC)",
-                "CREATE INDEX IF NOT EXISTS idx_intelligence_events_company ON intelligence_events(company_id, detected_at DESC)",
-                # GIN indexes for JSONB queries
-                "CREATE INDEX IF NOT EXISTS idx_companies_skills_gin ON companies USING GIN(extracted_skills)",
-                "CREATE INDEX IF NOT EXISTS idx_companies_locations_gin ON companies USING GIN(normalized_locations)",
-                "CREATE INDEX IF NOT EXISTS idx_companies_departments_gin ON companies USING GIN(department_distribution)",
-                ALTER TABLE seed_companies ADD COLUMN IF NOT EXISTS website_url TEXT;
-
-            ]
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    if timeout > 0:
+                        cur.execute("SELECT pg_try_advisory_lock(%s)", (lock_id,))
+                    else:
+                        cur.execute("SELECT pg_advisory_lock(%s)", (lock_id,))
+                    
+                    result = cur.fetchone()[0] if timeout > 0 else True
+                    conn.commit()
+                    
+                    if result:
+                        logger.debug(f"Acquired advisory lock: {lock_name}")
+                    return result
+        except Exception as e:
+            logger.error(f"Error acquiring advisory lock: {e}")
+            return False
+    
+    def release_advisory_lock(self, lock_name: str) -> bool:
+        """Release a PostgreSQL advisory lock"""
+        try:
+            lock_id = hash(lock_name) % (2**31)
             
-            for idx_sql in indexes:
-                try:
-                    cursor.execute(idx_sql)
-                except Exception as e:
-                    logger.warning(f"Index creation warning: {e}")
-
-    def upsert_company(self, data: Dict[str, Any]):
-        """Insert or update company with enhanced tracking"""
-        with self.get_cursor(dict_cursor=False) as cursor:
-            cursor.execute("""
-                INSERT INTO companies (
-                    id, company_name, ats_type, token, job_count, 
-                    remote_count, hybrid_count, onsite_count, locations, 
-                    departments, normalized_locations, extracted_skills,
-                    department_distribution, careers_url, last_updated
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
-                ON CONFLICT (id) DO UPDATE SET
-                    job_count = EXCLUDED.job_count,
-                    remote_count = EXCLUDED.remote_count,
-                    hybrid_count = EXCLUDED.hybrid_count,
-                    onsite_count = EXCLUDED.onsite_count,
-                    locations = EXCLUDED.locations,
-                    departments = EXCLUDED.departments,
-                    normalized_locations = EXCLUDED.normalized_locations,
-                    extracted_skills = EXCLUDED.extracted_skills,
-                    department_distribution = EXCLUDED.department_distribution,
-                    careers_url = EXCLUDED.careers_url,
-                    last_updated = NOW(),
-                    refresh_count = companies.refresh_count + 1,
-                    active = TRUE
-            """, (
-                data['id'], data['company_name'], data['ats_type'], data['token'],
-                data['job_count'], data['remote_count'], data['hybrid_count'],
-                data['onsite_count'], json.dumps(data.get('locations', [])),
-                json.dumps(data.get('departments', [])), 
-                json.dumps(data.get('normalized_locations', {})),
-                json.dumps(data.get('extracted_skills', {})),
-                json.dumps(data.get('department_distribution', {})),
-                data.get('careers_url', '')
-            ))
-
-    def upsert_job_in_archive(self, job_data: Dict[str, Any]):
-        """Insert or update job in archive with time-to-fill calculation"""
-        with self.get_cursor(dict_cursor=False) as cursor:
-            cursor.execute("""
-                INSERT INTO job_archive (
-                    job_hash, company_id, job_title, department, city, region, country,
-                    work_type, skills, first_seen, last_seen, status
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (job_hash) DO UPDATE SET
-                    last_seen = EXCLUDED.last_seen,
-                    status = CASE 
-                        WHEN EXCLUDED.status = 'closed' THEN 'closed'
-                        ELSE job_archive.status
-                    END,
-                    time_to_fill_days = CASE 
-                        WHEN EXCLUDED.status = 'closed' AND job_archive.status = 'open' 
-                        THEN EXTRACT(EPOCH FROM (EXCLUDED.last_seen - job_archive.first_seen))/86400.0
-                        ELSE job_archive.time_to_fill_days
-                    END
-            """, (
-                job_data['job_hash'], job_data['company_id'], job_data['job_title'],
-                job_data.get('department'), job_data.get('city'), job_data.get('region'),
-                job_data.get('country'), job_data.get('work_type'),
-                job_data.get('skills', []), job_data['first_seen'],
-                job_data['last_seen'], job_data.get('status', 'open')
-            ))
-
-    def mark_stale_jobs_closed(self, company_id: str, current_time: datetime) -> int:
-        """Mark jobs as closed if not seen in last update"""
-        with self.get_cursor(dict_cursor=False) as cursor:
-            cursor.execute("""
-                UPDATE job_archive
-                SET status = 'closed',
-                    time_to_fill_days = EXTRACT(EPOCH FROM (%s - first_seen))/86400.0
-                WHERE company_id = %s
-                  AND status = 'open'
-                  AND last_seen < %s - INTERVAL '1 hour'
-                RETURNING job_hash
-            """, (current_time, company_id, current_time))
-            return cursor.rowcount
-
-    def get_stats(self) -> Dict[str, Any]:
-        """Get comprehensive dashboard statistics"""
-        with self.get_cursor() as cursor:
-            cursor.execute("""
-                SELECT 
-                    COUNT(DISTINCT id) as total_companies,
-                    SUM(job_count) as total_jobs,
-                    SUM(remote_count) as remote_jobs,
-                    SUM(hybrid_count) as hybrid_jobs,
-                    SUM(onsite_count) as onsite_jobs,
-                    COUNT(DISTINCT id) FILTER (WHERE ats_type = 'greenhouse') as greenhouse_count,
-                    COUNT(DISTINCT id) FILTER (WHERE ats_type = 'lever') as lever_count,
-                    COUNT(DISTINCT id) FILTER (WHERE ats_type = 'workday') as workday_count,
-                    COUNT(DISTINCT id) FILTER (WHERE ats_type = 'ashby') as ashby_count,
-                    AVG(job_count) as avg_jobs_per_company,
-                    MAX(last_updated) as last_update
-                FROM companies
-                WHERE active = TRUE
-            """)
-            company_stats = dict(cursor.fetchone())
-
-            cursor.execute("""
-                SELECT COUNT(*) as untested_seeds
-                FROM seeds
-                WHERE last_tested IS NULL AND enabled = TRUE
-            """)
-            seed_stats = dict(cursor.fetchone())
-
-            cursor.execute("""
-                SELECT COUNT(*) as total_jobs_tracked,
-                       COUNT(*) FILTER (WHERE status = 'open') as open_jobs,
-                       COUNT(*) FILTER (WHERE status = 'closed') as closed_jobs,
-                       AVG(time_to_fill_days) FILTER (WHERE status = 'closed') as avg_ttf
-                FROM job_archive
-                WHERE first_seen >= NOW() - INTERVAL '90 days'
-            """)
-            job_stats = dict(cursor.fetchone())
-
-            return {**company_stats, **seed_stats, **job_stats}
-
-    def get_market_trends(self, days: int = 30) -> List[Dict]:
-        """Get daily job count trends"""
-        with self.get_cursor() as cursor:
-            cursor.execute("""
-                SELECT 
-                    DATE_TRUNC('day', snapshot_time) as date,
-                    SUM(job_count) as total_jobs,
-                    SUM(remote_count) as remote_jobs,
-                    COUNT(DISTINCT company_id) as active_companies
-                FROM snapshots_6h
-                WHERE snapshot_time >= NOW() - INTERVAL %s
-                GROUP BY DATE_TRUNC('day', snapshot_time)
-                ORDER BY date
-            """, (f'{days} days',))
-            return [dict(row) for row in cursor.fetchall()]
-
-    def get_monthly_snapshots(self, limit: int = 12) -> List[Dict]:
-        """Get monthly aggregated data for long-term trends"""
-        with self.get_cursor() as cursor:
-            cursor.execute("""
-                SELECT 
-                    year, month,
-                    COUNT(DISTINCT company_id) as total_companies,
-                    SUM(job_count) as total_jobs,
-                    SUM(remote_count) as remote_jobs,
-                    AVG(job_count) as avg_jobs_per_company,
-                    created_at
-                FROM monthly_snapshots
-                GROUP BY year, month, created_at
-                ORDER BY year DESC, month DESC
-                LIMIT %s
-            """, (limit,))
-            return [dict(row) for row in cursor.fetchall()]
-
-    def get_time_to_fill_metrics(self) -> Dict[str, Any]:
-        """Calculate comprehensive time-to-fill metrics"""
-        with self.get_cursor() as cursor:
-            # Overall TTF
-            cursor.execute("""
-                SELECT 
-                    AVG(time_to_fill_days) as overall_avg_ttf_days,
-                    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY time_to_fill_days) as median_ttf_days,
-                    PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY time_to_fill_days) as p25_ttf_days,
-                    PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY time_to_fill_days) as p75_ttf_days,
-                    MIN(time_to_fill_days) as min_ttf_days,
-                    MAX(time_to_fill_days) as max_ttf_days,
-                    COUNT(*) as sample_size
-                FROM job_archive
-                WHERE status = 'closed'
-                  AND time_to_fill_days IS NOT NULL
-                  AND time_to_fill_days > 0
-                  AND time_to_fill_days < 365
-                  AND first_seen >= NOW() - INTERVAL '90 days'
-            """)
-            overall = dict(cursor.fetchone())
-
-            # TTF by work type
-            cursor.execute("""
-                SELECT 
-                    work_type,
-                    AVG(time_to_fill_days) as avg_ttf_days,
-                    COUNT(*) as count
-                FROM job_archive
-                WHERE status = 'closed'
-                  AND time_to_fill_days IS NOT NULL
-                  AND work_type IS NOT NULL
-                  AND first_seen >= NOW() - INTERVAL '90 days'
-                GROUP BY work_type
-            """)
-            by_work_type = {row['work_type']: row['avg_ttf_days'] for row in cursor.fetchall()}
-
-            # TTF by department
-            cursor.execute("""
-                SELECT 
-                    department,
-                    AVG(time_to_fill_days) as avg_ttf_days,
-                    COUNT(*) as count
-                FROM job_archive
-                WHERE status = 'closed'
-                  AND time_to_fill_days IS NOT NULL
-                  AND department IS NOT NULL
-                  AND first_seen >= NOW() - INTERVAL '90 days'
-                GROUP BY department
-                ORDER BY count DESC
-                LIMIT 10
-            """)
-            by_department = {row['department']: row['avg_ttf_days'] for row in cursor.fetchall()}
-
-            return {
-                **overall,
-                'by_work_type': by_work_type,
-                'by_department': by_department
-            }
-
-    def get_advanced_analytics(self) -> Dict[str, Any]:
-        """Comprehensive analytics for the analytics dashboard"""
-        analytics = {}
-        
-        # 1. Time-to-Fill metrics
-        analytics['time_to_fill'] = self.get_time_to_fill_metrics()
-        
-        # 2. Top skills across all companies
-        with self.get_cursor() as cursor:
-            cursor.execute("""
-                SELECT 
-                    key as skill,
-                    SUM(value::int) as total_demand
-                FROM companies, jsonb_each_text(extracted_skills)
-                WHERE active = TRUE
-                GROUP BY key
-                ORDER BY total_demand DESC
-                LIMIT 20
-            """)
-            analytics['top_skills'] = {row['skill']: row['total_demand'] for row in cursor.fetchall()}
-        
-        # 3. Top hiring regions
-        with self.get_cursor() as cursor:
-            cursor.execute("""
-                SELECT 
-                    key as country,
-                    SUM(value::int) as total_jobs
-                FROM companies, jsonb_each_text(normalized_locations -> 'country')
-                WHERE active = TRUE
-                GROUP BY key
-                ORDER BY total_jobs DESC
-                LIMIT 10
-            """)
-            analytics['top_hiring_regions'] = {row['country']: row['total_jobs'] for row in cursor.fetchall()}
-        
-        # 4. Department distribution
-        with self.get_cursor() as cursor:
-            cursor.execute("""
-                SELECT 
-                    key as department,
-                    SUM(value::int) as total_jobs
-                FROM companies, jsonb_each_text(department_distribution)
-                WHERE active = TRUE
-                GROUP BY key
-                ORDER BY total_jobs DESC
-            """)
-            analytics['department_distribution'] = {row['department']: row['total_jobs'] for row in cursor.fetchall()}
-        
-        # 5. Work type distribution
-        with self.get_cursor() as cursor:
-            cursor.execute("""
-                SELECT 
-                    SUM(remote_count) as remote,
-                    SUM(hybrid_count) as hybrid,
-                    SUM(onsite_count) as onsite,
-                    SUM(job_count) as total
-                FROM companies
-                WHERE active = TRUE
-            """)
-            row = cursor.fetchone()
-            total = row['total'] or 1
-            analytics['work_type_distribution'] = {
-                'remote': row['remote'] or 0,
-                'hybrid': row['hybrid'] or 0,
-                'onsite': row['onsite'] or 0,
-                'total': row['total'] or 0,
-                'remote_percent': round((row['remote'] or 0) / total * 100, 2),
-                'hybrid_percent': round((row['hybrid'] or 0) / total * 100, 2),
-                'onsite_percent': round((row['onsite'] or 0) / total * 100, 2),
-            }
-        
-        # 6. Fastest growing companies
-        with self.get_cursor() as cursor:
-            cursor.execute("""
-                WITH recent_changes AS (
-                    SELECT 
-                        company_id,
-                        MAX(job_count) - MIN(job_count) as job_change,
-                        MAX(snapshot_time) - MIN(snapshot_time) as time_span
-                    FROM snapshots_6h
-                    WHERE snapshot_time >= NOW() - INTERVAL '14 days'
-                    GROUP BY company_id
-                    HAVING MAX(job_count) - MIN(job_count) > 0
-                )
-                SELECT 
-                    c.company_name,
-                    c.ats_type,
-                    rc.job_change,
-                    c.job_count as current_jobs,
-                    ROUND((rc.job_change::numeric / EXTRACT(EPOCH FROM rc.time_span) * 86400), 2) as jobs_per_day
-                FROM recent_changes rc
-                JOIN companies c ON c.id = rc.company_id
-                WHERE c.active = TRUE
-                ORDER BY rc.job_change DESC
-                LIMIT 20
-            """)
-            analytics['fastest_growing'] = [dict(row) for row in cursor.fetchall()]
-        
-        # 7. ATS platform distribution
-        with self.get_cursor() as cursor:
-            cursor.execute("""
-                SELECT 
-                    ats_type,
-                    COUNT(*) as company_count,
-                    SUM(job_count) as total_jobs,
-                    AVG(job_count) as avg_jobs
-                FROM companies
-                WHERE active = TRUE
-                GROUP BY ats_type
-                ORDER BY company_count DESC
-            """)
-            analytics['ats_distribution'] = [dict(row) for row in cursor.fetchall()]
-        
-        # 8. Recent intelligence events
-        with self.get_cursor() as cursor:
-            cursor.execute("""
-                SELECT 
-                    event_type,
-                    COUNT(*) as event_count,
-                    MAX(detected_at) as last_detected
-                FROM intelligence_events
-                WHERE detected_at >= NOW() - INTERVAL '7 days'
-                GROUP BY event_type
-                ORDER BY event_count DESC
-            """)
-            analytics['recent_events'] = [dict(row) for row in cursor.fetchall()]
-        
-        return analytics
-
-    def get_job_count_changes(self, days: int = 7) -> Tuple[List[Dict], List[Dict]]:
-        """Get companies with significant job count changes"""
-        with self.get_cursor() as cursor:
-            cursor.execute("""
-                WITH snapshot_comparison AS (
-                    SELECT 
-                        company_id,
-                        FIRST_VALUE(job_count) OVER (PARTITION BY company_id ORDER BY snapshot_time DESC) as latest_count,
-                        FIRST_VALUE(job_count) OVER (PARTITION BY company_id ORDER BY snapshot_time ASC) as earliest_count,
-                        MAX(snapshot_time) OVER (PARTITION BY company_id) as latest_time,
-                        MIN(snapshot_time) OVER (PARTITION BY company_id) as earliest_time
-                    FROM snapshots_6h
-                    WHERE snapshot_time >= NOW() - INTERVAL %s
-                )
-                SELECT DISTINCT ON (company_id)
-                    c.company_name,
-                    c.id AS company_id,
-                    sc.latest_count AS current_jobs,
-                    sc.earliest_count AS previous_jobs,
-                    (sc.latest_count - sc.earliest_count) AS change_amount,
-                    CASE 
-                        WHEN sc.earliest_count = 0 THEN 100.0
-                        ELSE ROUND(((sc.latest_count - sc.earliest_count)::numeric / sc.earliest_count * 100), 2)
-                    END as change_percent
-                FROM snapshot_comparison sc
-                JOIN companies c ON c.id = sc.company_id
-                WHERE ABS(sc.latest_count - sc.earliest_count) >= 5
-                  AND c.active = TRUE
-                ORDER BY company_id, ABS(sc.latest_count - sc.earliest_count) DESC
-            """, (f'{days} days',))
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT pg_advisory_unlock(%s)", (lock_id,))
+                    result = cur.fetchone()[0]
+                    conn.commit()
+                    
+                    if result:
+                        logger.debug(f"Released advisory lock: {lock_name}")
+                    return result
+        except Exception as e:
+            logger.error(f"Error releasing advisory lock: {e}")
+            return False
+    
+    # ========================================================================
+    # Company Management
+    # ========================================================================
+    
+    def add_company(self, company_name: str, ats_type: str, board_url: str, 
+                   job_count: int = 0, metadata: Dict = None) -> Optional[int]:
+        """Add a new company to the database"""
+        try:
+            token = self._name_to_token(company_name)
             
-            changes = [dict(row) for row in cursor.fetchall()]
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO companies (company_name, company_name_token, ats_type, board_url, job_count, last_scraped, metadata)
+                        VALUES (%s, %s, %s, %s, %s, NOW(), %s)
+                        ON CONFLICT (company_name) 
+                        DO UPDATE SET 
+                            ats_type = EXCLUDED.ats_type,
+                            board_url = EXCLUDED.board_url,
+                            job_count = EXCLUDED.job_count,
+                            last_scraped = NOW(),
+                            metadata = EXCLUDED.metadata
+                        RETURNING id
+                    """, (company_name, token, ats_type, board_url, job_count, json.dumps(metadata or {})))
+                    
+                    company_id = cur.fetchone()[0]
+                    conn.commit()
+                    logger.info(f"Added/updated company: {company_name} (ID: {company_id})")
+                    return company_id
+        except Exception as e:
+            logger.error(f"Error adding company: {e}")
+            return None
+    
+    def get_company_id(self, company_name: str) -> Optional[int]:
+        """Get company ID by name"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT id FROM companies WHERE company_name = %s", (company_name,))
+                    result = cur.fetchone()
+                    return result[0] if result else None
+        except Exception as e:
+            logger.error(f"Error getting company ID: {e}")
+            return None
+    
+    def update_company_job_count(self, company_id: int, job_count: int):
+        """Update company job count"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        UPDATE companies 
+                        SET job_count = %s, last_scraped = NOW()
+                        WHERE id = %s
+                    """, (job_count, company_id))
+                    conn.commit()
+        except Exception as e:
+            logger.error(f"Error updating job count: {e}")
+    
+    def get_companies_for_refresh(self, hours_since_update: int = 6, limit: int = 500) -> List[Dict]:
+        """Get companies that need refreshing"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT id, company_name, ats_type, board_url, job_count
+                        FROM companies
+                        WHERE last_scraped < NOW() - INTERVAL '%s hours'
+                           OR last_scraped IS NULL
+                        ORDER BY last_scraped ASC NULLS FIRST
+                        LIMIT %s
+                    """, (hours_since_update, limit))
+                    
+                    columns = [desc[0] for desc in cur.description]
+                    return [dict(zip(columns, row)) for row in cur.fetchall()]
+        except Exception as e:
+            logger.error(f"Error getting companies for refresh: {e}")
+            return []
+    
+    # ========================================================================
+    # Job Archive Management
+    # ========================================================================
+    
+    def archive_jobs(self, company_id: int, jobs: List[Dict]) -> Tuple[int, int, int]:
+        """Archive jobs and track status changes"""
+        if not jobs:
+            return 0, 0, 0
+        
+        try:
+            new_count = 0
+            updated_count = 0
+            closed_count = 0
             
-            # Separate into surges and declines
-            surges = sorted([c for c in changes if c['change_amount'] > 0], 
-                          key=lambda x: x['change_amount'], reverse=True)[:20]
-            declines = sorted([c for c in changes if c['change_amount'] < 0], 
-                            key=lambda x: abs(c['change_amount']), reverse=True)[:20]
-            
-            return surges, declines
-
-    def get_location_expansions(self, days: int = 30) -> List[Dict]:
-        """Detect new location expansions"""
-        with self.get_cursor() as cursor:
-            cursor.execute("""
-                SELECT 
-                    c.company_name,
-                    c.id as company_id,
-                    jsonb_object_keys(c.normalized_locations->'country') AS country,
-                    c.job_count,
-                    c.last_updated
-                FROM companies c
-                WHERE c.active = TRUE
-                  AND c.last_updated >= NOW() - INTERVAL %s
-                  AND jsonb_typeof(c.normalized_locations->'country') = 'object'
-                ORDER BY c.last_updated DESC
-                LIMIT 30
-            """, (f'{days} days',))
-            return [dict(row) for row in cursor.fetchall()]
-
-    def record_intelligence_event(self, event_type: str, company_id: str, 
-                                 company_name: str, event_data: Dict):
-        """Record an intelligence event for tracking and notifications"""
-        with self.get_cursor(dict_cursor=False) as cursor:
-            cursor.execute("""
-                INSERT INTO intelligence_events (event_type, company_id, company_name, event_data)
-                VALUES (%s, %s, %s, %s)
-            """, (event_type, company_id, company_name, json.dumps(event_data)))
-
-    def insert_seeds(self, seeds: List[Tuple[str, str, str, int]]):
-        """Bulk insert seeds efficiently"""
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Get current job IDs for this company
+                    cur.execute("""
+                        SELECT job_id FROM job_archive 
+                        WHERE company_id = %s AND status = 'active'
+                    """, (company_id,))
+                    
+                    current_job_ids = {row[0] for row in cur.fetchall()}
+                    new_job_ids = {job['id'] for job in jobs}
+                    
+                    # Mark removed jobs as closed
+                    closed_ids = current_job_ids - new_job_ids
+                    if closed_ids:
+                        cur.execute("""
+                            UPDATE job_archive
+                            SET status = 'closed', closed_at = NOW()
+                            WHERE company_id = %s AND job_id = ANY(%s) AND status = 'active'
+                        """, (company_id, list(closed_ids)))
+                        closed_count = cur.rowcount
+                    
+                    # Insert or update jobs
+                    for job in jobs:
+                        cur.execute("""
+                            INSERT INTO job_archive 
+                            (company_id, job_id, title, location, department, work_type, job_url, posted_date, status, metadata)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'active', %s)
+                            ON CONFLICT (company_id, job_id) 
+                            DO UPDATE SET
+                                title = EXCLUDED.title,
+                                location = EXCLUDED.location,
+                                department = EXCLUDED.department,
+                                work_type = EXCLUDED.work_type,
+                                job_url = EXCLUDED.job_url,
+                                posted_date = EXCLUDED.posted_date,
+                                last_seen = NOW(),
+                                status = 'active',
+                                metadata = EXCLUDED.metadata
+                            RETURNING (xmax = 0) AS inserted
+                        """, (
+                            company_id,
+                            job['id'],
+                            job.get('title'),
+                            job.get('location'),
+                            job.get('department'),
+                            job.get('work_type'),
+                            job.get('url'),
+                            job.get('posted_date'),
+                            json.dumps(job.get('metadata', {}))
+                        ))
+                        
+                        was_inserted = cur.fetchone()[0]
+                        if was_inserted:
+                            new_count += 1
+                        else:
+                            updated_count += 1
+                    
+                    conn.commit()
+                    
+                    logger.info(f"Job archive: +{new_count} new, ~{updated_count} updated, -{closed_count} closed")
+                    return new_count, updated_count, closed_count
+                    
+        except Exception as e:
+            logger.error(f"Error archiving jobs: {e}")
+            return 0, 0, 0
+    
+    # ========================================================================
+    # Seed Company Management
+    # ========================================================================
+    
+    def insert_seeds(self, seeds: List[Tuple[str, str, str, int]]) -> int:
+        """Bulk insert seed companies"""
         if not seeds:
             return 0
         
-        with self.get_cursor(dict_cursor=False) as cursor:
-            execute_values(
-                cursor,
-                """
-                INSERT INTO seeds (company_name, token_slug, source, tier)
-                VALUES %s
-                ON CONFLICT (company_name) DO NOTHING
-                """,
-                seeds,
-                page_size=1000
-            )
-            return cursor.rowcount
-
-    def get_seeds(self, limit: int = 100) -> List[Dict]:
-        """Get seeds with their stats"""
-        with self.get_cursor() as cursor:
-            cursor.execute("""
-                SELECT * FROM seeds
-                ORDER BY 
-                    CASE WHEN last_tested IS NULL THEN 0 ELSE 1 END,
-                    tier ASC,
-                    created_at DESC
-                LIMIT %s
-            """, (limit,))
-            return [dict(row) for row in cursor.fetchall()]
-
-    def get_seeds_for_collection(self, limit: int) -> List[Tuple[int, str, str, str]]:
-        """Get untested seeds for collection"""
-        with self.get_cursor(dict_cursor=False) as cursor:
-            cursor.execute("""
-                SELECT id, company_name, token_slug, source 
-                FROM seeds
-                WHERE enabled = TRUE 
-                  AND is_hit = FALSE 
-                  AND last_tested IS NULL
-                ORDER BY tier ASC, id ASC
-                LIMIT %s
-            """, (limit,))
-            return cursor.fetchall()
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    execute_batch(cur, """
+                        INSERT INTO seed_companies (company_name, company_name_token, source, tier)
+                        VALUES (%s, %s, %s, %s)
+                        ON CONFLICT (company_name_token) DO NOTHING
+                    """, seeds, page_size=1000)
+                    
+                    inserted = cur.rowcount
+                    conn.commit()
+                    return inserted
+        except Exception as e:
+            logger.error(f"Error inserting seeds: {e}")
+            return 0
     
-    def mark_seeds_tested(self, seed_ids: List[int], timestamp: datetime):
-        """Mark seeds as tested"""
-        if not seed_ids:
-            return
-        with self.get_cursor(dict_cursor=False) as cursor:
-            cursor.execute("""
-                UPDATE seeds SET 
-                    last_tested = %s,
-                    total_tested = total_tested + 1
-                WHERE id = ANY(%s)
-            """, (timestamp, seed_ids))
-            
-    def mark_seed_hit(self, seed_id: int):
-        """Mark seed as successful hit"""
-        with self.get_cursor(dict_cursor=False) as cursor:
-            cursor.execute("""
-                UPDATE seeds SET 
-                    is_hit = TRUE,
-                    total_hits = total_hits + 1,
-                    hit_rate = (total_hits + 1)::float / NULLIF(total_tested, 0)
-                WHERE id = %s
-            """, (seed_id,))
-
     def add_manual_seed(self, company_name: str, website_url: str = None) -> bool:
-    """Add a manual seed company"""
-    try:
-        token = self._name_to_token(company_name)
-        
-        with self.get_connection() as conn:
-            with conn.cursor() as cur:
-                # Check if already exists
-                cur.execute("""
-                    SELECT 1 FROM seed_companies 
-                    WHERE company_name_token = %s OR company_name ILIKE %s
-                """, (token, company_name))
-                
-                if cur.fetchone():
-                    logger.info(f"Seed already exists: {company_name}")
-                    return False
-                
-                # Check if already tracked
-                cur.execute("SELECT 1 FROM companies WHERE company_name ILIKE %s", (company_name,))
-                if cur.fetchone():
-                    logger.info(f"Company already tracked: {company_name}")
-                    return False
-                
-                # Insert new seed
-                cur.execute("""
-                    INSERT INTO seed_companies (company_name, company_name_token, source, tier, website_url)
-                    VALUES (%s, %s, %s, %s, %s)
-                    ON CONFLICT (company_name_token) DO NOTHING
-                """, (company_name, token, 'manual', 0, website_url))
-                
-                conn.commit()
-                logger.info(f"Added manual seed: {company_name}")
-                return True
-                
-    except Exception as e:
-        logger.error(f"Error adding manual seed: {e}")
-        return False
-
-    def get_companies_for_refresh(self, hours_since_update: int, limit: int) -> List[Dict[str, Any]]:
-        """Get companies that need refreshing"""
-        with self.get_cursor() as cursor:
-            cursor.execute("""
-                SELECT * FROM companies
-                WHERE active = TRUE
-                  AND last_updated < NOW() - INTERVAL %s
-                ORDER BY last_updated ASC
-                LIMIT %s
-            """, (f'{hours_since_update} hours', limit))
-            return [dict(row) for row in cursor.fetchall()]
-
-    def create_6h_snapshots(self) -> int:
-        """Create 6-hourly snapshots for all companies"""
-        with self.get_cursor(dict_cursor=False) as cursor:
-            cursor.execute("""
-                INSERT INTO snapshots_6h (
-                    company_id, job_count, remote_count, hybrid_count, 
-                    onsite_count, normalized_locations, department_distribution
-                )
-                SELECT 
-                    id, job_count, remote_count, hybrid_count, 
-                    onsite_count, normalized_locations, department_distribution
-                FROM companies
-                WHERE active = TRUE
-            """)
-            snapshot_count = cursor.rowcount
+        """Add a manual seed company"""
+        try:
+            token = self._name_to_token(company_name)
             
-            # Cleanup old snapshots
-            cursor.execute("""
-                DELETE FROM snapshots_6h 
-                WHERE snapshot_time < NOW() - INTERVAL '90 days'
-            """)
-            
-            logger.info(f"Created {snapshot_count} snapshots, cleaned up old data")
-            return snapshot_count
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Check if already exists
+                    cur.execute("""
+                        SELECT 1 FROM seed_companies 
+                        WHERE company_name_token = %s OR company_name ILIKE %s
+                    """, (token, company_name))
+                    
+                    if cur.fetchone():
+                        logger.info(f"Seed already exists: {company_name}")
+                        return False
+                    
+                    # Check if already tracked
+                    cur.execute("SELECT 1 FROM companies WHERE company_name ILIKE %s", (company_name,))
+                    if cur.fetchone():
+                        logger.info(f"Company already tracked: {company_name}")
+                        return False
+                    
+                    # Insert new seed
+                    cur.execute("""
+                        INSERT INTO seed_companies (company_name, company_name_token, source, tier, website_url)
+                        VALUES (%s, %s, %s, %s, %s)
+                        ON CONFLICT (company_name_token) DO NOTHING
+                    """, (company_name, token, 'manual', 0, website_url))
+                    
+                    conn.commit()
+                    logger.info(f"Added manual seed: {company_name}")
+                    return True
+                    
+        except Exception as e:
+            logger.error(f"Error adding manual seed: {e}")
+            return False
+    
+    def get_seeds(self, limit: int = 100, prioritize_quality: bool = True) -> List[Dict]:
+        """Get seed companies, optionally prioritized by success rate"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    if prioritize_quality:
+                        # Prioritize: untested seeds, then high success rate, then rest
+                        cur.execute("""
+                            SELECT company_name, company_name_token, source, tier, 
+                                   times_tested, success_rate, website_url
+                            FROM seed_companies
+                            WHERE is_blacklisted = FALSE
+                            ORDER BY 
+                                CASE WHEN times_tested = 0 THEN 0 ELSE 1 END,
+                                success_rate DESC NULLS LAST,
+                                created_at DESC
+                            LIMIT %s
+                        """, (limit,))
+                    else:
+                        cur.execute("""
+                            SELECT company_name, company_name_token, source, tier,
+                                   times_tested, success_rate, website_url
+                            FROM seed_companies
+                            WHERE is_blacklisted = FALSE
+                            ORDER BY created_at DESC
+                            LIMIT %s
+                        """, (limit,))
+                    
+                    columns = [desc[0] for desc in cur.description]
+                    return [dict(zip(columns, row)) for row in cur.fetchall()]
+        except Exception as e:
+            logger.error(f"Error getting seeds: {e}")
+            return []
+    
+    def increment_seed_tested(self, company_name: str):
+        """Increment times_tested for a seed"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        UPDATE seed_companies 
+                        SET times_tested = times_tested + 1,
+                            last_tested_at = NOW(),
+                            success_rate = CASE 
+                                WHEN times_tested + 1 > 0 
+                                THEN (times_successful::DECIMAL / (times_tested + 1) * 100)
+                                ELSE 0 
+                            END
+                        WHERE company_name ILIKE %s
+                    """, (company_name,))
+                    conn.commit()
+        except Exception as e:
+            logger.debug(f"Error updating seed tested count: {e}")
+    
+    def increment_seed_success(self, company_name: str):
+        """Increment times_successful for a seed"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        UPDATE seed_companies 
+                        SET times_successful = times_successful + 1,
+                            success_rate = CASE 
+                                WHEN times_tested > 0 
+                                THEN ((times_successful + 1)::DECIMAL / times_tested * 100)
+                                ELSE 0 
+                            END
+                        WHERE company_name ILIKE %s
+                    """, (company_name,))
+                    conn.commit()
+        except Exception as e:
+            logger.debug(f"Error updating seed success count: {e}")
+    
+    def blacklist_poor_seeds(self, min_tests: int = 3, max_success_rate: float = 5.0) -> int:
+        """Blacklist seeds with poor success rates"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        UPDATE seed_companies
+                        SET is_blacklisted = TRUE
+                        WHERE times_tested >= %s 
+                        AND success_rate < %s
+                        AND is_blacklisted = FALSE
+                        RETURNING company_name
+                    """, (min_tests, max_success_rate))
+                    
+                    blacklisted = cur.fetchall()
+                    conn.commit()
+                    
+                    if blacklisted:
+                        logger.info(f"Blacklisted {len(blacklisted)} poor-performing seeds")
+                    
+                    return len(blacklisted)
+        except Exception as e:
+            logger.error(f"Error blacklisting seeds: {e}")
+            return 0
+    
+    # ========================================================================
+    # Snapshots & Time-Series Data
+    # ========================================================================
+    
+    def create_company_snapshots(self) -> int:
+        """Create 6-hour snapshots for all companies"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO snapshots_6h (company_id, job_count, active_jobs, locations_count, departments_count)
+                        SELECT 
+                            c.id,
+                            c.job_count,
+                            COUNT(DISTINCT CASE WHEN j.status = 'active' THEN j.id END) as active_jobs,
+                            COUNT(DISTINCT j.location) as locations_count,
+                            COUNT(DISTINCT j.department) as departments_count
+                        FROM companies c
+                        LEFT JOIN job_archive j ON c.id = j.company_id
+                        GROUP BY c.id
+                    """)
+                    
+                    count = cur.rowcount
+                    conn.commit()
+                    logger.info(f"Created {count} company snapshots")
+                    return count
+        except Exception as e:
+            logger.error(f"Error creating snapshots: {e}")
+            return 0
+    
+    def create_monthly_snapshot(self) -> bool:
+        """Create monthly aggregate snapshot"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Get aggregate stats
+                    cur.execute("""
+                        SELECT 
+                            COUNT(DISTINCT c.id) as total_companies,
+                            COALESCE(SUM(c.job_count), 0) as total_jobs,
+                            COALESCE(AVG(c.job_count), 0) as avg_jobs
+                        FROM companies c
+                    """)
+                    
+                    total_companies, total_jobs, avg_jobs = cur.fetchone()
+                    
+                    # Top locations
+                    cur.execute("""
+                        SELECT location, COUNT(*) as count
+                        FROM job_archive
+                        WHERE status = 'active' AND location IS NOT NULL
+                        GROUP BY location
+                        ORDER BY count DESC
+                        LIMIT 20
+                    """)
+                    
+                    top_locations = [{'location': row[0], 'count': row[1]} for row in cur.fetchall()]
+                    
+                    # Top departments
+                    cur.execute("""
+                        SELECT department, COUNT(*) as count
+                        FROM job_archive
+                        WHERE status = 'active' AND department IS NOT NULL
+                        GROUP BY department
+                        ORDER BY count DESC
+                        LIMIT 20
+                    """)
+                    
+                    top_departments = [{'department': row[0], 'count': row[1]} for row in cur.fetchall()]
+                    
+                    # ATS distribution
+                    cur.execute("""
+                        SELECT ats_type, COUNT(*) as count
+                        FROM companies
+                        GROUP BY ats_type
+                        ORDER BY count DESC
+                    """)
+                    
+                    ats_distribution = [{'ats': row[0], 'count': row[1]} for row in cur.fetchall()]
+                    
+                    # Insert monthly snapshot
+                    cur.execute("""
+                        INSERT INTO snapshots_monthly 
+                        (snapshot_date, total_companies, total_jobs, avg_jobs_per_company, 
+                         top_locations, top_departments, ats_distribution)
+                        VALUES (CURRENT_DATE, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (snapshot_date) DO UPDATE SET
+                            total_companies = EXCLUDED.total_companies,
+                            total_jobs = EXCLUDED.total_jobs,
+                            avg_jobs_per_company = EXCLUDED.avg_jobs_per_company,
+                            top_locations = EXCLUDED.top_locations,
+                            top_departments = EXCLUDED.top_departments,
+                            ats_distribution = EXCLUDED.ats_distribution
+                    """, (
+                        total_companies,
+                        total_jobs,
+                        avg_jobs,
+                        json.dumps(top_locations),
+                        json.dumps(top_departments),
+                        json.dumps(ats_distribution)
+                    ))
+                    
+                    conn.commit()
+                    logger.info("Created monthly snapshot")
+                    return True
+        except Exception as e:
+            logger.error(f"Error creating monthly snapshot: {e}")
+            return False
+    
+    # ========================================================================
+    # Intelligence & Analytics
+    # ========================================================================
+    
+    def get_job_count_changes(self, days: int = 7, threshold_percent: float = 10.0) -> Tuple[List[Dict], List[Dict]]:
+        """Get companies with significant job count changes (surges and declines)"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        WITH recent_snapshots AS (
+                            SELECT DISTINCT ON (company_id)
+                                company_id,
+                                job_count as current_count,
+                                snapshot_time
+                            FROM snapshots_6h
+                            WHERE snapshot_time >= NOW() - INTERVAL '1 day'
+                            ORDER BY company_id, snapshot_time DESC
+                        ),
+                        old_snapshots AS (
+                            SELECT DISTINCT ON (company_id)
+                                company_id,
+                                job_count as old_count
+                            FROM snapshots_6h
+                            WHERE snapshot_time >= NOW() - INTERVAL '%s days'
+                              AND snapshot_time < NOW() - INTERVAL '%s days'
+                            ORDER BY company_id, snapshot_time DESC
+                        )
+                        SELECT 
+                            c.company_name,
+                            c.id as company_id,
+                            o.old_count,
+                            r.current_count,
+                            (r.current_count - o.old_count) as job_change,
+                            ROUND(((r.current_count - o.old_count)::DECIMAL / NULLIF(o.old_count, 0) * 100), 1) as percent_change
+                        FROM recent_snapshots r
+                        JOIN old_snapshots o ON r.company_id = o.company_id
+                        JOIN companies c ON c.id = r.company_id
+                        WHERE o.old_count > 0
+                          AND ABS((r.current_count - o.old_count)::DECIMAL / o.old_count * 100) >= %s
+                        ORDER BY ABS(r.current_count - o.old_count) DESC
+                    """, (days, days - 1, threshold_percent))
+                    
+                    columns = [desc[0] for desc in cur.description]
+                    all_changes = [dict(zip(columns, row)) for row in cur.fetchall()]
+                    
+                    # Separate into surges and declines
+                    surges = [c for c in all_changes if c['job_change'] > 0]
+                    declines = [c for c in all_changes if c['job_change'] < 0]
+                    
+                    return surges, declines
+        except Exception as e:
+            logger.error(f"Error getting job count changes: {e}")
+            return [], []
+    
+    def get_location_expansions(self, days: int = 30) -> List[Dict]:
+        """Get recent location expansions"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT 
+                            c.company_name,
+                            ie.metadata->>'location' as new_location,
+                            ie.metadata->>'job_count' as job_count,
+                            ie.detected_at
+                        FROM intelligence_events ie
+                        JOIN companies c ON ie.company_id = c.id
+                        WHERE ie.event_type = 'location_expansion'
+                          AND ie.detected_at >= NOW() - INTERVAL '%s days'
+                        ORDER BY ie.detected_at DESC
+                        LIMIT 50
+                    """, (days,))
+                    
+                    columns = [desc[0] for desc in cur.description]
+                    return [dict(zip(columns, row)) for row in cur.fetchall()]
+        except Exception as e:
+            logger.error(f"Error getting location expansions: {e}")
+            return []
+    
+    def track_location_expansion(self, company_id: int, new_location: str, job_count: int = 1):
+        """Track location expansion - ONLY after first scan"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Check if this is the first scan for this company
+                    cur.execute("""
+                        SELECT COUNT(*) FROM snapshots_6h 
+                        WHERE company_id = %s
+                    """, (company_id,))
+                    
+                    snapshot_count = cur.fetchone()[0]
+                    
+                    # If this is first scan, don't track as expansion
+                    if snapshot_count == 0:
+                        logger.debug(f"Skipping location expansion for company {company_id} (first scan)")
+                        return
+                    
+                    # Check if location already exists for this company
+                    cur.execute("""
+                        SELECT id FROM job_archive 
+                        WHERE company_id = %s 
+                        AND location ILIKE %s
+                        AND first_seen < NOW() - INTERVAL '1 day'
+                    """, (company_id, f'%{new_location}%'))
+                    
+                    if cur.fetchone():
+                        return  # Location already existed
+                    
+                    # This is a new location on a subsequent scan - track it!
+                    cur.execute("""
+                        INSERT INTO intelligence_events 
+                        (company_id, event_type, metadata, detected_at)
+                        VALUES (%s, 'location_expansion', %s, NOW())
+                    """, (company_id, json.dumps({
+                        'location': new_location,
+                        'job_count': job_count
+                    })))
+                    
+                    conn.commit()
+                    logger.info(f"📍 Location expansion detected: {new_location}")
+                    
+        except Exception as e:
+            logger.error(f"Error tracking location expansion: {e}")
+    
+    def get_time_to_fill_metrics(self) -> Dict:
+        """Calculate time-to-fill metrics from closed jobs"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT 
+                            COUNT(*) as sample_size,
+                            AVG(EXTRACT(EPOCH FROM (closed_at - first_seen)) / 86400) as avg_ttf_days,
+                            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (closed_at - first_seen)) / 86400) as median_ttf_days,
+                            MIN(EXTRACT(EPOCH FROM (closed_at - first_seen)) / 86400) as min_ttf_days,
+                            MAX(EXTRACT(EPOCH FROM (closed_at - first_seen)) / 86400) as max_ttf_days
+                        FROM job_archive
+                        WHERE status = 'closed'
+                          AND closed_at IS NOT NULL
+                          AND closed_at > first_seen
+                          AND closed_at > NOW() - INTERVAL '6 months'
+                    """)
+                    
+                    row = cur.fetchone()
+                    if row and row[0] > 0:
+                        return {
+                            'sample_size': row[0],
+                            'overall_avg_ttf_days': round(row[1], 1) if row[1] else None,
+                            'median_ttf_days': round(row[2], 1) if row[2] else None,
+                            'min_ttf_days': round(row[3], 1) if row[3] else None,
+                            'max_ttf_days': round(row[4], 1) if row[4] else None
+                        }
+                    return {}
+        except Exception as e:
+            logger.error(f"Error calculating TTF metrics: {e}")
+            return {}
+    
+    # ========================================================================
+    # Statistics & Reporting
+    # ========================================================================
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get overall platform statistics"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Basic counts
+                    cur.execute("""
+                        SELECT 
+                            (SELECT COUNT(*) FROM companies) as total_companies,
+                            (SELECT COALESCE(SUM(job_count), 0) FROM companies) as total_jobs,
+                            (SELECT COUNT(*) FROM seed_companies WHERE is_blacklisted = FALSE) as total_seeds,
+                            (SELECT COUNT(*) FROM job_archive WHERE status = 'closed') as closed_jobs
+                    """)
+                    
+                    row = cur.fetchone()
+                    
+                    return {
+                        'total_companies': row[0],
+                        'total_jobs': row[1],
+                        'total_seeds': row[2],
+                        'closed_jobs': row[3]
+                    }
+        except Exception as e:
+            logger.error(f"Error getting stats: {e}")
+            return {
+                'total_companies': 0,
+                'total_jobs': 0,
+                'total_seeds': 0,
+                'closed_jobs': 0
+            }
+    
+    def get_market_trends(self, days: int = 7) -> List[Dict]:
+        """Get market trends over time"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT 
+                            DATE_TRUNC('day', snapshot_time) as date,
+                            COUNT(DISTINCT company_id) as companies,
+                            SUM(job_count) as total_jobs,
+                            AVG(job_count) as avg_jobs_per_company
+                        FROM snapshots_6h
+                        WHERE snapshot_time >= NOW() - INTERVAL '%s days'
+                        GROUP BY DATE_TRUNC('day', snapshot_time)
+                        ORDER BY date
+                    """, (days,))
+                    
+                    columns = [desc[0] for desc in cur.description]
+                    return [dict(zip(columns, row)) for row in cur.fetchall()]
+        except Exception as e:
+            logger.error(f"Error getting market trends: {e}")
+            return []
+    
+    def get_monthly_snapshots(self, months: int = 12) -> List[Dict]:
+        """Get monthly snapshot data"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT *
+                        FROM snapshots_monthly
+                        WHERE snapshot_date >= CURRENT_DATE - INTERVAL '%s months'
+                        ORDER BY snapshot_date DESC
+                    """, (months,))
+                    
+                    columns = [desc[0] for desc in cur.description]
+                    return [dict(zip(columns, row)) for row in cur.fetchall()]
+        except Exception as e:
+            logger.error(f"Error getting monthly snapshots: {e}")
+            return []
+    
+    def get_advanced_analytics(self) -> Dict:
+        """Get comprehensive analytics data"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Top hiring companies
+                    cur.execute("""
+                        SELECT company_name, job_count
+                        FROM companies
+                        ORDER BY job_count DESC
+                        LIMIT 20
+                    """)
+                    top_companies = [{'company': row[0], 'jobs': row[1]} for row in cur.fetchall()]
+                    
+                    # Top locations
+                    cur.execute("""
+                        SELECT location, COUNT(*) as count
+                        FROM job_archive
+                        WHERE status = 'active' AND location IS NOT NULL
+                        GROUP BY location
+                        ORDER BY count DESC
+                        LIMIT 20
+                    """)
+                    top_locations = [{'location': row[0], 'count': row[1]} for row in cur.fetchall()]
+                    
+                    # Top departments
+                    cur.execute("""
+                        SELECT department, COUNT(*) as count
+                        FROM job_archive
+                        WHERE status = 'active' AND department IS NOT NULL
+                        GROUP BY department
+                        ORDER BY count DESC
+                        LIMIT 20
+                    """)
+                    top_departments = [{'department': row[0], 'count': row[1]} for row in cur.fetchall()]
+                    
+                    # ATS distribution
+                    cur.execute("""
+                        SELECT ats_type, COUNT(*) as count, 
+                               SUM(job_count) as total_jobs
+                        FROM companies
+                        GROUP BY ats_type
+                        ORDER BY count DESC
+                    """)
+                    ats_distribution = [
+                        {'ats': row[0], 'companies': row[1], 'jobs': row[2]} 
+                        for row in cur.fetchall()
+                    ]
+                    
+                    return {
+                        'top_companies': top_companies,
+                        'top_locations': top_locations,
+                        'top_departments': top_departments,
+                        'ats_distribution': ats_distribution
+                    }
+        except Exception as e:
+            logger.error(f"Error getting advanced analytics: {e}")
+            return {}
 
-    def create_monthly_snapshot(self) -> int:
-        """Create monthly snapshot (idempotent for current month)"""
-        now = datetime.utcnow()
-        with self.get_cursor(dict_cursor=False) as cursor:
-            cursor.execute("""
-                INSERT INTO monthly_snapshots (
-                    company_id, year, month, job_count, remote_count, 
-                    hybrid_count, onsite_count, normalized_locations, 
-                    department_distribution
-                )
-                SELECT 
-                    id, %s, %s, job_count, remote_count, hybrid_count, 
-                    onsite_count, normalized_locations, department_distribution
-                FROM companies
-                WHERE active = TRUE
-                ON CONFLICT (company_id, year, month) DO UPDATE SET 
-                    job_count = EXCLUDED.job_count,
-                    remote_count = EXCLUDED.remote_count,
-                    hybrid_count = EXCLUDED.hybrid_count,
-                    onsite_count = EXCLUDED.onsite_count,
-                    normalized_locations = EXCLUDED.normalized_locations,
-                    department_distribution = EXCLUDED.department_distribution,
-                    created_at = NOW()
-            """, (now.year, now.month))
-            return cursor.rowcount
-
-    def acquire_advisory_lock(self, lock_name: str, timeout: int = 0) -> bool:
-        """Acquire PostgreSQL advisory lock for distributed coordination"""
-        lock_id = hash(lock_name) % (2**31)
-        with self.get_cursor(dict_cursor=False) as cursor:
-            cursor.execute("SELECT pg_try_advisory_lock(%s)", (lock_id,))
-            return cursor.fetchone()[0]
-
-    def release_advisory_lock(self, lock_name: str):
-        """Release PostgreSQL advisory lock"""
-        lock_id = hash(lock_name) % (2**31)
-        with self.get_cursor(dict_cursor=False) as cursor:
-            cursor.execute("SELECT pg_advisory_unlock(%s)", (lock_id,))
-
-    def get_source_stats(self) -> List[Dict]:
-        """Get seed source performance statistics"""
-        with self.get_cursor() as cursor:
-            cursor.execute("""
-                SELECT 
-                    source, 
-                    COUNT(*) AS total_seeds,
-                    SUM(CASE WHEN is_hit THEN 1 ELSE 0 END) AS hits,
-                    ROUND(AVG(hit_rate), 4) AS avg_hit_rate,
-                    SUM(total_tested) as total_tests
-                FROM seeds
-                GROUP BY source
-                ORDER BY hits DESC
-            """)
-            return [dict(row) for row in cursor.fetchall()]
-
-    def close(self):
-        """Close all connections in the pool"""
-        if self.pool:
-            self.pool.closeall()
-            logger.info("Database connection pool closed")
-
-# Singleton instance
+# Global database instance
 _db_instance = None
 
-def get_db(max_retries: int = 15, delay: int = 2) -> Database:
-    """Get or create database singleton with retry logic"""
+def get_db() -> Database:
+    """Get or create database instance"""
     global _db_instance
     if _db_instance is None:
-        for attempt in range(max_retries):
-            try:
-                _db_instance = Database()
-                logger.info("✅ Database connection pool initialized successfully")
-                return _db_instance
-            except Exception as e:
-                logger.warning(f"⚠️ Database connection attempt {attempt + 1}/{max_retries} failed: {e}")
-                if attempt < max_retries - 1:
-                    time.sleep(delay)
-                else:
-                    logger.error("❌ Failed to initialize database after all retries")
-                    raise
+        _db_instance = Database()
     return _db_instance
