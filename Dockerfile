@@ -12,44 +12,42 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy requirements and install
+# Install Python packages
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
-# Install Playwright browsers
 RUN playwright install chromium --with-deps || true
 
-# Copy ALL application code
-COPY . .
+# Copy ALL source code
+COPY . /app/
 
-# CRITICAL: Verify templates directory exists and has files
-RUN echo "========================================" && \
-    echo "Verifying container contents:" && \
-    echo "========================================" && \
-    pwd && \
-    echo "--- Root directory contents ---" && \
-    ls -la && \
-    echo "--- Templates directory check ---" && \
-    if [ -d "templates" ]; then \
-        echo "✅ templates/ directory exists"; \
-        ls -la templates/; \
-        if [ -f "templates/dashboard.html" ]; then \
-            echo "✅ dashboard.html exists"; \
-        else \
-            echo "❌ dashboard.html NOT FOUND"; \
-        fi; \
-        if [ -f "templates/analytics.html" ]; then \
-            echo "✅ analytics.html exists"; \
-        else \
-            echo "❌ analytics.html NOT FOUND"; \
-        fi; \
-    else \
-        echo "❌ templates/ directory NOT FOUND"; \
-    fi && \
-    echo "========================================"
+# CRITICAL VERIFICATION - Will fail build if templates missing
+RUN echo "======== VERIFICATION START ========" && \
+    echo "Contents of /app:" && \
+    ls -la /app && \
+    echo "" && \
+    echo "Checking for templates directory..." && \
+    test -d /app/templates && echo "✅ templates/ EXISTS" || (echo "❌ templates/ NOT FOUND" && exit 1) && \
+    echo "" && \
+    echo "Contents of /app/templates:" && \
+    ls -la /app/templates && \
+    echo "" && \
+    echo "Checking for dashboard.html..." && \
+    test -f /app/templates/dashboard.html && echo "✅ dashboard.html EXISTS" || (echo "❌ dashboard.html NOT FOUND" && exit 1) && \
+    echo "" && \
+    echo "Checking for analytics.html..." && \
+    test -f /app/templates/analytics.html && echo "✅ analytics.html EXISTS" || (echo "❌ analytics.html NOT FOUND" && exit 1) && \
+    echo "" && \
+    echo "Dashboard.html size:" && \
+    wc -c /app/templates/dashboard.html && \
+    echo "Analytics.html size:" && \
+    wc -c /app/templates/analytics.html && \
+    echo "======== VERIFICATION SUCCESS ========"
 
-# Create non-root user
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+# Set permissions
+RUN useradd -m -u 1000 appuser && \
+    chown -R appuser:appuser /app && \
+    chmod -R 755 /app/templates
+
 USER appuser
 
 EXPOSE 8080
