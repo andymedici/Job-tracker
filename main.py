@@ -453,6 +453,25 @@ def api_advanced_analytics():
         logger.error(f"Error getting analytics: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
+# Add these routes after your existing dashboard/analytics routes
+
+@app.route('/companies')
+@optional_auth
+def companies_page():
+    """Companies browser page"""
+    return render_template('companies.html')
+
+@app.route('/company/<int:company_id>')
+@optional_auth
+def company_page(company_id):
+    """Single company detail page"""
+    return render_template('company.html')
+
+@app.route('/jobs')
+@optional_auth
+def jobs_page():
+    """Jobs browser page"""
+    return render_template('jobs.html')
 
 # ============================================================================
 # API Routes - Job Browsing & Company Details
