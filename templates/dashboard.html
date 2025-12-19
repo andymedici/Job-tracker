@@ -3,30 +3,48 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Job Intelligence Dashboard</title>
+    <title>Dashboard - Job Intelligence Platform</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         .stat-card {
-            transition: all 0.3s ease;
+            transition: transform 0.2s, box-shadow 0.2s;
         }
         .stat-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+            transform: translateY(-4px);
+            box-shadow: 0 12px 24px rgba(0, 0, 0, 0.1);
         }
-        .pulse-dot {
-            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-        }
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: .5; }
-        }
-        .chart-container {
+        .nav-link {
+            color: #6b7280;
+            transition: all 0.2s;
             position: relative;
-            height: 300px;
         }
-        .loading {
-            border: 3px solid #f3f3f3;
+        .nav-link:hover {
+            color: #1f2937;
+            background-color: #f3f4f6;
+        }
+        .nav-link.active {
+            color: #3b82f6;
+            background-color: #eff6ff;
+        }
+        .nav-link.active::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background-color: #3b82f6;
+        }
+        .quick-access-card {
+            transition: all 0.3s;
+        }
+        .quick-access-card:hover {
+            transform: scale(1.05);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
+        }
+        .loading-spinner {
+            border: 3px solid #f3f4f6;
             border-top: 3px solid #3b82f6;
             border-radius: 50%;
             width: 40px;
@@ -37,313 +55,348 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+        .pulse {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
     </style>
 </head>
 <body class="bg-gray-50">
-   <!-- Navigation -->
-<nav class="bg-white shadow-sm border-b border-gray-200">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="flex justify-between h-16">
-            <div class="flex items-center space-x-8">
-                <h1 class="text-2xl font-bold text-gray-900">
-                    📊 Job Intelligence Platform
-                </h1>
-                <div class="hidden md:flex items-center space-x-1">
-                    <a href="/dashboard" class="nav-link active px-3 py-2 rounded-md text-sm font-medium">
-                        📈 Dashboard
-                    </a>
-                    <a href="/analytics" class="nav-link px-3 py-2 rounded-md text-sm font-medium">
-                        📊 Analytics
-                    </a>
-                    <a href="/companies" class="nav-link px-3 py-2 rounded-md text-sm font-medium">
-                        🏢 Companies
-                    </a>
-                    <a href="/jobs" class="nav-link px-3 py-2 rounded-md text-sm font-medium">
-                        💼 Jobs
-                    </a>
+    <!-- API Key Modal -->
+    <div id="api-key-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white rounded-lg shadow-xl p-8 max-w-md w-full mx-4">
+            <h2 class="text-2xl font-bold text-gray-900 mb-4">Welcome to Job Intelligence Platform</h2>
+            <p class="text-gray-600 mb-6">Please enter your API keys to access the dashboard.</p>
+            
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        API Key (Read Access)
+                    </label>
+                    <input 
+                        type="password" 
+                        id="api-key-input" 
+                        placeholder="Enter your API key"
+                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        Admin API Key (Optional - for admin functions)
+                    </label>
+                    <input 
+                        type="password" 
+                        id="admin-api-key-input" 
+                        placeholder="Enter your admin API key"
+                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
                 </div>
             </div>
-            <div class="flex items-center space-x-3">
-                <div id="connection-status" class="hidden md:flex items-center space-x-2 text-sm">
-                    <div class="w-2 h-2 bg-green-500 rounded-full"></div>
-                    <span class="text-gray-600">Connected</span>
+            
+            <div class="mt-6 flex space-x-3">
+                <button 
+                    id="save-api-key-btn"
+                    class="flex-1 bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition font-medium"
+                >
+                    Save & Continue
+                </button>
+                <button 
+                    id="cancel-api-key-btn"
+                    class="px-6 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 transition font-medium"
+                >
+                    Cancel
+                </button>
+            </div>
+            
+            <p class="mt-4 text-xs text-gray-500">
+                Your API keys are stored locally in your browser and never sent to external servers.
+            </p>
+        </div>
+    </div>
+
+    <!-- Navigation -->
+    <nav class="bg-white shadow-sm border-b border-gray-200">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center space-x-8">
+                    <h1 class="text-2xl font-bold text-gray-900">
+                        📊 Job Intelligence Platform
+                    </h1>
+                    <div class="hidden md:flex items-center space-x-1">
+                        <a href="/dashboard" class="nav-link active px-3 py-2 rounded-md text-sm font-medium">
+                            📈 Dashboard
+                        </a>
+                        <a href="/analytics" class="nav-link px-3 py-2 rounded-md text-sm font-medium">
+                            📊 Analytics
+                        </a>
+                        <a href="/companies" class="nav-link px-3 py-2 rounded-md text-sm font-medium">
+                            🏢 Companies
+                        </a>
+                        <a href="/jobs" class="nav-link px-3 py-2 rounded-md text-sm font-medium">
+                            💼 Jobs
+                        </a>
+                        <a href="/submit-seed" class="nav-link px-3 py-2 rounded-md text-sm font-medium">
+                            ➕ Submit Company
+                        </a>
+                    </div>
                 </div>
-                <button id="settings-btn" class="text-gray-600 hover:text-gray-900 p-2">
-                    ⚙️
+                <div class="flex items-center space-x-3">
+                    <div id="connection-status" class="hidden md:flex items-center space-x-2 text-sm">
+                        <div class="w-2 h-2 bg-green-500 rounded-full pulse"></div>
+                        <span class="text-gray-600">Connected</span>
+                    </div>
+                    <button id="settings-btn" class="text-gray-600 hover:text-gray-900 p-2 rounded-md hover:bg-gray-100 transition">
+                        ⚙️
+                    </button>
+                    <button id="refresh-btn" class="text-gray-600 hover:text-gray-900 p-2 rounded-md hover:bg-gray-100 transition">
+                        🔄
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <!-- Header -->
+        <div class="mb-8">
+            <h2 class="text-3xl font-bold text-gray-900">Dashboard</h2>
+            <p class="text-gray-600 mt-2">Real-time job market intelligence and hiring trends</p>
+        </div>
+
+        <!-- Main Stats Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <div class="stat-card bg-white rounded-lg shadow p-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-600">Total Companies</p>
+                        <p id="stat-companies" class="text-3xl font-bold text-gray-900 mt-2">-</p>
+                    </div>
+                    <div class="text-4xl">🏢</div>
+                </div>
+                <p class="text-xs text-gray-500 mt-4">Tracked companies with ATS</p>
+            </div>
+
+            <div class="stat-card bg-white rounded-lg shadow p-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-600">Active Jobs</p>
+                        <p id="stat-jobs" class="text-3xl font-bold text-blue-600 mt-2">-</p>
+                    </div>
+                    <div class="text-4xl">💼</div>
+                </div>
+                <p class="text-xs text-gray-500 mt-4">Current open positions</p>
+            </div>
+
+            <div class="stat-card bg-white rounded-lg shadow p-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-600">Seed Companies</p>
+                        <p id="stat-seeds" class="text-3xl font-bold text-purple-600 mt-2">-</p>
+                    </div>
+                    <div class="text-4xl">🌱</div>
+                </div>
+                <p class="text-xs text-gray-500 mt-4">Ready for discovery</p>
+            </div>
+
+            <div class="stat-card bg-white rounded-lg shadow p-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-600">Historical Jobs</p>
+                        <p id="stat-closed" class="text-3xl font-bold text-gray-600 mt-2">-</p>
+                    </div>
+                    <div class="text-4xl">📚</div>
+                </div>
+                <p class="text-xs text-gray-500 mt-4">Archived positions</p>
+            </div>
+        </div>
+
+        <!-- Quick Access Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <a href="/companies" class="quick-access-card block bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg shadow-lg p-6 text-white">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-blue-100">Browse</p>
+                        <p class="text-2xl font-bold mt-1">Companies</p>
+                        <p class="text-sm text-blue-100 mt-2">View all tracked companies</p>
+                    </div>
+                    <div class="text-4xl">🏢</div>
+                </div>
+            </a>
+
+            <a href="/jobs" class="quick-access-card block bg-gradient-to-br from-purple-500 to-purple-600 rounded-lg shadow-lg p-6 text-white">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-purple-100">Search</p>
+                        <p class="text-2xl font-bold mt-1">Jobs</p>
+                        <p class="text-sm text-purple-100 mt-2">Browse all job listings</p>
+                    </div>
+                    <div class="text-4xl">💼</div>
+                </div>
+            </a>
+
+            <a href="/analytics" class="quick-access-card block bg-gradient-to-br from-green-500 to-green-600 rounded-lg shadow-lg p-6 text-white">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-green-100">View</p>
+                        <p class="text-2xl font-bold mt-1">Analytics</p>
+                        <p class="text-sm text-green-100 mt-2">Advanced insights</p>
+                    </div>
+                    <div class="text-4xl">📊</div>
+                </div>
+            </a>
+
+            <a href="/submit-seed" class="quick-access-card block bg-gradient-to-br from-orange-500 to-orange-600 rounded-lg shadow-lg p-6 text-white">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-orange-100">Add</p>
+                        <p class="text-2xl font-bold mt-1">Submit</p>
+                        <p class="text-sm text-orange-100 mt-2">Add new companies</p>
+                    </div>
+                    <div class="text-4xl">➕</div>
+                </div>
+            </a>
+        </div>
+
+        <!-- Collection Status -->
+        <div class="bg-white rounded-lg shadow p-6 mb-8">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold text-gray-900">Collection Status</h3>
+                <div id="collection-status" class="flex items-center space-x-2">
+                    <div class="w-2 h-2 bg-gray-400 rounded-full"></div>
+                    <span class="text-sm text-gray-600">Idle</span>
+                </div>
+            </div>
+            
+            <div id="progress-container" class="hidden">
+                <div class="w-full bg-gray-200 rounded-full h-2 mb-2">
+                    <div id="progress-bar" class="bg-blue-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+                </div>
+                <p id="progress-text" class="text-sm text-gray-600">Starting collection...</p>
+            </div>
+
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
+                <div class="text-center p-3 bg-gray-50 rounded-lg">
+                    <p class="text-2xl font-bold text-gray-900" id="last-run-companies">-</p>
+                    <p class="text-xs text-gray-600 mt-1">Companies Tested</p>
+                </div>
+                <div class="text-center p-3 bg-gray-50 rounded-lg">
+                    <p class="text-2xl font-bold text-green-600" id="last-run-discovered">-</p>
+                    <p class="text-xs text-gray-600 mt-1">Discovered</p>
+                </div>
+                <div class="text-center p-3 bg-gray-50 rounded-lg">
+                    <p class="text-2xl font-bold text-blue-600" id="last-run-jobs">-</p>
+                    <p class="text-xs text-gray-600 mt-1">Jobs Collected</p>
+                </div>
+                <div class="text-center p-3 bg-gray-50 rounded-lg">
+                    <p class="text-sm text-gray-600" id="last-run-time">Never</p>
+                    <p class="text-xs text-gray-600 mt-1">Last Run</p>
+                </div>
+            </div>
+
+            <div class="mt-6 flex space-x-3">
+                <button id="start-discovery-btn" class="flex-1 bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition font-medium">
+                    🔍 Start Discovery
+                </button>
+                <button id="start-refresh-btn" class="flex-1 bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 transition font-medium">
+                    🔄 Refresh Companies
                 </button>
             </div>
         </div>
-    </div>
-</nav>
 
-<style>
-    .nav-link {
-        color: #6b7280;
-        transition: all 0.2s;
-        position: relative;
-    }
-    .nav-link:hover {
-        color: #1f2937;
-        background-color: #f3f4f6;
-    }
-    .nav-link.active {
-        color: #3b82f6;
-        background-color: #eff6ff;
-    }
-    .nav-link.active::after {
-        content: '';
-        position: absolute;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        height: 2px;
-        background-color: #3b82f6;
-    }
-</style>
-
-    <!-- Main Content -->
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        
-        <!-- Alert/Status Bar -->
-        <div id="alert-bar" class="hidden mb-6 rounded-lg p-4"></div>
-
-        <!-- Collection Progress Bar -->
-        <div id="progress-container" class="hidden mb-6 bg-white rounded-lg shadow p-6">
-            <div class="flex items-center justify-between mb-2">
-                <h3 class="text-lg font-semibold text-gray-900">Collection in Progress</h3>
-                <span id="progress-mode" class="text-sm text-gray-600"></span>
-            </div>
-            <div class="w-full bg-gray-200 rounded-full h-4 mb-2">
-                <div id="progress-bar" class="bg-blue-600 h-4 rounded-full transition-all duration-300" style="width: 0%"></div>
-            </div>
-            <div class="flex justify-between text-sm text-gray-600">
-                <span id="progress-text">0%</span>
-                <span id="progress-stats"></span>
-            </div>
-        </div>
-
-        <!-- Stats Grid -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-            <!-- Total Companies -->
-            <div class="stat-card bg-white rounded-lg shadow p-6">
-                <div class="flex items-center">
-                    <div class="flex-shrink-0 bg-blue-100 rounded-md p-3">
-                        <svg class="h-6 w-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
-                        </svg>
-                    </div>
-                    <div class="ml-5 w-0 flex-1">
-                        <dl>
-                            <dt class="text-sm font-medium text-gray-500 truncate">Total Companies</dt>
-                            <dd class="flex items-baseline">
-                                <div id="total-companies" class="text-2xl font-semibold text-gray-900">-</div>
-                            </dd>
-                        </dl>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Total Jobs -->
-            <div class="stat-card bg-white rounded-lg shadow p-6">
-                <div class="flex items-center">
-                    <div class="flex-shrink-0 bg-green-100 rounded-md p-3">
-                        <svg class="h-6 w-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
-                        </svg>
-                    </div>
-                    <div class="ml-5 w-0 flex-1">
-                        <dl>
-                            <dt class="text-sm font-medium text-gray-500 truncate">Total Jobs</dt>
-                            <dd class="flex items-baseline">
-                                <div id="total-jobs" class="text-2xl font-semibold text-gray-900">-</div>
-                            </dd>
-                        </dl>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Remote Jobs -->
-            <div class="stat-card bg-white rounded-lg shadow p-6">
-                <div class="flex items-center">
-                    <div class="flex-shrink-0 bg-purple-100 rounded-md p-3">
-                        <svg class="h-6 w-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                        </svg>
-                    </div>
-                    <div class="ml-5 w-0 flex-1">
-                        <dl>
-                            <dt class="text-sm font-medium text-gray-500 truncate">Remote Jobs</dt>
-                            <dd class="flex items-baseline">
-                                <div id="remote-jobs" class="text-2xl font-semibold text-gray-900">-</div>
-                                <span id="remote-percent" class="ml-2 text-sm text-gray-600">-</span>
-                            </dd>
-                        </dl>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Avg Time to Fill -->
-            <div class="stat-card bg-white rounded-lg shadow p-6">
-                <div class="flex items-center">
-                    <div class="flex-shrink-0 bg-yellow-100 rounded-md p-3">
-                        <svg class="h-6 w-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                        </svg>
-                    </div>
-                    <div class="ml-5 w-0 flex-1">
-                        <dl>
-                            <dt class="text-sm font-medium text-gray-500 truncate">Avg Time to Fill</dt>
-                            <dd class="flex items-baseline">
-                                <div id="avg-ttf" class="text-2xl font-semibold text-gray-900">-</div>
-                                <span class="ml-2 text-sm text-gray-600">days</span>
-                            </dd>
-                        </dl>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- ATS Distribution & Work Type -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-            <!-- ATS Distribution Chart -->
-            <div class="bg-white rounded-lg shadow p-6">
-                <h3 class="text-lg font-semibold text-gray-900 mb-4">ATS Platform Distribution</h3>
-                <div class="chart-container">
-                    <canvas id="ats-chart"></canvas>
-                </div>
-            </div>
-
-            <!-- Work Type Distribution Chart -->
-            <div class="bg-white rounded-lg shadow p-6">
-                <h3 class="text-lg font-semibold text-gray-900 mb-4">Work Type Distribution</h3>
-                <div class="chart-container">
-                    <canvas id="worktype-chart"></canvas>
-                </div>
-            </div>
-        </div>
-
-        <!-- Trends Chart -->
-        <div class="bg-white rounded-lg shadow p-6 mb-8">
-            <div class="flex items-center justify-between mb-4">
-                <h3 class="text-lg font-semibold text-gray-900">Market Trends (Last 30 Days)</h3>
-                <select id="trend-days" class="border-gray-300 rounded-md shadow-sm text-sm">
-                    <option value="7">7 Days</option>
-                    <option value="14">14 Days</option>
-                    <option value="30" selected>30 Days</option>
-                    <option value="90">90 Days</option>
-                </select>
-            </div>
-            <div class="chart-container" style="height: 400px;">
-                <canvas id="trends-chart"></canvas>
-            </div>
-        </div>
-
-        <!-- Intelligence Events (3 columns) -->
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-        <!-- Hiring Surges -->
-        <div class="bg-white rounded-lg shadow p-6">
-            <h3 class="text-lg font-semibold text-gray-900 mb-4">
-            🚀 Hiring Surges
-            </h3>
-        <div id="surges-list" class="space-y-3">
-            <p class="text-sm text-gray-500">Loading...</p>
-        </div>
-    </div>
-
-        <!-- Hiring Declines (NEW) -->
-        <div class="bg-white rounded-lg shadow p-6">
-            <h3 class="text-lg font-semibold text-gray-900 mb-4">
-            📉 Job Declines
-            </h3>
-        <div id="declines-list" class="space-y-3">
-            <p class="text-sm text-gray-500">Loading...</p>
-            </div>
-        </div>
-
-    <!-- Location Expansions -->
-    <div class="bg-white rounded-lg shadow p-6">
-        <h3 class="text-lg font-semibold text-gray-900 mb-4">
-            📍 Location Expansions
-        </h3>
-        <div id="expansions-list" class="space-y-3">
-            <p class="text-sm text-gray-500">Loading...</p>
-        </div>
-    </div>
-</div>
-
-            <!-- Hiring Freezes -->
+        <!-- Intelligence Events (3 columns: Surges, Declines, Expansions) -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8" id="intelligence-events">
+            <!-- Hiring Surges -->
             <div class="bg-white rounded-lg shadow p-6">
                 <h3 class="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-                    <span class="text-red-500 mr-2">📉</span> Hiring Freezes
+                    <span class="text-2xl mr-2">🚀</span>
+                    Hiring Surges
                 </h3>
-                <div id="declines-list" class="space-y-3 max-h-96 overflow-y-auto">
-                    <div class="text-center text-gray-500 py-4">Loading...</div>
+                <div id="surges-list" class="space-y-3">
+                    <div class="flex items-center justify-center py-8">
+                        <div class="loading-spinner"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Job Declines -->
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+                    <span class="text-2xl mr-2">📉</span>
+                    Job Declines
+                </h3>
+                <div id="declines-list" class="space-y-3">
+                    <div class="flex items-center justify-center py-8">
+                        <div class="loading-spinner"></div>
+                    </div>
                 </div>
             </div>
 
             <!-- Location Expansions -->
             <div class="bg-white rounded-lg shadow p-6">
                 <h3 class="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-                    <span class="text-blue-500 mr-2">🌍</span> Location Expansions
+                    <span class="text-2xl mr-2">📍</span>
+                    Location Expansions
                 </h3>
-                <div id="expansions-list" class="space-y-3 max-h-96 overflow-y-auto">
-                    <div class="text-center text-gray-500 py-4">Loading...</div>
+                <div id="expansions-list" class="space-y-3">
+                    <div class="flex items-center justify-center py-8">
+                        <div class="loading-spinner"></div>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <!-- Control Panel -->
-        <div class="bg-white rounded-lg shadow p-6 mb-8">
-            <h3 class="text-lg font-semibold text-gray-900 mb-4">Collection Controls</h3>
+        <!-- Charts -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            <!-- Job Trends Chart -->
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">Job Market Trends (7 Days)</h3>
+                <canvas id="trends-chart" height="200"></canvas>
+            </div>
+
+            <!-- ATS Distribution Chart -->
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">ATS Platform Distribution</h3>
+                <canvas id="ats-chart" height="200"></canvas>
+            </div>
+        </div>
+
+        <!-- Admin Actions (shown only if admin key is set) -->
+        <div id="admin-section" class="hidden bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg shadow p-6 mb-8">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+                <span class="text-2xl mr-2">🔧</span>
+                Admin Actions
+            </h3>
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <button id="btn-discover" class="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
-                    🔍 Start Discovery
+                <button id="expand-tier1-btn" class="bg-white border-2 border-purple-200 text-purple-700 px-6 py-3 rounded-lg hover:bg-purple-50 transition font-medium">
+                    🌱 Expand Seeds (Tier 1)
                 </button>
-                <button id="btn-refresh" class="bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
-                    🔄 Refresh Companies
+                <button id="expand-tier2-btn" class="bg-white border-2 border-blue-200 text-blue-700 px-6 py-3 rounded-lg hover:bg-blue-50 transition font-medium">
+                    🌳 Expand Seeds (Tier 2)
                 </button>
-                <button id="btn-expand" class="bg-purple-600 text-white px-6 py-3 rounded-lg hover:bg-purple-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
-                    🌱 Expand Seeds
+                <button id="expand-all-btn" class="bg-white border-2 border-green-200 text-green-700 px-6 py-3 rounded-lg hover:bg-green-50 transition font-medium">
+                    🌲 Expand All Seeds
                 </button>
-            </div>
-            <div class="mt-4 text-sm text-gray-600">
-                <p><strong>Note:</strong> These are admin operations. You'll need an admin API key to execute them.</p>
             </div>
         </div>
 
-        <!-- Recent Activity Log -->
+        <!-- Footer Info -->
         <div class="bg-white rounded-lg shadow p-6">
-            <h3 class="text-lg font-semibold text-gray-900 mb-4">Recent Activity</h3>
-            <div id="activity-log" class="space-y-2 max-h-64 overflow-y-auto">
-                <div class="text-center text-gray-500 py-4">No recent activity</div>
-            </div>
-        </div>
-
-    </div>
-
-    <!-- API Key Modal -->
-    <div id="api-key-modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-        <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
-            <div class="mt-3">
-                <h3 class="text-lg font-semibold text-gray-900 mb-4">API Configuration</h3>
-                <p class="text-sm text-gray-600 mb-4">Enter your API keys to access the platform:</p>
-                <div class="space-y-3">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">API Key (User)</label>
-                        <input type="password" id="api-key-input" class="w-full border-gray-300 rounded-md shadow-sm" placeholder="your_api_key">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Admin API Key (Optional)</label>
-                        <input type="password" id="admin-key-input" class="w-full border-gray-300 rounded-md shadow-sm" placeholder="your_admin_key">
-                    </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 text-center">
+                <div>
+                    <p class="text-sm text-gray-600">Next Refresh</p>
+                    <p class="text-lg font-semibold text-gray-900 mt-1">Daily at 6:00 AM UTC</p>
                 </div>
-                <div class="mt-4 flex space-x-3">
-                    <button id="save-api-key" class="flex-1 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700">
-                        Save & Connect
-                    </button>
-                    <button id="cancel-api-key" class="flex-1 bg-gray-300 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-400">
-                        Cancel
-                    </button>
+                <div>
+                    <p class="text-sm text-gray-600">Next Discovery</p>
+                    <p class="text-lg font-semibold text-gray-900 mt-1">Daily at 7:00 AM UTC</p>
+                </div>
+                <div>
+                    <p class="text-sm text-gray-600">Next Seed Expansion</p>
+                    <p class="text-lg font-semibold text-gray-900 mt-1">Weekly (Sunday 3:00 AM UTC)</p>
                 </div>
             </div>
         </div>
@@ -353,478 +406,388 @@
         // Configuration
         const API_BASE = window.location.origin;
         let API_KEY = localStorage.getItem('api_key') || '';
-        let ADMIN_KEY = localStorage.getItem('admin_key') || '';
-        
-        // Chart instances
-        let atsChart, worktypeChart, trendsChart;
-        
-        // Utility: API Request
+        let ADMIN_API_KEY = localStorage.getItem('admin_api_key') || '';
+        let refreshInterval = null;
+        let trendsChart = null;
+        let atsChart = null;
+
+        // API Request Helper
         async function apiRequest(endpoint, options = {}) {
             const headers = {
                 'Content-Type': 'application/json',
-                'X-API-Key': options.admin ? ADMIN_KEY : API_KEY,
+                'X-API-Key': options.admin ? ADMIN_API_KEY : API_KEY,
                 ...options.headers
             };
-            
-            try {
-                const response = await fetch(`${API_BASE}${endpoint}`, {
-                    ...options,
-                    headers
-                });
-                
-                if (response.status === 401) {
-                    showApiKeyModal();
-                    throw new Error('Authentication required');
-                }
-                
-                if (!response.ok) {
-                    const error = await response.json();
-                    throw new Error(error.message || 'API request failed');
-                }
-                
-                return await response.json();
-            } catch (error) {
-                console.error('API Error:', error);
-                throw error;
+
+            const response = await fetch(`${API_BASE}${endpoint}`, {
+                ...options,
+                headers
+            });
+
+            if (response.status === 401) {
+                showApiKeyModal();
+                throw new Error('Authentication required');
             }
+
+            return await response.json();
         }
-        
-        // Show API Key Modal
+
+        // API Key Modal
         function showApiKeyModal() {
             document.getElementById('api-key-modal').classList.remove('hidden');
-            document.getElementById('api-key-input').value = API_KEY;
-            document.getElementById('admin-key-input').value = ADMIN_KEY;
         }
-        
-        // Save API Keys
-        document.getElementById('save-api-key').addEventListener('click', () => {
-            API_KEY = document.getElementById('api-key-input').value;
-            ADMIN_KEY = document.getElementById('admin-key-input').value;
-            localStorage.setItem('api_key', API_KEY);
-            localStorage.setItem('admin_key', ADMIN_KEY);
+
+        function hideApiKeyModal() {
             document.getElementById('api-key-modal').classList.add('hidden');
+        }
+
+        document.getElementById('save-api-key-btn').addEventListener('click', () => {
+            const apiKey = document.getElementById('api-key-input').value.trim();
+            const adminApiKey = document.getElementById('admin-api-key-input').value.trim();
+
+            if (apiKey) {
+                localStorage.setItem('api_key', apiKey);
+                API_KEY = apiKey;
+                
+                if (adminApiKey) {
+                    localStorage.setItem('admin_api_key', adminApiKey);
+                    ADMIN_API_KEY = adminApiKey;
+                    document.getElementById('admin-section').classList.remove('hidden');
+                }
+                
+                hideApiKeyModal();
+                loadDashboard();
+            } else {
+                alert('Please enter at least a read API key');
+            }
+        });
+
+        document.getElementById('cancel-api-key-btn').addEventListener('click', hideApiKeyModal);
+
+        // Settings Button
+        document.getElementById('settings-btn').addEventListener('click', () => {
+            document.getElementById('api-key-input').value = API_KEY;
+            document.getElementById('admin-api-key-input').value = ADMIN_API_KEY;
+            showApiKeyModal();
+        });
+
+        // Refresh Button
+        document.getElementById('refresh-btn').addEventListener('click', () => {
             loadDashboard();
         });
-        
-        document.getElementById('cancel-api-key').addEventListener('click', () => {
-            document.getElementById('api-key-modal').classList.add('hidden');
-        });
-        
-        // Show Alert
-        function showAlert(message, type = 'info') {
-            const alertBar = document.getElementById('alert-bar');
-            const colors = {
-                success: 'bg-green-100 text-green-800 border-green-200',
-                error: 'bg-red-100 text-red-800 border-red-200',
-                warning: 'bg-yellow-100 text-yellow-800 border-yellow-200',
-                info: 'bg-blue-100 text-blue-800 border-blue-200'
-            };
-            
-            alertBar.className = `mb-6 rounded-lg p-4 border ${colors[type]}`;
-            alertBar.textContent = message;
-            alertBar.classList.remove('hidden');
-            
-            setTimeout(() => {
-                alertBar.classList.add('hidden');
-            }, 5000);
-        }
-        
-        // Add Activity Log Entry
-        function addActivityLog(message, type = 'info') {
-            const logContainer = document.getElementById('activity-log');
-            const entry = document.createElement('div');
-            entry.className = 'flex items-center text-sm p-2 bg-gray-50 rounded';
-            
-            const icons = {
-                success: '✅',
-                error: '❌',
-                warning: '⚠️',
-                info: 'ℹ️'
-            };
-            
-            entry.innerHTML = `
-                <span class="mr-2">${icons[type]}</span>
-                <span class="text-gray-600">${new Date().toLocaleTimeString()}</span>
-                <span class="ml-2 flex-1">${message}</span>
-            `;
-            
-            if (logContainer.firstChild.textContent.includes('No recent activity')) {
-                logContainer.innerHTML = '';
-            }
-            
-            logContainer.insertBefore(entry, logContainer.firstChild);
-            
-            // Keep only last 20 entries
-            while (logContainer.children.length > 20) {
-                logContainer.removeChild(logContainer.lastChild);
-            }
-        }
-        
-        // Load Dashboard Stats
+
+        // Load Stats
         async function loadStats() {
             try {
-                const stats = await apiRequest('/api/stats');
+                const data = await apiRequest('/api/stats');
                 
-                // Update stat cards
-                document.getElementById('total-companies').textContent = (stats.total_companies || 0).toLocaleString();
-                document.getElementById('total-jobs').textContent = (stats.total_jobs || 0).toLocaleString();
-                document.getElementById('remote-jobs').textContent = (stats.remote_jobs || 0).toLocaleString();
-                
-                const remotePercent = stats.total_jobs > 0 ? ((stats.remote_jobs / stats.total_jobs) * 100).toFixed(1) : 0;
-                document.getElementById('remote-percent').textContent = `${remotePercent}%`;
-                
-                const avgTtf = stats.avg_ttf ? parseFloat(stats.avg_ttf).toFixed(1) : '-';
-                document.getElementById('avg-ttf').textContent = avgTtf;
-                
-                // Update ATS chart
-                updateAtsChart(stats);
-                
-                // Update work type chart
-                updateWorkTypeChart(stats);
-                
-                // Update progress if running
-                if (stats.is_running) {
-                    showProgress(stats);
+                document.getElementById('stat-companies').textContent = data.total_companies?.toLocaleString() || '0';
+                document.getElementById('stat-jobs').textContent = data.total_jobs?.toLocaleString() || '0';
+                document.getElementById('stat-seeds').textContent = data.total_seeds?.toLocaleString() || '0';
+                document.getElementById('stat-closed').textContent = data.closed_jobs?.toLocaleString() || '0';
+
+                // Update collection status
+                if (data.is_running) {
+                    document.getElementById('collection-status').innerHTML = `
+                        <div class="w-2 h-2 bg-green-500 rounded-full pulse"></div>
+                        <span class="text-sm text-green-600">Running: ${data.mode || 'Collection'}</span>
+                    `;
+                    document.getElementById('progress-container').classList.remove('hidden');
+                    document.getElementById('progress-bar').style.width = `${data.current_progress || 0}%`;
+                    document.getElementById('progress-text').textContent = `Progress: ${Math.round(data.current_progress || 0)}%`;
                 } else {
-                    hideProgress();
+                    document.getElementById('collection-status').innerHTML = `
+                        <div class="w-2 h-2 bg-gray-400 rounded-full"></div>
+                        <span class="text-sm text-gray-600">Idle</span>
+                    `;
+                    document.getElementById('progress-container').classList.add('hidden');
                 }
-                
+
+                // Last run stats
+                if (data.last_stats) {
+                    document.getElementById('last-run-companies').textContent = data.last_stats.total_tested?.toLocaleString() || '-';
+                    document.getElementById('last-run-discovered').textContent = data.last_stats.total_discovered?.toLocaleString() || '-';
+                    document.getElementById('last-run-jobs').textContent = data.last_stats.total_jobs_collected?.toLocaleString() || '-';
+                }
+
+                if (data.last_run) {
+                    const lastRun = new Date(data.last_run);
+                    document.getElementById('last-run-time').textContent = lastRun.toLocaleString();
+                }
+
             } catch (error) {
-                console.error('Failed to load stats:', error);
+                console.error('Error loading stats:', error);
             }
         }
-        
-        // Update ATS Chart
-        function updateAtsChart(stats) {
-            const ctx = document.getElementById('ats-chart').getContext('2d');
-            
-            if (atsChart) {
-                atsChart.destroy();
-            }
-            
-            atsChart = new Chart(ctx, {
-                type: 'doughnut',
-                data: {
-                    labels: ['Greenhouse', 'Lever', 'Workday', 'Ashby', 'Other'],
-                    datasets: [{
-                        data: [
-                            stats.greenhouse_count || 0,
-                            stats.lever_count || 0,
-                            stats.workday_count || 0,
-                            stats.ashby_count || 0,
-                            (stats.total_companies || 0) - (stats.greenhouse_count || 0) - (stats.lever_count || 0) - (stats.workday_count || 0) - (stats.ashby_count || 0)
-                        ],
-                        backgroundColor: [
-                            '#10b981',
-                            '#3b82f6',
-                            '#f59e0b',
-                            '#8b5cf6',
-                            '#6b7280'
-                        ]
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            position: 'bottom'
-                        }
-                    }
-                }
-            });
-        }
-        
-        // Update Work Type Chart
-        function updateWorkTypeChart(stats) {
-            const ctx = document.getElementById('worktype-chart').getContext('2d');
-            
-            if (worktypeChart) {
-                worktypeChart.destroy();
-            }
-            
-            const total = stats.total_jobs || 1;
-            
-            worktypeChart = new Chart(ctx, {
-                type: 'pie',
-                data: {
-                    labels: ['Remote', 'Hybrid', 'Onsite'],
-                    datasets: [{
-                        data: [
-                            stats.remote_jobs || 0,
-                            stats.hybrid_jobs || 0,
-                            stats.onsite_jobs || 0
-                        ],
-                        backgroundColor: [
-                            '#8b5cf6',
-                            '#3b82f6',
-                            '#6b7280'
-                        ]
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            position: 'bottom'
-                        },
-                        tooltip: {
-                            callbacks: {
-                                label: function(context) {
-                                    const value = context.parsed;
-                                    const percent = ((value / total) * 100).toFixed(1);
-                                    return `${context.label}: ${value.toLocaleString()} (${percent}%)`;
-                                }
-                            }
-                        }
-                    }
-                }
-            });
-        }
-        
-        // Load Trends
-        async function loadTrends(days = 30) {
-            try {
-                const data = await apiRequest(`/api/trends?days=${days}`);
-                updateTrendsChart(data.granular || []);
-            } catch (error) {
-                console.error('Failed to load trends:', error);
-            }
-        }
-        
-        // Update Trends Chart
-        function updateTrendsChart(data) {
-            const ctx = document.getElementById('trends-chart').getContext('2d');
-            
-            if (trendsChart) {
-                trendsChart.destroy();
-            }
-            
-            const labels = data.map(d => new Date(d.date).toLocaleDateString());
-            const jobCounts = data.map(d => d.total_jobs || 0);
-            const remoteCounts = data.map(d => d.remote_jobs || 0);
-            
-            trendsChart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [
-                        {
-                            label: 'Total Jobs',
-                            data: jobCounts,
-                            borderColor: '#3b82f6',
-                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                            tension: 0.4
-                        },
-                        {
-                            label: 'Remote Jobs',
-                            data: remoteCounts,
-                            borderColor: '#8b5cf6',
-                            backgroundColor: 'rgba(139, 92, 246, 0.1)',
-                            tension: 0.4
-                        }
-                    ]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            position: 'top'
-                        }
-                    },
-                    scales: {
-                        y: {
-                            beginAtZero: true
-                        }
-                    }
-                }
-            });
-        }
-        
+
         // Load Intelligence Events
         async function loadIntelligence() {
             try {
-                const data = await apiRequest('/api/intel?days=7');
+                const data = await apiRequest('/api/intel?days=14');
                 
-                // Update surges
+                // Display surges
                 const surgesList = document.getElementById('surges-list');
-                surgesList.innerHTML = data.surges.length > 0 
-                    ? data.surges.slice(0, 10).map(s => `
-                        <div class="border-l-4 border-green-500 pl-3 py-2">
-                            <div class="font-medium text-gray-900">${s.company_name}</div>
-                            <div class="text-sm text-gray-600">
-                                +${s.change_amount} jobs (${s.change_percent ? s.change_percent.toFixed(1) : '0'}%)
-                            </div>
-                            <div class="text-xs text-gray-500">${s.current_jobs} total jobs</div>
+                if (data.surges && data.surges.length > 0) {
+                    surgesList.innerHTML = data.surges.slice(0, 5).map(s => `
+                        <div class="p-3 bg-green-50 rounded-lg border border-green-200">
+                            <p class="font-medium text-green-900">${s.company_name}</p>
+                            <p class="text-sm text-green-700 mt-1">+${s.job_change} jobs (+${s.percent_change}%)</p>
                         </div>
-                    `).join('')
-                    : '<div class="text-center text-gray-500 py-4">No surges detected</div>';
+                    `).join('');
+                } else {
+                    surgesList.innerHTML = '<p class="text-sm text-gray-500 text-center py-4">No surges detected</p>';
+                }
                 
-                // Update declines
+                // Display declines
                 const declinesList = document.getElementById('declines-list');
-                declinesList.innerHTML = data.declines.length > 0
-                    ? data.declines.slice(0, 10).map(d => `
-                        <div class="border-l-4 border-red-500 pl-3 py-2">
-                            <div class="font-medium text-gray-900">${d.company_name}</div>
-                            <div class="text-sm text-gray-600">
-                                ${d.change_amount} jobs (${d.change_percent ? d.change_percent.toFixed(1) : '0'}%)
-                            </div>
-                            <div class="text-xs text-gray-500">${d.current_jobs} total jobs</div>
+                if (data.declines && data.declines.length > 0) {
+                    declinesList.innerHTML = data.declines.slice(0, 5).map(d => `
+                        <div class="p-3 bg-red-50 rounded-lg border border-red-200">
+                            <p class="font-medium text-red-900">${d.company_name}</p>
+                            <p class="text-sm text-red-700 mt-1">${d.job_change} jobs (${d.percent_change}%)</p>
                         </div>
-                    `).join('')
-                    : '<div class="text-center text-gray-500 py-4">No declines detected</div>';
+                    `).join('');
+                } else {
+                    declinesList.innerHTML = '<p class="text-sm text-gray-500 text-center py-4">No declines detected</p>';
+                }
                 
-                // Update expansions
+                // Display expansions
                 const expansionsList = document.getElementById('expansions-list');
-                expansionsList.innerHTML = data.expansions.length > 0
-                    ? data.expansions.slice(0, 10).map(e => `
-                        <div class="border-l-4 border-blue-500 pl-3 py-2">
-                            <div class="font-medium text-gray-900">${e.company_name}</div>
-                            <div class="text-sm text-gray-600">
-                                New location: ${e.country || 'Unknown'}
-                            </div>
-                            <div class="text-xs text-gray-500">${e.job_count} jobs</div>
+                if (data.expansions && data.expansions.length > 0) {
+                    expansionsList.innerHTML = data.expansions.slice(0, 5).map(e => `
+                        <div class="p-3 bg-blue-50 rounded-lg border border-blue-200">
+                            <p class="font-medium text-blue-900">${e.company_name}</p>
+                            <p class="text-sm text-blue-700 mt-1">📍 ${e.new_location || e.location || 'New location'}</p>
                         </div>
-                    `).join('')
-                    : '<div class="text-center text-gray-500 py-4">No expansions detected</div>';
+                    `).join('');
+                } else {
+                    expansionsList.innerHTML = '<p class="text-sm text-gray-500 text-center py-4">No expansions detected</p>';
+                }
                 
             } catch (error) {
-                console.error('Failed to load intelligence:', error);
+                console.error('Error loading intelligence:', error);
+                document.getElementById('surges-list').innerHTML = '<p class="text-sm text-red-500 text-center py-4">Error loading data</p>';
+                document.getElementById('declines-list').innerHTML = '<p class="text-sm text-red-500 text-center py-4">Error loading data</p>';
+                document.getElementById('expansions-list').innerHTML = '<p class="text-sm text-red-500 text-center py-4">Error loading data</p>';
             }
         }
-        
-        // Show Progress
-        function showProgress(stats) {
-            const container = document.getElementById('progress-container');
-            const bar = document.getElementById('progress-bar');
-            const text = document.getElementById('progress-text');
-            const mode = document.getElementById('progress-mode');
-            const statsText = document.getElementById('progress-stats');
-            
-            container.classList.remove('hidden');
-            
-            const progress = stats.current_progress || 0;
-            bar.style.width = `${progress}%`;
-            text.textContent = `${progress.toFixed(1)}%`;
-            mode.textContent = stats.mode ? `Mode: ${stats.mode}` : '';
-            
-            if (stats.last_stats) {
-                statsText.textContent = `Companies: ${stats.last_stats.total_companies || 0} | Jobs: ${stats.last_stats.total_jobs || 0}`;
+
+        // Load Trends Chart
+        async function loadTrendsChart() {
+            try {
+                const data = await apiRequest('/api/trends?days=7');
+                
+                if (!data.granular || data.granular.length === 0) {
+                    return;
+                }
+
+                const ctx = document.getElementById('trends-chart').getContext('2d');
+                
+                if (trendsChart) {
+                    trendsChart.destroy();
+                }
+
+                trendsChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: data.granular.map(d => new Date(d.date).toLocaleDateString()),
+                        datasets: [{
+                            label: 'Total Jobs',
+                            data: data.granular.map(d => d.total_jobs),
+                            borderColor: 'rgb(59, 130, 246)',
+                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                            tension: 0.4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                display: false
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+            } catch (error) {
+                console.error('Error loading trends chart:', error);
             }
         }
-        
-        // Hide Progress
-        function hideProgress() {
-            document.getElementById('progress-container').classList.add('hidden');
+
+        // Load ATS Distribution Chart
+        async function loadAtsChart() {
+            try {
+                const data = await apiRequest('/api/advanced-analytics');
+                
+                if (!data.ats_distribution || data.ats_distribution.length === 0) {
+                    return;
+                }
+
+                const ctx = document.getElementById('ats-chart').getContext('2d');
+                
+                if (atsChart) {
+                    atsChart.destroy();
+                }
+
+                const colors = [
+                    'rgb(59, 130, 246)',
+                    'rgb(16, 185, 129)',
+                    'rgb(245, 158, 11)',
+                    'rgb(239, 68, 68)',
+                    'rgb(139, 92, 246)',
+                    'rgb(236, 72, 153)'
+                ];
+
+                atsChart = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: data.ats_distribution.map(d => d.ats || 'Unknown'),
+                        datasets: [{
+                            data: data.ats_distribution.map(d => d.companies),
+                            backgroundColor: colors
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                position: 'right'
+                            }
+                        }
+                    }
+                });
+            } catch (error) {
+                console.error('Error loading ATS chart:', error);
+            }
         }
-        
-        // Collection Controls
-        document.getElementById('btn-discover').addEventListener('click', async () => {
-            if (!ADMIN_KEY) {
-                showAlert('Admin API key required for this operation', 'error');
+
+        // Collection Actions
+        document.getElementById('start-discovery-btn').addEventListener('click', async () => {
+            if (!ADMIN_API_KEY) {
+                alert('Admin API key required for this action');
                 showApiKeyModal();
                 return;
             }
-            
-            const btn = document.getElementById('btn-discover');
-            btn.disabled = true;
-            
+
+            if (!confirm('Start company discovery? This will test seed companies and may take some time.')) {
+                return;
+            }
+
             try {
-                const result = await apiRequest('/api/collect', {
+                const response = await apiRequest('/api/collect', {
                     method: 'POST',
                     admin: true,
                     body: JSON.stringify({ max_companies: 500 })
                 });
-                
-                showAlert('Discovery started successfully!', 'success');
-                addActivityLog('Started company discovery', 'success');
+
+                alert(response.message || 'Discovery started!');
+                loadDashboard();
             } catch (error) {
-                showAlert(`Failed to start discovery: ${error.message}`, 'error');
-            } finally {
-                setTimeout(() => btn.disabled = false, 5000);
+                alert('Error starting discovery: ' + error.message);
             }
         });
-        
-        document.getElementById('btn-refresh').addEventListener('click', async () => {
-            if (!ADMIN_KEY) {
-                showAlert('Admin API key required for this operation', 'error');
+
+        document.getElementById('start-refresh-btn').addEventListener('click', async () => {
+            if (!ADMIN_API_KEY) {
+                alert('Admin API key required for this action');
                 showApiKeyModal();
                 return;
             }
-            
-            const btn = document.getElementById('btn-refresh');
-            btn.disabled = true;
-            
+
+            if (!confirm('Refresh existing companies? This will update job listings.')) {
+                return;
+            }
+
             try {
-                const result = await apiRequest('/api/refresh', {
+                const response = await apiRequest('/api/refresh', {
                     method: 'POST',
                     admin: true,
-                    body: JSON.stringify({ hours_since_update: 6, max_companies: 500 })
+                    body: JSON.stringify({ hours_since_update: 24, max_companies: 500 })
                 });
-                
-                showAlert('Refresh started successfully!', 'success');
-                addActivityLog('Started company refresh', 'success');
+
+                alert(response.message || 'Refresh started!');
+                loadDashboard();
             } catch (error) {
-                showAlert(`Failed to start refresh: ${error.message}`, 'error');
-            } finally {
-                setTimeout(() => btn.disabled = false, 5000);
+                alert('Error starting refresh: ' + error.message);
             }
         });
-        
-        document.getElementById('btn-expand').addEventListener('click', async () => {
-            if (!ADMIN_KEY) {
-                showAlert('Admin API key required for this operation', 'error');
-                showApiKeyModal();
-                return;
-            }
-            
-            const btn = document.getElementById('btn-expand');
-            btn.disabled = true;
+
+        // Seed Expansion Actions
+        document.getElementById('expand-tier1-btn').addEventListener('click', async () => {
+            if (!confirm('Expand Tier 1 seeds (premium tech companies)?')) return;
             
             try {
-                const result = await apiRequest('/api/expand-seeds', {
+                const response = await apiRequest('/api/expand-seeds', {
+                    method: 'POST',
+                    admin: true,
+                    body: JSON.stringify({ tier: 'tier1' })
+                });
+                alert(response.message || 'Tier 1 expansion started!');
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        });
+
+        document.getElementById('expand-tier2-btn').addEventListener('click', async () => {
+            if (!confirm('Expand Tier 2 seeds (public companies)?')) return;
+            
+            try {
+                const response = await apiRequest('/api/expand-seeds', {
+                    method: 'POST',
+                    admin: true,
+                    body: JSON.stringify({ tier: 'tier2' })
+                });
+                alert(response.message || 'Tier 2 expansion started!');
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        });
+
+        document.getElementById('expand-all-btn').addEventListener('click', async () => {
+            if (!confirm('Expand ALL seed tiers? This may take a while.')) return;
+            
+            try {
+                const response = await apiRequest('/api/expand-seeds', {
                     method: 'POST',
                     admin: true,
                     body: JSON.stringify({ tier: 'full' })
                 });
-                
-                showAlert('Seed expansion started successfully!', 'success');
-                addActivityLog('Started seed expansion', 'success');
+                alert(response.message || 'Full expansion started!');
             } catch (error) {
-                showAlert(`Failed to start expansion: ${error.message}`, 'error');
-            } finally {
-                setTimeout(() => btn.disabled = false, 5000);
+                alert('Error: ' + error.message);
             }
         });
-        
-        // Trend days selector
-        document.getElementById('trend-days').addEventListener('change', (e) => {
-            loadTrends(parseInt(e.target.value));
-        });
-        
+
         // Load Dashboard
         async function loadDashboard() {
-            if (!API_KEY) {
-                showApiKeyModal();
-                return;
-            }
-            
-            addActivityLog('Dashboard loaded', 'info');
-            await loadStats();
-            await loadTrends(30);
-            await loadIntelligence();
+            await Promise.all([
+                loadStats(),
+                loadIntelligence(),
+                loadTrendsChart(),
+                loadAtsChart()
+            ]);
         }
-        
-        // Auto-refresh
-        setInterval(() => {
-            loadStats();
-            loadIntelligence();
-        }, 10000); // Refresh every 10 seconds
-        
-        // Initial load
-        loadDashboard();
+
+        // Initialize
+        if (!API_KEY) {
+            showApiKeyModal();
+        } else {
+            if (ADMIN_API_KEY) {
+                document.getElementById('admin-section').classList.remove('hidden');
+            }
+            loadDashboard();
+            
+            // Auto-refresh every 30 seconds
+            refreshInterval = setInterval(() => {
+                loadStats();
+            }, 30000);
+        }
     </script>
 </body>
 </html>
