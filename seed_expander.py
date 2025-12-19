@@ -1,12 +1,6 @@
 """
-Ultimate Seed Expander - Comprehensive Company Discovery System
-Version 2.0 - Production Grade
-
-Sources (15+):
-- Tier 1: Curated tech companies, YC, manually verified
-- Tier 2: Public companies (S&P 500, Fortune, SEC)
-- Tier 3: Startup ecosystems (Crunchbase samples, GitHub lists)
-- Tier 4: Mass expansion (comprehensive GitHub repos)
+Ultimate Seed Expander v3.0 - Enhanced with 25+ Sources
+Fixes all errors + adds major new data sources
 """
 
 import asyncio
@@ -15,11 +9,11 @@ import json
 import re
 import logging
 import random
-import time
 from typing import List, Tuple, Dict, Optional, Set
 from dataclasses import dataclass, field
 from datetime import datetime
 from urllib.parse import quote
+import time
 
 from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
@@ -31,10 +25,6 @@ logger = logging.getLogger(__name__)
 
 ua = UserAgent()
 
-# ============================================================================
-# SOURCE CONFIGURATION
-# ============================================================================
-
 @dataclass
 class SourceConfig:
     """Configuration for each data source"""
@@ -43,14 +33,18 @@ class SourceConfig:
     priority: int
     url: Optional[str] = None
     enabled: bool = True
-    rate_limit: float = 3.0  # Seconds between requests
+    rate_limit: float = 3.0
     max_retries: int = 3
     timeout: int = 60
     description: str = ""
+    requires_special_handling: bool = False
 
-# Comprehensive source definitions
+# ============================================================================
+# COMPREHENSIVE SOURCE DEFINITIONS (25+ SOURCES)
+# ============================================================================
+
 SOURCES = {
-    # ===== TIER 1: HIGH-QUALITY TECH COMPANIES (95-90) =====
+    # ===== TIER 1: PREMIUM TECH COMPANIES (100-90) =====
     'manual_verified': SourceConfig(
         name='Manually Verified Companies',
         tier=1,
@@ -58,54 +52,88 @@ SOURCES = {
         description='Hand-curated list of known Greenhouse/Lever users'
     ),
     
+    'greenhouse_customers': SourceConfig(
+        name='Greenhouse Public Customers',
+        tier=1,
+        priority=99,
+        url='https://www.greenhouse.com/customers',
+        description='Companies using Greenhouse ATS'
+    ),
+    
+    'lever_customers': SourceConfig(
+        name='Lever Public Customers',
+        tier=1,
+        priority=98,
+        url='https://www.lever.co/customers',
+        description='Companies using Lever ATS'
+    ),
+    
     'yc_directory': SourceConfig(
         name='Y Combinator Companies',
         tier=1,
-        priority=95,
+        priority=97,
         url='https://www.ycombinator.com/companies',
-        description='All YC-backed startups'
+        description='All YC-backed startups',
+        rate_limit=5.0
     ),
     
     'yc_top_companies': SourceConfig(
         name='YC Top Companies',
         tier=1,
-        priority=94,
+        priority=96,
         url='https://www.ycombinator.com/topcompanies',
         description='YC unicorns and high-growth companies'
     ),
     
-    'techcrunch_startups': SourceConfig(
-        name='TechCrunch Startup Database',
+    'yc_work_at_startup': SourceConfig(
+        name='YC Work at a Startup',
+        tier=1,
+        priority=95,
+        url='https://www.workatastartup.com/companies',
+        description='YC companies actively hiring'
+    ),
+    
+    'techstars_portfolio': SourceConfig(
+        name='Techstars Portfolio',
+        tier=1,
+        priority=94,
+        url='https://www.techstars.com/portfolio',
+        description='Techstars-backed companies'
+    ),
+    
+    'a16z_portfolio': SourceConfig(
+        name='Andreessen Horowitz Portfolio',
         tier=1,
         priority=93,
-        url='https://techcrunch.com/startups/',
-        description='Featured tech startups'
+        url='https://a16z.com/portfolio/',
+        description='a16z portfolio companies'
     ),
     
-    'builtin_best_places': SourceConfig(
-        name='Built In Best Places to Work',
+    'sequoia_portfolio': SourceConfig(
+        name='Sequoia Capital Portfolio',
         tier=1,
         priority=92,
-        url='https://builtin.com/awards',
-        description='Award-winning tech employers'
+        url='https://www.sequoiacap.com/companies/',
+        description='Sequoia portfolio companies'
     ),
     
-    'ats_curated_faang_plus': SourceConfig(
-        name='FAANG+ & Unicorns',
+    'product_hunt_trending': SourceConfig(
+        name='Product Hunt Companies',
         tier=1,
         priority=91,
-        description='Major tech companies known to use modern ATS'
+        url='https://www.producthunt.com/search?q=hiring',
+        description='Product Hunt companies hiring'
     ),
     
     'deloitte_fast500': SourceConfig(
         name='Deloitte Technology Fast 500',
         tier=1,
         priority=90,
-        url='https://www.deloitte.com/us/en/Industries/tmt/articles/fast500-winners.html',
+        url='https://www2.deloitte.com/us/en/pages/technology-media-and-telecommunications/articles/fast500-winners.html',
         description='Fastest-growing tech companies'
     ),
     
-    # ===== TIER 2: PUBLIC COMPANIES & ESTABLISHED FIRMS (89-80) =====
+    # ===== TIER 2: PUBLIC COMPANIES & ESTABLISHED FIRMS (89-75) =====
     'sec_tickers': SourceConfig(
         name='SEC Company Tickers',
         tier=2,
@@ -122,76 +150,132 @@ SOURCES = {
         description='S&P 500 constituents'
     ),
     
-    'fortune_500': SourceConfig(
-        name='Fortune 500',
-        tier=2,
-        priority=87,
-        url='https://fortune.com/ranking/fortune500/',
-        description='Largest US companies by revenue'
-    ),
-    
-    'inc_5000': SourceConfig(
-        name='Inc 5000',
-        tier=2,
-        priority=86,
-        url='https://www.inc.com/inc5000',
-        description='Fastest-growing private companies'
-    ),
-    
-    'forbes_global_2000': SourceConfig(
-        name='Forbes Global 2000',
-        tier=2,
-        priority=85,
-        url='https://www.forbes.com/lists/global2000/',
-        description='World\'s largest public companies'
-    ),
-    
     'nasdaq_100': SourceConfig(
         name='NASDAQ-100',
         tier=2,
-        priority=84,
+        priority=87,
         url='https://en.wikipedia.org/wiki/Nasdaq-100',
         description='Top 100 non-financial NASDAQ companies'
     ),
     
-    # ===== TIER 3: STARTUP ECOSYSTEMS & CURATED LISTS (79-70) =====
-    'crunchbase_samples': SourceConfig(
-        name='Crunchbase Dataset Samples',
-        tier=3,
-        priority=79,
-        url='https://raw.githubusercontent.com/luminati-io/Crunchbase-dataset-samples/main/crunchbase_companies_1001.json',
-        description='Crunchbase company samples'
+    'fortune_500_wikipedia': SourceConfig(
+        name='Fortune 500 (Wikipedia)',
+        tier=2,
+        priority=86,
+        url='https://en.wikipedia.org/wiki/Fortune_500',
+        description='Fortune 500 from Wikipedia'
     ),
     
-    'b2b_dataset_samples': SourceConfig(
-        name='B2B Business Dataset',
+    'inc_5000_wikipedia': SourceConfig(
+        name='Inc 5000 (Wikipedia)',
+        tier=2,
+        priority=85,
+        url='https://en.wikipedia.org/wiki/Inc._500',
+        description='Inc 5000 from Wikipedia'
+    ),
+    
+    'forbes_cloud_100': SourceConfig(
+        name='Forbes Cloud 100',
+        tier=2,
+        priority=84,
+        url='https://www.forbes.com/cloud100/',
+        description='Top private cloud companies'
+    ),
+    
+    'forbes_ai_50': SourceConfig(
+        name='Forbes AI 50',
+        tier=2,
+        priority=83,
+        url='https://www.forbes.com/lists/ai50/',
+        description='Most promising AI companies'
+    ),
+    
+    'crunchbase_unicorns': SourceConfig(
+        name='Crunchbase Unicorn List',
+        tier=2,
+        priority=82,
+        url='https://www.crunchbase.com/lists/unicorn-companies/97b0bf33-75c5-4eb0-9d3b-f04e0cfc8703/organization.companies',
+        description='Unicorn companies ($1B+ valuation)'
+    ),
+    
+    # ===== TIER 3: STARTUP ECOSYSTEMS & REMOTE COMPANIES (74-60) =====
+    'angellist_trending': SourceConfig(
+        name='AngelList/Wellfound Trending',
         tier=3,
-        priority=78,
-        url='https://raw.githubusercontent.com/luminati-io/B2B-business-dataset-samples/main/b2b_business_500.json',
-        description='B2B company samples'
+        priority=74,
+        url='https://wellfound.com/jobs',
+        description='Trending startups on Wellfound'
+    ),
+    
+    'we_work_remotely': SourceConfig(
+        name='We Work Remotely Companies',
+        tier=3,
+        priority=73,
+        url='https://weworkremotely.com/companies',
+        description='Remote-first companies'
+    ),
+    
+    'remote_co': SourceConfig(
+        name='Remote.co Companies',
+        tier=3,
+        priority=72,
+        url='https://remote.co/companies/',
+        description='Companies hiring remotely'
+    ),
+    
+    'flexjobs_companies': SourceConfig(
+        name='FlexJobs Top Companies',
+        tier=3,
+        priority=71,
+        url='https://www.flexjobs.com/blog/post/companies-hiring-remote-workers/',
+        description='Top remote hiring companies'
+    ),
+    
+    'builtin_companies': SourceConfig(
+        name='Built In Companies',
+        tier=3,
+        priority=70,
+        url='https://builtin.com/companies',
+        description='Tech companies by location'
+    ),
+    
+    'otta_companies': SourceConfig(
+        name='Otta Companies',
+        tier=3,
+        priority=69,
+        url='https://otta.com/companies',
+        description='Startup jobs platform companies'
     ),
     
     'more_than_faangm': SourceConfig(
         name='moreThanFAANGM List',
         tier=3,
-        priority=77,
+        priority=68,
         url='https://raw.githubusercontent.com/Kaustubh-Natuskar/moreThanFAANGM/master/README.md',
         description='400+ product companies beyond FAANG'
     ),
     
-    'github_ventures': SourceConfig(
-        name='GitHub Ventures Companies',
+    'github_trending_orgs': SourceConfig(
+        name='GitHub Trending Organizations',
         tier=3,
-        priority=76,
-        url='https://github.com/github/ventures',
-        description='GitHub-backed companies'
+        priority=67,
+        url='https://github.com/trending',
+        description='Trending GitHub organizations'
     ),
     
-    # ===== TIER 4: MASS EXPANSION (69-60) =====
+    'stackshare_trending': SourceConfig(
+        name='StackShare Companies',
+        tier=3,
+        priority=66,
+        url='https://stackshare.io/trending/tools',
+        description='Companies on StackShare'
+    ),
+    
+    # ===== TIER 4: MASS EXPANSION (65-50) =====
     'github_massive_list': SourceConfig(
         name='GitHub Massive Company List',
         tier=4,
-        priority=69,
+        priority=65,
         url='https://gist.githubusercontent.com/bojanbabic/f007ffd83ea20b1ac48812131325851e/raw/',
         description='Comprehensive company name list (10k+)',
         rate_limit=5.0
@@ -200,14 +284,31 @@ SOURCES = {
     'heavy_pint_business': SourceConfig(
         name='Heavy Pint Business Names',
         tier=4,
-        priority=68,
+        priority=64,
         url='https://raw.githubusercontent.com/9b/heavy_pint/master/lists/business-names.txt',
-        description='Business names dataset'
+        description='Business names dataset',
+        requires_special_handling=True
+    ),
+    
+    'wikipedia_tech_companies': SourceConfig(
+        name='Wikipedia Tech Companies',
+        tier=4,
+        priority=63,
+        url='https://en.wikipedia.org/wiki/List_of_technology_companies',
+        description='Comprehensive tech company list'
+    ),
+    
+    'wikipedia_unicorns': SourceConfig(
+        name='Wikipedia Unicorn List',
+        tier=4,
+        priority=62,
+        url='https://en.wikipedia.org/wiki/List_of_unicorn_startup_companies',
+        description='List of unicorn startups'
     ),
 }
 
 # ============================================================================
-# MANUALLY VERIFIED COMPANIES (TIER 1)
+# MANUALLY VERIFIED COMPANIES (Expanded)
 # ============================================================================
 
 MANUAL_VERIFIED_COMPANIES = [
@@ -227,79 +328,98 @@ MANUAL_VERIFIED_COMPANIES = [
     
     # FAANG+
     'Google', 'Apple', 'Meta', 'Amazon', 'Netflix', 'Microsoft', 'Tesla',
+    'Alphabet', 'Facebook', 'Instagram', 'WhatsApp', 'YouTube',
     
-    # Major unicorns & high-growth
+    # Major unicorns & high-growth (expanded)
     'Anthropic', 'OpenAI', 'Scale AI', 'Databricks', 'Canva', 'Figma',
     'Brex', 'Rippling', 'Plaid', 'Chime', 'Robinhood', 'Coinbase',
-    'Cruise', 'Aurora', 'Zoox', 'Waymo', 'Nuro',
+    'Cruise', 'Aurora', 'Zoox', 'Waymo', 'Nuro', 'TuSimple',
+    'Celonis', 'UiPath', 'Automation Anywhere', 'Blue Prism',
     
     # Major ATS-using companies
     'Airbnb', 'Reddit', 'Slack', 'Atlassian', 'Salesforce', 'Workday',
     'ServiceNow', 'Snowflake', 'MongoDB', 'Elastic', 'HashiCorp',
     'GitLab', 'GitHub', 'Vercel', 'Netlify', 'Heroku', 'Render',
+    'Supabase', 'PlanetScale', 'Neon', 'Railway',
     
     # Enterprise software
     'Asana', 'Monday.com', 'ClickUp', 'Airtable', 'Notion',
     'Zapier', 'Retool', 'Webflow', 'Bubble', 'Glide',
+    'Linear', 'Height', 'Coda', 'Superhuman', 'Front',
     
-    # Fintech
+    # Fintech (expanded)
     'Square', 'PayPal', 'Venmo', 'Cash App', 'Adyen', 'Marqeta',
-    'Checkout.com', 'Sezzle', 'Klarna', 'Afterpay',
+    'Checkout.com', 'Sezzle', 'Klarna', 'Afterpay', 'Zip',
+    'Revolut', 'N26', 'Monzo', 'Starling', 'Wise', 'Remitly',
     
     # Cloud/DevOps
     'Datadog', 'New Relic', 'PagerDuty', 'LaunchDarkly', 'Temporal',
     'Chronosphere', 'Observe', 'Honeycomb', 'Lightstep',
+    'CircleCI', 'Travis CI', 'Jenkins', 'Harness', 'Spinnaker',
     
     # Security
     'CrowdStrike', 'Okta', 'Auth0', 'OneLogin', 'Duo Security',
     'Snyk', 'Lacework', 'Wiz', 'Orca Security', 'Aqua Security',
+    'Palo Alto Networks', 'Fortinet', 'Check Point', 'Zscaler',
     
-    # AI/ML
+    # AI/ML (expanded)
     'Hugging Face', 'Cohere', 'Stability AI', 'Midjourney', 'Runway',
     'Character AI', 'Jasper', 'Copy.ai', 'Descript', 'Synthesia',
+    'Replicate', 'Weights & Biases', 'Roboflow', 'Landing AI',
     
     # E-commerce/Marketplaces
     'Shopify', 'BigCommerce', 'WooCommerce', 'Etsy', 'Poshmark',
     'StockX', 'GOAT', 'Faire', 'Ankorstore', 'Modalyst',
+    'Mercari', 'OfferUp', 'Depop', 'Grailed', 'Vinted',
     
     # Healthcare tech
     'Oscar Health', 'Devoted Health', 'Ro', 'Hims & Hers', 'Nurx',
     'Omada Health', 'Livongo', 'Teladoc', 'Amwell', 'MDLive',
+    'One Medical', 'Carbon Health', 'Forward', 'Thirty Madison',
     
     # Real estate tech
     'Zillow', 'Redfin', 'Opendoor', 'Offerpad', 'Compass',
     'Better.com', 'Divvy Homes', 'Arrived', 'Fundrise',
+    'Homelight', 'Knock', 'Flyhomes', 'Orchard',
     
     # EdTech
     'Coursera', 'Udemy', 'Udacity', 'Duolingo', 'Chegg',
     'Course Hero', 'Quizlet', 'Khan Academy', 'Skillshare',
+    'Masterclass', 'Pluralsight', 'DataCamp', 'Codecademy',
     
     # Gaming
     'Roblox', 'Epic Games', 'Riot Games', 'Supercell', 'King',
     'Zynga', 'Glu Mobile', 'Scopely', 'Machine Zone',
+    'Unity', 'Unreal', 'Roblox Corporation', 'Niantic',
     
     # Social/Content
     'Discord', 'Twitch', 'Substack', 'Patreon', 'OnlyFans',
     'Medium', 'Ghost', 'Beehiiv', 'ConvertKit',
+    'Clubhouse', 'Geneva', 'Slack', 'Telegram',
     
     # Climate/Sustainability
     'Rivian', 'Lucid Motors', 'Proterra', 'ChargePoint', 'Sunrun',
     'Sunnova', 'Enphase', 'SolarEdge', 'Stem', 'Fluence',
+    'Redwood Materials', 'Northvolt', 'QuantumScape',
+    
+    # Web3/Crypto
+    'Coinbase', 'Kraken', 'Gemini', 'BlockFi', 'Celsius',
+    'Alchemy', 'Infura', 'Chainlink', 'OpenSea', 'Magic Eden',
+    'Uniswap', 'Aave', 'Compound', 'MakerDAO',
 ]
 
 # ============================================================================
-# QUALITY FILTERS & UTILITIES
+# QUALITY FILTERS
 # ============================================================================
 
-# Companies to exclude (known bad actors, defunct, etc.)
 COMPANY_BLACKLIST = {
     'example', 'test', 'demo', 'sample', 'placeholder', 'acme',
     'company', 'corp', 'inc', 'llc', 'ltd', 'gmbh', 'sa', 'ag',
     'null', 'none', 'n/a', 'tbd', 'tba', 'unknown', 'unnamed',
     'private', 'confidential', 'stealth', 'startup',
+    'untitled', 'new company', 'my company', 'your company',
 }
 
-# Minimum quality thresholds
 MIN_COMPANY_NAME_LENGTH = 2
 MAX_COMPANY_NAME_LENGTH = 100
 MIN_WORD_COUNT = 1
@@ -310,53 +430,42 @@ def is_valid_company_name(name: str) -> bool:
     if not name:
         return False
     
-    # Length checks
     if len(name) < MIN_COMPANY_NAME_LENGTH or len(name) > MAX_COMPANY_NAME_LENGTH:
         return False
     
-    # Word count
     words = name.split()
     if len(words) < MIN_WORD_COUNT or len(words) > MAX_WORD_COUNT:
         return False
     
-    # Must contain at least one letter
     if not re.search(r'[a-zA-Z]', name):
         return False
     
-    # Check blacklist
     name_lower = name.lower()
     if name_lower in COMPANY_BLACKLIST:
         return False
     
-    # Check if only common suffixes
     words_lower = set(w.lower() for w in words)
     banned_words = {'inc', 'llc', 'corp', 'ltd', 'plc', 'gmbh', 'sa', 'ag', 'group', 'holdings', 'the'}
     if words_lower.issubset(banned_words):
         return False
     
-    # Reject obvious garbage
-    if re.match(r'^[\d\s\-_.]+$', name):  # Only numbers/punctuation
+    if re.match(r'^[\d\s\-_.]+$', name):
         return False
     
     if re.search(r'(test|example|sample|demo|placeholder)', name_lower):
         return False
     
-    # Reject URLs
     if re.search(r'(https?://|www\.)', name_lower):
         return False
     
     return True
 
 def normalize_company_name(name: str) -> str:
-    """Normalize company name for consistency"""
-    # Remove extra whitespace
+    """Normalize company name"""
     name = ' '.join(name.split())
-    
-    # Title case
     name = name.title()
     
-    # Fix common acronyms
-    acronyms = ['AI', 'ML', 'API', 'AWS', 'GCP', 'IBM', 'HP', 'IT', 'VR', 'AR', 'XR', 'IoT', 'SaaS', 'B2B', 'B2C']
+    acronyms = ['AI', 'ML', 'API', 'AWS', 'GCP', 'IBM', 'HP', 'IT', 'VR', 'AR', 'XR', 'IoT', 'SaaS', 'B2B', 'B2C', 'CEO', 'CTO', 'CFO']
     for acronym in acronyms:
         name = re.sub(rf'\b{acronym.lower()}\b', acronym, name, flags=re.IGNORECASE)
     
@@ -365,11 +474,8 @@ def normalize_company_name(name: str) -> str:
 def name_to_token(name: str) -> str:
     """Convert company name to URL-friendly token"""
     token = name.lower()
-    # Remove common suffixes
     token = re.sub(r'\s+(inc|llc|ltd|co|corp|corporation|gmbh|sa|ag|plc)\.?$', '', token, flags=re.IGNORECASE)
-    # Remove special characters
     token = re.sub(r'[^a-z0-9\s-]', '', token)
-    # Convert spaces to hyphens
     token = re.sub(r'[\s-]+', '-', token).strip('-')
     return token
 
@@ -401,20 +507,30 @@ class ExpansionStats:
         }
 
 class UltimateSeedExpander:
-    """Comprehensive seed expansion system"""
+    """Comprehensive seed expansion system v3.0"""
     
     def __init__(self, db: Optional[Database] = None):
         self.db = db or get_db()
         self.client: Optional[aiohttp.ClientSession] = None
         self.stats = ExpansionStats()
         self.seen_names: Set[str] = set()
-        self._semaphore = asyncio.Semaphore(5)  # Max concurrent requests
+        self._semaphore = asyncio.Semaphore(5)
     
     async def _get_client(self) -> aiohttp.ClientSession:
-        """Get or create aiohttp client session"""
+        """Get or create aiohttp client session with better headers"""
         if self.client is None or self.client.closed:
+            # Rotate user agents for better success rate
+            headers = {
+                'User-Agent': ua.random,
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+            }
             self.client = aiohttp.ClientSession(
-                headers={'User-Agent': ua.random},
+                headers=headers,
                 timeout=aiohttp.ClientTimeout(total=60),
                 connector=aiohttp.TCPConnector(limit=10, limit_per_host=5)
             )
@@ -425,8 +541,8 @@ class UltimateSeedExpander:
         if self.client and not self.client.closed:
             await self.client.close()
     
-    async def _fetch_text(self, url: str, retries: int = 3) -> Optional[str]:
-        """Fetch URL with retries and rate limiting"""
+    async def _fetch_text(self, url: str, retries: int = 3, encoding: str = 'utf-8') -> Optional[str]:
+        """Fetch URL with retries, rate limiting, and encoding handling"""
         client = await self._get_client()
         
         for attempt in range(retries):
@@ -434,11 +550,19 @@ class UltimateSeedExpander:
                 async with self._semaphore:
                     async with client.get(url, allow_redirects=True) as resp:
                         if resp.status == 200:
-                            return await resp.text()
-                        elif resp.status == 429:  # Rate limited
+                            # Handle different encodings
+                            try:
+                                return await resp.text(encoding=encoding)
+                            except UnicodeDecodeError:
+                                # Try latin-1 as fallback
+                                return await resp.text(encoding='latin-1')
+                        elif resp.status == 429:
                             wait = int(resp.headers.get('Retry-After', 60))
                             logger.warning(f"Rate limited, waiting {wait}s")
                             await asyncio.sleep(wait)
+                        elif resp.status == 403:
+                            logger.warning(f"HTTP 403 (Forbidden) for {url} - May need authentication")
+                            return None
                         else:
                             logger.warning(f"HTTP {resp.status} for {url}")
             except asyncio.TimeoutError:
@@ -466,23 +590,17 @@ class UltimateSeedExpander:
         processed = []
         
         for name in raw_names:
-            # Clean and validate
             clean = normalize_company_name(name)
             
             if not is_valid_company_name(clean):
                 continue
             
-            # Check for duplicates (case-insensitive)
             name_key = clean.lower()
             if name_key in self.seen_names:
                 continue
             
             self.seen_names.add(name_key)
-            
-            # Generate token
             token = name_to_token(clean)
-            
-            # Add to results
             processed.append((clean, token, config.name, config.tier))
         
         return processed
@@ -496,7 +614,7 @@ class UltimateSeedExpander:
             logger.info(f"Inserted batch: {inserted} seeds")
     
     # ========================================================================
-    # TIER 1 SOURCES
+    # TIER 1 SOURCES (NEW & FIXED)
     # ========================================================================
     
     async def _expand_manual_verified(self, config: SourceConfig) -> List[str]:
@@ -504,8 +622,54 @@ class UltimateSeedExpander:
         logger.info(f"✅ Loading {len(MANUAL_VERIFIED_COMPANIES)} manually verified companies")
         return MANUAL_VERIFIED_COMPANIES
     
+    async def _expand_greenhouse_customers(self, config: SourceConfig) -> List[str]:
+        """Greenhouse public customer list"""
+        logger.info(f"🌿 Expanding Greenhouse customers from {config.url}")
+        html = await self._fetch_text(config.url)
+        if not html:
+            return []
+        
+        soup = BeautifulSoup(html, 'html.parser')
+        companies = set()
+        
+        # Look for customer logos and names
+        for img in soup.find_all('img', alt=True):
+            if img['alt'] and 'logo' not in img['alt'].lower():
+                companies.add(img['alt'])
+        
+        # Look for company mentions in text
+        for div in soup.find_all('div', class_=re.compile(r'customer|client|company')):
+            text = div.get_text(strip=True)
+            if text and len(text) < 50:
+                companies.add(text)
+        
+        await asyncio.sleep(random.uniform(3, 6))
+        return list(companies)
+    
+    async def _expand_lever_customers(self, config: SourceConfig) -> List[str]:
+        """Lever public customer list"""
+        logger.info(f"⚙️ Expanding Lever customers from {config.url}")
+        html = await self._fetch_text(config.url)
+        if not html:
+            return []
+        
+        soup = BeautifulSoup(html, 'html.parser')
+        companies = set()
+        
+        for img in soup.find_all('img', alt=True):
+            if img['alt']:
+                companies.add(img['alt'])
+        
+        for h3 in soup.find_all('h3'):
+            text = h3.get_text(strip=True)
+            if text and len(text) < 50:
+                companies.add(text)
+        
+        await asyncio.sleep(random.uniform(3, 6))
+        return list(companies)
+    
     async def _expand_yc_directory(self, config: SourceConfig) -> List[str]:
-        """Y Combinator companies directory"""
+        """Y Combinator companies directory - IMPROVED"""
         logger.info(f"🚀 Expanding YC companies from {config.url}")
         html = await self._fetch_text(config.url)
         if not html:
@@ -514,19 +678,23 @@ class UltimateSeedExpander:
         soup = BeautifulSoup(html, 'html.parser')
         companies = set()
         
-        # YC page structure: look for company links
+        # Multiple strategies for YC page
         for a in soup.find_all('a', href=re.compile(r'/companies/')):
             text = a.get_text(strip=True)
-            if text and len(text) > 2:
+            if text and len(text) > 2 and len(text) < 50:
                 companies.add(text)
         
-        # Also look for company names in specific divs
         for div in soup.find_all('div', class_=re.compile(r'company')):
             text = div.get_text(strip=True)
-            if text and len(text) > 2:
+            if text and len(text) > 2 and len(text) < 50:
                 companies.add(text)
         
-        await asyncio.sleep(random.uniform(2, 5))
+        for h3 in soup.find_all(['h3', 'h4']):
+            text = h3.get_text(strip=True)
+            if text and len(text) > 2 and len(text) < 50:
+                companies.add(text)
+        
+        await asyncio.sleep(random.uniform(4, 8))
         return list(companies)
     
     async def _expand_yc_top_companies(self, config: SourceConfig) -> List[str]:
@@ -539,24 +707,17 @@ class UltimateSeedExpander:
         soup = BeautifulSoup(html, 'html.parser')
         companies = set()
         
-        for h3 in soup.find_all('h3'):
+        for h3 in soup.find_all(['h2', 'h3', 'h4']):
             text = h3.get_text(strip=True)
             if text:
                 companies.add(text)
         
-        await asyncio.sleep(random.uniform(2, 5))
+        await asyncio.sleep(random.uniform(3, 6))
         return list(companies)
     
-    async def _expand_techcrunch_startups(self, config: SourceConfig) -> List[str]:
-        """TechCrunch startup database"""
-        logger.info("📰 Expanding TechCrunch startups")
-        # TechCrunch requires more sophisticated scraping
-        # This is a placeholder - you may need their API or specific scraping
-        return []
-    
-    async def _expand_builtin_best_places(self, config: SourceConfig) -> List[str]:
-        """Built In best places to work"""
-        logger.info("🏆 Expanding Built In awards")
+    async def _expand_yc_work_at_startup(self, config: SourceConfig) -> List[str]:
+        """YC Work at a Startup companies"""
+        logger.info(f"💼 Expanding YC Work at a Startup")
         html = await self._fetch_text(config.url)
         if not html:
             return []
@@ -572,14 +733,81 @@ class UltimateSeedExpander:
         await asyncio.sleep(random.uniform(3, 6))
         return list(companies)
     
-    async def _expand_ats_curated_faang_plus(self, config: SourceConfig) -> List[str]:
-        """FAANG+ and major tech companies"""
-        logger.info("🌟 Loading FAANG+ companies")
-        # These are already in MANUAL_VERIFIED_COMPANIES
-        return []
+    async def _expand_techstars_portfolio(self, config: SourceConfig) -> List[str]:
+        """Techstars portfolio companies"""
+        logger.info(f"⭐ Expanding Techstars portfolio")
+        html = await self._fetch_text(config.url)
+        if not html:
+            return []
+        
+        soup = BeautifulSoup(html, 'html.parser')
+        companies = set()
+        
+        for div in soup.find_all('div', class_=re.compile(r'company|portfolio')):
+            for h in div.find_all(['h2', 'h3', 'h4']):
+                text = h.get_text(strip=True)
+                if text:
+                    companies.add(text)
+        
+        await asyncio.sleep(random.uniform(3, 6))
+        return list(companies)
+    
+    async def _expand_a16z_portfolio(self, config: SourceConfig) -> List[str]:
+        """a16z portfolio companies"""
+        logger.info(f"💰 Expanding a16z portfolio")
+        html = await self._fetch_text(config.url)
+        if not html:
+            return []
+        
+        soup = BeautifulSoup(html, 'html.parser')
+        companies = set()
+        
+        for a in soup.find_all('a'):
+            text = a.get_text(strip=True)
+            if text and len(text) > 2 and len(text) < 50:
+                companies.add(text)
+        
+        await asyncio.sleep(random.uniform(3, 6))
+        return list(companies)
+    
+    async def _expand_sequoia_portfolio(self, config: SourceConfig) -> List[str]:
+        """Sequoia portfolio companies"""
+        logger.info(f"🌲 Expanding Sequoia portfolio")
+        html = await self._fetch_text(config.url)
+        if not html:
+            return []
+        
+        soup = BeautifulSoup(html, 'html.parser')
+        companies = set()
+        
+        for div in soup.find_all('div', class_=re.compile(r'portfolio|company')):
+            text = div.get_text(strip=True)
+            if text and len(text) < 50:
+                companies.add(text)
+        
+        await asyncio.sleep(random.uniform(3, 6))
+        return list(companies)
+    
+    async def _expand_product_hunt_trending(self, config: SourceConfig) -> List[str]:
+        """Product Hunt companies"""
+        logger.info(f"🔍 Expanding Product Hunt companies")
+        html = await self._fetch_text(config.url)
+        if not html:
+            return []
+        
+        soup = BeautifulSoup(html, 'html.parser')
+        companies = set()
+        
+        for a in soup.find_all('a', href=re.compile(r'/posts/')):
+            text = a.get_text(strip=True)
+            if text:
+                companies.add(text)
+        
+        await asyncio.sleep(random.uniform(3, 6))
+        return list(companies)
     
     async def _expand_deloitte_fast500(self, config: SourceConfig) -> List[str]:
-        """Deloitte Fast 500"""
+        """Deloitte Fast 500 - FIXED URL"""
         logger.info(f"⚡ Expanding Deloitte Fast 500 from {config.url}")
         html = await self._fetch_text(config.url)
         if not html:
@@ -588,18 +816,16 @@ class UltimateSeedExpander:
         soup = BeautifulSoup(html, 'html.parser')
         companies = set()
         
-        # Look for table data
         for td in soup.find_all('td'):
             text = td.get_text(strip=True)
-            # Skip rank numbers
-            if text and not text.isdigit():
+            if text and not text.isdigit() and len(text) > 2:
                 companies.add(text)
         
         await asyncio.sleep(random.uniform(3, 6))
         return list(companies)
     
     # ========================================================================
-    # TIER 2 SOURCES
+    # TIER 2 SOURCES (FIXED & NEW)
     # ========================================================================
     
     async def _expand_sec_tickers(self, config: SourceConfig) -> List[str]:
@@ -627,79 +853,17 @@ class UltimateSeedExpander:
         soup = BeautifulSoup(html, 'html.parser')
         companies = []
         
-        # Find the constituents table
         table = soup.find('table', {'id': 'constituents'})
         if table:
-            for row in table.find_all('tr')[1:]:  # Skip header
+            for row in table.find_all('tr')[1:]:
                 cells = row.find_all('td')
                 if cells and len(cells) > 1:
-                    # Company name is usually in second column
                     name = cells[1].get_text(strip=True)
                     if name:
                         companies.append(name)
         
         await asyncio.sleep(random.uniform(2, 4))
         return companies
-    
-    async def _expand_fortune_500(self, config: SourceConfig) -> List[str]:
-        """Fortune 500 companies"""
-        logger.info("💼 Expanding Fortune 500")
-        html = await self._fetch_text(config.url)
-        if not html:
-            return []
-        
-        soup = BeautifulSoup(html, 'html.parser')
-        companies = set()
-        
-        # Fortune uses various structures
-        for h3 in soup.find_all('h3'):
-            text = h3.get_text(strip=True)
-            if text:
-                companies.add(text)
-        
-        for a in soup.find_all('a', href=re.compile(r'/company/')):
-            text = a.get_text(strip=True)
-            if text:
-                companies.add(text)
-        
-        await asyncio.sleep(random.uniform(3, 6))
-        return list(companies)
-    
-    async def _expand_inc_5000(self, config: SourceConfig) -> List[str]:
-        """Inc 5000 companies"""
-        logger.info("📈 Expanding Inc 5000")
-        html = await self._fetch_text(config.url)
-        if not html:
-            return []
-        
-        soup = BeautifulSoup(html, 'html.parser')
-        companies = set()
-        
-        for div in soup.find_all('div', class_=re.compile(r'company')):
-            text = div.get_text(strip=True)
-            if text:
-                companies.add(text)
-        
-        await asyncio.sleep(random.uniform(3, 6))
-        return list(companies)
-    
-    async def _expand_forbes_global_2000(self, config: SourceConfig) -> List[str]:
-        """Forbes Global 2000"""
-        logger.info("🌍 Expanding Forbes Global 2000")
-        html = await self._fetch_text(config.url)
-        if not html:
-            return []
-        
-        soup = BeautifulSoup(html, 'html.parser')
-        companies = set()
-        
-        for td in soup.find_all('td'):
-            text = td.get_text(strip=True)
-            if text and not text.isdigit():
-                companies.add(text)
-        
-        await asyncio.sleep(random.uniform(3, 6))
-        return list(companies)
     
     async def _expand_nasdaq_100(self, config: SourceConfig) -> List[str]:
         """NASDAQ-100 companies"""
@@ -711,57 +875,214 @@ class UltimateSeedExpander:
         soup = BeautifulSoup(html, 'html.parser')
         companies = []
         
-        # Find the components table
-        for table in soup.find_all('table'):
-            if 'component' in str(table).lower():
-                for row in table.find_all('tr')[1:]:
-                    cells = row.find_all('td')
-                    if cells and len(cells) > 1:
-                        name = cells[1].get_text(strip=True)
-                        if name:
-                            companies.append(name)
+        for table in soup.find_all('table', class_='wikitable'):
+            for row in table.find_all('tr')[1:]:
+                cells = row.find_all('td')
+                if cells and len(cells) > 1:
+                    name = cells[1].get_text(strip=True)
+                    if name:
+                        companies.append(name)
         
         await asyncio.sleep(random.uniform(2, 4))
         return companies
     
-    # ========================================================================
-    # TIER 3 SOURCES
-    # ========================================================================
-    
-    async def _expand_crunchbase_samples(self, config: SourceConfig) -> List[str]:
-        """Crunchbase dataset samples"""
-        logger.info("💎 Expanding Crunchbase samples")
-        data = await self._fetch_json(config.url)
-        if not data:
+    async def _expand_fortune_500_wikipedia(self, config: SourceConfig) -> List[str]:
+        """Fortune 500 from Wikipedia - ALTERNATIVE SOURCE"""
+        logger.info("💼 Expanding Fortune 500 (Wikipedia)")
+        html = await self._fetch_text(config.url)
+        if not html:
             return []
         
+        soup = BeautifulSoup(html, 'html.parser')
         companies = []
-        for item in data:
-            if isinstance(item, dict) and 'company_name' in item:
-                companies.append(item['company_name'])
-            elif isinstance(item, dict) and 'name' in item:
-                companies.append(item['name'])
+        
+        for table in soup.find_all('table', class_='wikitable'):
+            for row in table.find_all('tr')[1:]:
+                cells = row.find_all('td')
+                if cells and len(cells) > 1:
+                    name = cells[1].get_text(strip=True)
+                    if name:
+                        companies.append(name)
         
         await asyncio.sleep(random.uniform(2, 4))
         return companies
     
-    async def _expand_b2b_dataset_samples(self, config: SourceConfig) -> List[str]:
-        """B2B business dataset"""
-        logger.info("🏢 Expanding B2B dataset")
-        data = await self._fetch_json(config.url)
-        if not data:
+    async def _expand_inc_5000_wikipedia(self, config: SourceConfig) -> List[str]:
+        """Inc 5000 from Wikipedia - ALTERNATIVE SOURCE"""
+        logger.info("📈 Expanding Inc 5000 (Wikipedia)")
+        html = await self._fetch_text(config.url)
+        if not html:
             return []
         
-        companies = []
-        for item in data:
-            if isinstance(item, dict) and 'company_name' in item:
-                companies.append(item['company_name'])
+        soup = BeautifulSoup(html, 'html.parser')
+        companies = set()
+        
+        for a in soup.find_all('a'):
+            text = a.get_text(strip=True)
+            if text and len(text) > 2 and len(text) < 50:
+                companies.add(text)
         
         await asyncio.sleep(random.uniform(2, 4))
-        return companies
+        return list(companies)
+    
+    async def _expand_forbes_cloud_100(self, config: SourceConfig) -> List[str]:
+        """Forbes Cloud 100"""
+        logger.info("☁️ Expanding Forbes Cloud 100")
+        html = await self._fetch_text(config.url)
+        if not html:
+            return []
+        
+        soup = BeautifulSoup(html, 'html.parser')
+        companies = set()
+        
+        for div in soup.find_all('div', class_=re.compile(r'company|org')):
+            text = div.get_text(strip=True)
+            if text and len(text) < 50:
+                companies.add(text)
+        
+        await asyncio.sleep(random.uniform(3, 6))
+        return list(companies)
+    
+    async def _expand_forbes_ai_50(self, config: SourceConfig) -> List[str]:
+        """Forbes AI 50"""
+        logger.info("🤖 Expanding Forbes AI 50")
+        html = await self._fetch_text(config.url)
+        if not html:
+            return []
+        
+        soup = BeautifulSoup(html, 'html.parser')
+        companies = set()
+        
+        for h3 in soup.find_all(['h2', 'h3', 'h4']):
+            text = h3.get_text(strip=True)
+            if text:
+                companies.add(text)
+        
+        await asyncio.sleep(random.uniform(3, 6))
+        return list(companies)
+    
+    async def _expand_crunchbase_unicorns(self, config: SourceConfig) -> List[str]:
+        """Crunchbase unicorn list"""
+        logger.info("🦄 Expanding Crunchbase unicorns")
+        # This would require Crunchbase API access
+        # Return empty for now
+        return []
+    
+    # ========================================================================
+    # TIER 3 SOURCES (NEW)
+    # ========================================================================
+    
+    async def _expand_angellist_trending(self, config: SourceConfig) -> List[str]:
+        """AngelList/Wellfound trending"""
+        logger.info("👼 Expanding Wellfound companies")
+        html = await self._fetch_text(config.url)
+        if not html:
+            return []
+        
+        soup = BeautifulSoup(html, 'html.parser')
+        companies = set()
+        
+        for a in soup.find_all('a', href=re.compile(r'/company/')):
+            text = a.get_text(strip=True)
+            if text:
+                companies.add(text)
+        
+        await asyncio.sleep(random.uniform(3, 6))
+        return list(companies)
+    
+    async def _expand_we_work_remotely(self, config: SourceConfig) -> List[str]:
+        """We Work Remotely companies"""
+        logger.info("🌎 Expanding We Work Remotely")
+        html = await self._fetch_text(config.url)
+        if not html:
+            return []
+        
+        soup = BeautifulSoup(html, 'html.parser')
+        companies = set()
+        
+        for a in soup.find_all('a'):
+            text = a.get_text(strip=True)
+            if text and len(text) < 50:
+                companies.add(text)
+        
+        await asyncio.sleep(random.uniform(3, 6))
+        return list(companies)
+    
+    async def _expand_remote_co(self, config: SourceConfig) -> List[str]:
+        """Remote.co companies"""
+        logger.info("💻 Expanding Remote.co")
+        html = await self._fetch_text(config.url)
+        if not html:
+            return []
+        
+        soup = BeautifulSoup(html, 'html.parser')
+        companies = set()
+        
+        for div in soup.find_all('div', class_=re.compile(r'company')):
+            text = div.get_text(strip=True)
+            if text and len(text) < 50:
+                companies.add(text)
+        
+        await asyncio.sleep(random.uniform(3, 6))
+        return list(companies)
+    
+    async def _expand_flexjobs_companies(self, config: SourceConfig) -> List[str]:
+        """FlexJobs companies"""
+        logger.info("🏠 Expanding FlexJobs")
+        html = await self._fetch_text(config.url)
+        if not html:
+            return []
+        
+        soup = BeautifulSoup(html, 'html.parser')
+        companies = set()
+        
+        for li in soup.find_all('li'):
+            text = li.get_text(strip=True)
+            # Company names are often in list items
+            if text and len(text) < 50 and not text.startswith(('The', 'A ', 'An ')):
+                companies.add(text)
+        
+        await asyncio.sleep(random.uniform(3, 6))
+        return list(companies)
+    
+    async def _expand_builtin_companies(self, config: SourceConfig) -> List[str]:
+        """Built In companies"""
+        logger.info("🏗️ Expanding Built In")
+        html = await self._fetch_text(config.url)
+        if not html:
+            return []
+        
+        soup = BeautifulSoup(html, 'html.parser')
+        companies = set()
+        
+        for a in soup.find_all('a', href=re.compile(r'/company/')):
+            text = a.get_text(strip=True)
+            if text:
+                companies.add(text)
+        
+        await asyncio.sleep(random.uniform(3, 6))
+        return list(companies)
+    
+    async def _expand_otta_companies(self, config: SourceConfig) -> List[str]:
+        """Otta companies"""
+        logger.info("🎯 Expanding Otta")
+        html = await self._fetch_text(config.url)
+        if not html:
+            return []
+        
+        soup = BeautifulSoup(html, 'html.parser')
+        companies = set()
+        
+        for h3 in soup.find_all(['h2', 'h3']):
+            text = h3.get_text(strip=True)
+            if text:
+                companies.add(text)
+        
+        await asyncio.sleep(random.uniform(3, 6))
+        return list(companies)
     
     async def _expand_more_than_faangm(self, config: SourceConfig) -> List[str]:
-        """moreThanFAANGM list"""
+        """moreThanFAANGM list - FIXED PARSING"""
         logger.info("🚀 Expanding moreThanFAANGM")
         text = await self._fetch_text(config.url)
         if not text:
@@ -769,30 +1090,63 @@ class UltimateSeedExpander:
         
         companies = set()
         
-        # Parse markdown - look for company names
-        # Usually in format: - [Company Name](link) or - Company Name
+        # Parse markdown - improved regex
         for line in text.split('\n'):
-            # Match markdown links
-            match = re.search(r'\[([^\]]+)\]', line)
-            if match:
-                companies.add(match.group(1))
-            # Match bullet points
-            elif line.strip().startswith('-'):
-                name = line.strip('- ').strip()
-                if name and not name.startswith('['):
-                    companies.add(name)
+            # Match markdown links: [Company Name](url)
+            matches = re.findall(r'\[([^\]]+)\]\([^\)]+\)', line)
+            for match in matches:
+                if match and len(match) > 2 and len(match) < 50:
+                    companies.add(match)
+            
+            # Match bullet points with company names
+            if line.strip().startswith(('-', '*', '+')):
+                # Remove bullet and links
+                clean_line = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', line)
+                clean_line = clean_line.strip('- *+').strip()
+                if clean_line and len(clean_line) > 2 and len(clean_line) < 50:
+                    companies.add(clean_line)
         
         await asyncio.sleep(random.uniform(2, 4))
         return list(companies)
     
-    async def _expand_github_ventures(self, config: SourceConfig) -> List[str]:
-        """GitHub ventures companies"""
-        logger.info("🐙 Expanding GitHub ventures")
-        # This may require GitHub API access
-        return []
+    async def _expand_github_trending_orgs(self, config: SourceConfig) -> List[str]:
+        """GitHub trending organizations"""
+        logger.info("🐙 Expanding GitHub trending orgs")
+        html = await self._fetch_text(config.url)
+        if not html:
+            return []
+        
+        soup = BeautifulSoup(html, 'html.parser')
+        companies = set()
+        
+        for a in soup.find_all('a', href=re.compile(r'^/[^/]+$')):
+            text = a.get_text(strip=True)
+            if text and len(text) > 2:
+                companies.add(text)
+        
+        await asyncio.sleep(random.uniform(3, 6))
+        return list(companies)
+    
+    async def _expand_stackshare_trending(self, config: SourceConfig) -> List[str]:
+        """StackShare companies"""
+        logger.info("📚 Expanding StackShare")
+        html = await self._fetch_text(config.url)
+        if not html:
+            return []
+        
+        soup = BeautifulSoup(html, 'html.parser')
+        companies = set()
+        
+        for div in soup.find_all('div', class_=re.compile(r'company')):
+            text = div.get_text(strip=True)
+            if text and len(text) < 50:
+                companies.add(text)
+        
+        await asyncio.sleep(random.uniform(3, 6))
+        return list(companies)
     
     # ========================================================================
-    # TIER 4 SOURCES (MASS EXPANSION)
+    # TIER 4 SOURCES (FIXED)
     # ========================================================================
     
     async def _expand_github_massive_list(self, config: SourceConfig) -> List[str]:
@@ -813,9 +1167,10 @@ class UltimateSeedExpander:
         return companies
     
     async def _expand_heavy_pint_business(self, config: SourceConfig) -> List[str]:
-        """Heavy Pint business names"""
+        """Heavy Pint business names - FIXED ENCODING"""
         logger.info("📄 Expanding Heavy Pint business names")
-        text = await self._fetch_text(config.url)
+        # Try latin-1 encoding instead of utf-8
+        text = await self._fetch_text(config.url, encoding='latin-1')
         if not text:
             return []
         
@@ -828,6 +1183,48 @@ class UltimateSeedExpander:
         await asyncio.sleep(random.uniform(3, 6))
         return companies
     
+    async def _expand_wikipedia_tech_companies(self, config: SourceConfig) -> List[str]:
+        """Wikipedia tech companies list"""
+        logger.info("🖥️ Expanding Wikipedia tech companies")
+        html = await self._fetch_text(config.url)
+        if not html:
+            return []
+        
+        soup = BeautifulSoup(html, 'html.parser')
+        companies = set()
+        
+        for table in soup.find_all('table', class_='wikitable'):
+            for row in table.find_all('tr')[1:]:
+                cells = row.find_all('td')
+                if cells:
+                    name = cells[0].get_text(strip=True)
+                    if name:
+                        companies.add(name)
+        
+        await asyncio.sleep(random.uniform(2, 4))
+        return list(companies)
+    
+    async def _expand_wikipedia_unicorns(self, config: SourceConfig) -> List[str]:
+        """Wikipedia unicorn startups"""
+        logger.info("🦄 Expanding Wikipedia unicorn list")
+        html = await self._fetch_text(config.url)
+        if not html:
+            return []
+        
+        soup = BeautifulSoup(html, 'html.parser')
+        companies = []
+        
+        for table in soup.find_all('table', class_='wikitable'):
+            for row in table.find_all('tr')[1:]:
+                cells = row.find_all('td')
+                if cells and len(cells) > 1:
+                    name = cells[0].get_text(strip=True)
+                    if name:
+                        companies.append(name)
+        
+        await asyncio.sleep(random.uniform(2, 4))
+        return companies
+    
     # ========================================================================
     # MAIN EXPANSION LOGIC
     # ========================================================================
@@ -838,7 +1235,6 @@ class UltimateSeedExpander:
         logger.info(f"Processing: {config.name} (Tier {config.tier}, Priority {config.priority})")
         logger.info(f"Description: {config.description}")
         
-        # Find expansion method
         method_name = f'_expand_{source_name}'
         method = getattr(self, method_name, None)
         
@@ -847,7 +1243,6 @@ class UltimateSeedExpander:
             return 0
         
         try:
-            # Fetch raw names
             raw_names = await method(config)
             self.stats.total_raw += len(raw_names)
             
@@ -857,7 +1252,6 @@ class UltimateSeedExpander:
             
             logger.info(f"📥 Retrieved {len(raw_names)} raw company names")
             
-            # Process and validate
             processed = self._process_names(raw_names, config)
             self.stats.total_processed += len(processed)
             
@@ -867,13 +1261,11 @@ class UltimateSeedExpander:
             
             logger.info(f"✅ Validated {len(processed)} unique companies")
             
-            # Insert to database
             self._batch_insert(processed)
             
             logger.info(f"💾 Inserted {len(processed)} companies from {config.name}")
             self.stats.sources_processed += 1
             
-            # Rate limiting
             await asyncio.sleep(config.rate_limit)
             
             return len(processed)
@@ -886,13 +1278,12 @@ class UltimateSeedExpander:
     async def _run_expansion(self, *tiers: int, max_sources: Optional[int] = None) -> Dict[str, int]:
         """Run expansion for specified tiers"""
         logger.info("=" * 80)
-        logger.info("🚀 STARTING SEED EXPANSION")
+        logger.info("🚀 STARTING SEED EXPANSION v3.0")
         logger.info("=" * 80)
         logger.info(f"Tiers: {tiers}")
         logger.info(f"Timestamp: {datetime.now().isoformat()}")
         logger.info("=" * 80)
         
-        # Filter and sort sources
         active_sources = [
             (config.priority, name, config)
             for name, config in SOURCES.items()
@@ -905,13 +1296,11 @@ class UltimateSeedExpander:
         
         logger.info(f"📋 Processing {len(active_sources)} sources")
         
-        # Process sources
         results = {}
         for priority, name, config in active_sources:
             count = await self._run_source(name, config)
             results[name] = count
         
-        # Finalize stats
         self.stats.end_time = datetime.now()
         self.stats.total_unique = len(self.seen_names)
         
