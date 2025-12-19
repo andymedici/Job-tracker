@@ -288,12 +288,24 @@ def scheduled_tier2_expansion():
         collection_state.update(running=False, current_progress=100)
         db.release_advisory_lock('scheduled_tier2_expansion')
 
-# Register scheduled jobs
-refresh_interval = int(os.getenv('REFRESH_INTERVAL_HOURS', 6))
-scheduler.add_job(scheduled_refresh, CronTrigger(hour=f'*/{refresh_interval}'), id='refresh', replace_existing=True)
-scheduler.add_job(scheduled_discovery, CronTrigger(day_of_week='sun', hour=2), id='discovery', replace_existing=True)
+# Register scheduled jobs - UPDATED SCHEDULE
+# Refresh: Once per day at 6 AM
+scheduler.add_job(scheduled_refresh, CronTrigger(hour=6), id='refresh', replace_existing=True)
+
+# Discovery: DAILY at 7 AM (for first 6 months, then can reduce)
+scheduler.add_job(scheduled_discovery, CronTrigger(hour=7), id='discovery', replace_existing=True)
+
+# Tier 1 Seed Expansion: Weekly on Sunday at 3 AM
 scheduler.add_job(scheduled_tier1_expansion, CronTrigger(day_of_week='sun', hour=3), id='tier1_expansion', replace_existing=True)
+
+# Tier 2 Seed Expansion: Monthly on 1st at 4 AM
 scheduler.add_job(scheduled_tier2_expansion, CronTrigger(day=1, hour=4), id='tier2_expansion', replace_existing=True)
+
+logger.info("📅 Scheduler configured:")
+logger.info("   - Refresh: Daily at 6:00 AM UTC")
+logger.info("   - Discovery: Daily at 7:00 AM UTC")
+logger.info("   - Tier 1 Expansion: Weekly (Sunday 3:00 AM UTC)")
+logger.info("   - Tier 2 Expansion: Monthly (1st at 4:00 AM UTC)")
 
 # ============================================================================
 # Web Routes (Public)
@@ -765,6 +777,54 @@ def api_job_detail(job_id):
 # ============================================================================
 # API Routes - Seeds Management
 # ============================================================================
+
+@app.route('/api/seeds/manual', methods=['POST'])
+@limiter.limit(RATE_LIMITS['write'])
+@require_admin_key
+def api_manual_seed():
+    """Submit a manual seed company (Admin only)"""
+    data = request.get_json() or {}
+    
+    company_name = data.get('company_name', '').strip()
+    website_url = data.get('website_url', '').strip()
+    ats_hint = data.get('ats_hint', '').strip().lower()
+    
+    if not company_name:
+        return jsonify({'error': 'Company name is required'}), 400
+    
+    try:
+        db = get_db()
+        
+        # Add as manual seed
+        added = db.add_manual_seed(company_name, website_url=website_url)
+        
+        if not added:
+            return jsonify({'error': 'Company already exists in seeds or tracked companies'}), 409
+        
+        # If website URL provided, optionally test immediately
+        if website_url and data.get('test_immediately', False):
+            # Trigger immediate test in background
+            def test_seed():
+                collector = JobIntelCollector()
+                asyncio.run(collector.test_single_company(company_name, website_url, ats_hint))
+            
+            threading.Thread(target=test_seed, daemon=True).start()
+            
+            return jsonify({
+                'success': True,
+                'message': f'Added {company_name} and testing immediately',
+                'company_name': company_name
+            }), 201
+        
+        return jsonify({
+            'success': True,
+            'message': f'Added {company_name} to seed database',
+            'company_name': company_name
+        }), 201
+        
+    except Exception as e:
+        logger.error(f"Error adding manual seed: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/seeds', methods=['GET'])
 @limiter.limit(RATE_LIMITS['authenticated_read'])
