@@ -1,6 +1,5 @@
 """
 Job Intelligence Platform - Production Flask Application
-Version 2.0 - Enterprise Grade with Complete Security
 """
 import os
 import asyncio
@@ -16,7 +15,7 @@ from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.triggers.cron import CronTrigger
 
-# Import application modules
+# Import application modules (NO 'app.' prefix since files are in root)
 from database import get_db
 from collector import run_collection, run_refresh, JobIntelCollector
 from market_intel import run_daily_maintenance
