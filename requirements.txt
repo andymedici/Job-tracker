@@ -4,6 +4,8 @@
 flask==3.0.0
 waitress==2.1.2
 
+gunicorn==21.2.0
+
 # Database
 psycopg2-binary==2.9.9
 sqlalchemy==2.0.23
