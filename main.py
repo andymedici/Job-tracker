@@ -44,6 +44,36 @@ app = Flask(__name__, template_folder='../templates')
 app.config['JSON_SORT_KEYS'] = False
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max request size
 
+# After these lines:
+# app = Flask(__name__)
+# CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+# ADD THIS:
+import os
+import sys
+
+# Force immediate template check
+print("=" * 80, file=sys.stderr)
+print("🔍 TEMPLATE CHECK ON STARTUP", file=sys.stderr)
+print("=" * 80, file=sys.stderr)
+print(f"Working dir: {os.getcwd()}", file=sys.stderr)
+print(f"Root path: {app.root_path}", file=sys.stderr)
+print(f"Template folder: {app.template_folder}", file=sys.stderr)
+
+template_dir = os.path.join(app.root_path, 'templates')
+if os.path.exists(template_dir):
+    files = os.listdir(template_dir)
+    print(f"✅ Templates found: {files}", file=sys.stderr)
+else:
+    print(f"❌ NO TEMPLATES AT: {template_dir}", file=sys.stderr)
+    print(f"Directory contents: {os.listdir(app.root_path)}", file=sys.stderr)
+    # Try to find templates anywhere
+    for root, dirs, files in os.walk('/app'):
+        if 'dashboard.html' in files:
+            print(f"Found dashboard.html at: {root}", file=sys.stderr)
+
+print("=" * 80, file=sys.stderr)
+
 # CORS Configuration
 CORS(app, resources={
     r"/api/*": {
