@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jobs Browser - Job Intelligence Platform</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .job-card {
+            transition: all 0.2s;
+        }
+        .job-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+        .filter-active {
+            background-color: #3b82f6;
+            color: white;
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <!-- Navigation -->
+    <nav class="bg-white shadow-sm border-b border-gray-200">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center space-x-8">
+                    <h1 class="text-2xl font-bold text-gray-900">📊 Job Intelligence</h1>
+                    <div class="flex space-x-4">
+                        <a href="/dashboard" class="text-gray-600 hover:text-gray-900">Dashboard</a>
+                        <a href="/analytics" class="text-gray-600 hover:text-gray-900">Analytics</a>
+                        <a href="/companies" class="text-gray-600 hover:text-gray-900">Companies</a>
+                        <a href="/jobs" class="text-blue-600 font-medium">Jobs</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <!-- Search & Filters -->
+        <div class="bg-white rounded-lg shadow p-6 mb-6">
+            <h2 class="text-lg font-semibold text-gray-900 mb-4">Search Jobs</h2>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+                <input 
+                    type="text" 
+                    id="search-input" 
+                    placeholder="Search by title or department..." 
+                    class="border-gray-300 rounded-md shadow-sm w-full"
+                >
+                
+                <select id="work-type-filter" class="border-gray-300 rounded-md shadow-sm">
+                    <option value="">All Work Types</option>
+                    <option value="remote">Remote</option>
+                    <option value="hybrid">Hybrid</option>
+                    <option value="onsite">Onsite</option>
+                </select>
+                
+                <input 
+                    type="text" 
+                    id="location-filter" 
+                    placeholder="Location..." 
+                    class="border-gray-300 rounded-md shadow-sm"
+                >
+                
+                <select id="status-filter" class="border-gray-300 rounded-md shadow-sm">
+                    <option value="active">Active Jobs</option>
+                    <option value="closed">Closed Jobs</option>
+                    <option value="">All Jobs</option>
+                </select>
+            </div>
+            
+            <button id="search-btn" class="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700">
+                Search
+            </button>
+        </div>
+
+        <!-- Results Summary -->
+        <div class="bg-white rounded-lg shadow p-4 mb-6">
+            <div class="flex justify-between items-center">
+                <p class="text-gray-600">
+                    Showing <span id="result-count" class="font-semibold">0</span> jobs
+                </p>
+                <div class="flex space-x-2">
+                    <button id="prev-page" class="px-3 py-1 border rounded hover:bg-gray-50" disabled>Previous</button>
+                    <span id="page-info" class="px-3 py-1">Page 1</span>
+                    <button id="next-page" class="px-3 py-1 border rounded hover:bg-gray-50" disabled>Next</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Jobs List -->
+        <div id="jobs-container" class="space-y-4">
+            <div class="text-center py-12">
+                <p class="text-gray-500">Loading jobs...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+        let API_KEY = localStorage.getItem('api_key') || '';
+        let currentPage = 1;
+        let totalPages = 1;
+
+        async function apiRequest(endpoint) {
+            const response = await fetch(`${API_BASE}${endpoint}`, {
+                headers: {
+                    'X-API-Key': API_KEY
+                }
+            });
+            
+            if (response.status === 401) {
+                window.location.href = '/dashboard';
+                throw new Error('Authentication required');
+            }
+            
+            return await response.json();
+        }
+
+        async function loadJobs() {
+            const search = document.getElementById('search-input').value;
+            const workType = document.getElementById('work-type-filter').value;
+            const location = document.getElementById('location-filter').value;
+            const status = document.getElementById('status-filter').value;
+
+            const params = new URLSearchParams({
+                page: currentPage,
+                per_page: 20,
+                ...(search && { search }),
+                ...(workType && { work_type: workType }),
+                ...(location && { location }),
+                ...(status && { status })
+            });
+
+            try {
+                const data = await apiRequest(`/api/jobs?${params}`);
+                displayJobs(data.jobs);
+                updatePagination(data.pagination);
+            } catch (error) {
+                console.error('Error loading jobs:', error);
+                document.getElementById('jobs-container').innerHTML = 
+                    '<div class="text-center py-12"><p class="text-red-500">Error loading jobs</p></div>';
+            }
+        }
+
+        function displayJobs(jobs) {
+            const container = document.getElementById('jobs-container');
+            
+            if (jobs.length === 0) {
+                container.innerHTML = '<div class="text-center py-12"><p class="text-gray-500">No jobs found</p></div>';
+                return;
+            }
+
+            container.innerHTML = jobs.map(job => `
+                <div class="job-card bg-white rounded-lg shadow p-6">
+                    <div class="flex justify-between items-start">
+                        <div class="flex-1">
+                            <h3 class="text-lg font-semibold text-gray-900 mb-2">
+                                ${job.title}
+                            </h3>
+                            <div class="flex items-center space-x-4 text-sm text-gray-600 mb-3">
+                                <span class="flex items-center">
+                                    <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+                                    </svg>
+                                    <a href="/companies/${job.company_id}" class="hover:text-blue-600 font-medium">
+                                        ${job.company_name}
+                                    </a>
+                                </span>
+                                ${job.department ? `<span>📂 ${job.department}</span>` : ''}
+                                ${job.location ? `<span>📍 ${job.location}</span>` : ''}
+                            </div>
+                            <div class="flex items-center space-x-2">
+                                ${job.work_type ? `
+                                    <span class="inline-block px-2 py-1 text-xs font-medium rounded ${
+                                        job.work_type === 'remote' ? 'bg-purple-100 text-purple-800' :
+                                        job.work_type === 'hybrid' ? 'bg-blue-100 text-blue-800' :
+                                        'bg-gray-100 text-gray-800'
+                                    }">
+                                        ${job.work_type}
+                                    </span>
+                                ` : ''}
+                                ${job.ats_type ? `
+                                    <span class="inline-block px-2 py-1 text-xs font-medium rounded bg-green-100 text-green-800">
+                                        ${job.ats_type}
+                                    </span>
+                                ` : ''}
+                                <span class="inline-block px-2 py-1 text-xs font-medium rounded ${
+                                    job.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                                }">
+                                    ${job.status}
+                                </span>
+                            </div>
+                        </div>
+                        <div class="ml-4">
+                            <a href="${job.job_url}" target="_blank" 
+                               class="inline-block bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 text-sm">
+                                View Job →
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function updatePagination(pagination) {
+            document.getElementById('result-count').textContent = pagination.total.toLocaleString();
+            document.getElementById('page-info').textContent = `Page ${pagination.page} of ${pagination.pages}`;
+            
+            document.getElementById('prev-page').disabled = pagination.page === 1;
+            document.getElementById('next-page').disabled = pagination.page === pagination.pages;
+            
+            totalPages = pagination.pages;
+        }
+
+        // Event listeners
+        document.getElementById('search-btn').addEventListener('click', () => {
+            currentPage = 1;
+            loadJobs();
+        });
+
+        document.getElementById('search-input').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                currentPage = 1;
+                loadJobs();
+            }
+        });
+
+        document.getElementById('prev-page').addEventListener('click', () => {
+            if (currentPage > 1) {
+                currentPage--;
+                loadJobs();
+            }
+        });
+
+        document.getElementById('next-page').addEventListener('click', () => {
+            if (currentPage < totalPages) {
+                currentPage++;
+                loadJobs();
+            }
+        });
+
+        // Load on page load
+        if (!API_KEY) {
+            window.location.href = '/dashboard';
+        } else {
+            loadJobs();
+        }
+    </script>
+</body>
+</html>
