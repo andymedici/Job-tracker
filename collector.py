@@ -1,703 +1,777 @@
 """
-Enhanced Job Intelligence Collector with Complete Historical Tracking
-Supports: Greenhouse, Lever, Workday, Ashby, Jobvite, SmartRecruiters, Custom
+Job Intelligence Collector
+Discovers and scrapes job boards from various ATS platforms
 """
+
 import asyncio
 import aiohttp
-import re
-import json
 import logging
-import random
-import hashlib
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple, Any, Callable
-from dataclasses import dataclass, field, asdict
-from urllib.parse import urlparse, quote, urljoin
-from urllib.robotparser import RobotFileParser
+from typing import List, Dict, Optional, Set, Callable
+from dataclasses import dataclass, field
+from datetime import datetime
+import json
+import re
+from urllib.parse import urljoin, quote
 
 from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
 
-# Playwright for JS-heavy custom pages
-try:
-    from playwright.async_api import async_playwright
-    PLAYWRIGHT_AVAILABLE = True
-except ImportError:
-    PLAYWRIGHT_AVAILABLE = False
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
 from database import get_db, Database
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 ua = UserAgent()
 
 # ============================================================================
-# TOKEN GENERATION HELPERS
+# Data Models
 # ============================================================================
 
-def _name_to_token(name: str) -> str:
-    """Converts a company name to a URL-friendly, lowercase ATS token/slug."""
-    token = name.lower()
-    token = re.sub(r'\s+(inc|llc|ltd|co|corp|gmbh|sa)\.?$', '', token, flags=re.IGNORECASE)
-    token = re.sub(r'[^a-z0-9\s-]', '', token)
-    token = re.sub(r'[\s-]+', '-', token).strip('-')
-    return token
-
-def _generate_career_url_variants(slug: str) -> List[str]:
-    """Generates likely career page URLs for a given base slug."""
-    domain_base = slug.replace('-', '').lower()
-    if not domain_base:
-        return []
-    domain = f'{domain_base}.com'
-    return [
-        f'https://jobs.{domain}',
-        f'https://careers.{domain}',
-        f'https://www.{domain}/careers',
-        f'https://www.{domain}/jobs',
-        f'https://{domain}/careers',
-        f'https://{domain}/jobs',
-        f'https://www.{domain}/open-positions',
-        f'https://www.{domain}/careers/join',
-        f'https://{domain}/openings',
-    ]
-
-# ============================================================================
-# JOB HASH CALCULATION (CRITICAL FOR HISTORICAL TRACKING)
-# ============================================================================
-
-def calculate_job_hash(company_id: str, job_title: str, location: str, department: str = None) -> str:
-    """
-    Generate unique hash for job deduplication and historical tracking
-    Same job posting = same hash across multiple refreshes
-    """
-    # Normalize components
-    normalized_title = job_title.lower().strip()
-    normalized_location = location.lower().strip() if location else 'unknown'
-    normalized_dept = department.lower().strip() if department else 'unknown'
-    
-    # Create unique identifier
-    unique_string = f"{company_id}|{normalized_title}|{normalized_location}|{normalized_dept}"
-    
-    # Generate SHA256 hash
-    return hashlib.sha256(unique_string.encode()).hexdigest()
-
-# ============================================================================
-# INTELLIGENCE HELPERS
-# ============================================================================
-
-TECH_SKILLS = {
-    'python': re.compile(r'\b(python|django|flask|fastapi|celery)\b', re.IGNORECASE),
-    'javascript': re.compile(r'\b(javascript|node(\.js)?|react|vue|angular|typescript|next\.js)\b', re.IGNORECASE),
-    'go': re.compile(r'\b(go|golang)\b', re.IGNORECASE),
-    'java': re.compile(r'\b(java|spring|kotlin|scala)\b', re.IGNORECASE),
-    'cloud': re.compile(r'\b(aws|azure|gcp|google cloud|terraform|kubernetes|docker|k8s)\b', re.IGNORECASE),
-    'database': re.compile(r'\b(postgresql|postgres|mysql|mongodb|redis|dynamodb|cassandra)\b', re.IGNORECASE),
-    'ai_ml': re.compile(r'\b(ai|ml|machine\s*learning|deep\s*learning|pytorch|tensorflow|llm)\b', re.IGNORECASE),
-    'rust': re.compile(r'\b(rust|rustlang)\b', re.IGNORECASE),
-    'devops': re.compile(r'\b(devops|ci/cd|jenkins|gitlab|github actions|circleci)\b', re.IGNORECASE),
-    'frontend': re.compile(r'\b(react|vue|svelte|angular|next\.js|nuxt|tailwind)\b', re.IGNORECASE),
-    'backend': re.compile(r'\b(api|rest|graphql|microservices|grpc)\b', re.IGNORECASE),
-    'data': re.compile(r'\b(spark|hadoop|kafka|airflow|dbt|snowflake|databricks)\b', re.IGNORECASE),
-}
-
-def _extract_skills(description_text: str) -> Dict[str, int]:
-    """Extract tech skills from job description"""
-    text_lower = description_text.lower()
-    skills_count: Dict[str, int] = {}
-    for skill_name, pattern in TECH_SKILLS.items():
-        count = len(pattern.findall(text_lower))
-        if count > 0:
-            skills_count[skill_name] = count
-    return dict(sorted(skills_count.items(), key=lambda item: item[1], reverse=True)[:10])
-
-def _normalize_location(location_string: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
-    """Parse location into city, region, country"""
-    city, region, country = None, None, None
-    location_lower = location_string.lower().strip()
-
-    # Check for remote
-    if re.search(r'\b(remote|anywhere|global|distributed|wfh|work from home)\b', location_lower):
-        country_match = re.search(r'\((us|usa|canada|uk|eu|europe)\)', location_lower)
-        country = country_match.group(1).upper() if country_match else 'Global'
-        return None, None, country
-
-    # Country detection
-    if re.search(r'\b(canada|can|ca)\b', location_lower):
-        country = 'Canada'
-    elif re.search(r'\b(united\s*states|usa|us)\b', location_lower):
-        country = 'USA'
-    elif re.search(r'\b(united\s*kingdom|uk|gb)\b', location_lower):
-        country = 'UK'
-    elif re.search(r'\b(germany|de|deutschland)\b', location_lower):
-        country = 'Germany'
-    elif re.search(r'\b(france|fr)\b', location_lower):
-        country = 'France'
-    elif re.search(r'\b(india|in)\b', location_lower):
-        country = 'India'
-    elif re.search(r'\b(australia|au)\b', location_lower):
-        country = 'Australia'
-
-    # City, State/Region parsing
-    city_region_match = re.search(r'([A-Za-z\s]+),\s*([A-Za-z]{2,})', location_string)
-    if city_region_match:
-        city = city_region_match.group(1).strip().title()
-        region_or_country = city_region_match.group(2).strip()
-        if len(region_or_country) <= 3:
-            region = region_or_country.upper()
-        elif not country:
-            country = region_or_country.title()
-
-    if not country and 'remote' not in location_lower:
-        country = 'Unknown'
-
-    return city, region, country
-
-def _determine_work_type(location: str, job_title: str = '') -> str:
-    """Determine if job is remote, hybrid, or onsite"""
-    location_lower = location.lower()
-    title_lower = job_title.lower()
-    
-    combined = f"{location_lower} {title_lower}"
-    
-    if re.search(r'\b(remote|wfh|work from home|distributed)\b', combined):
-        if re.search(r'\b(hybrid|flexible|optional)\b', combined):
-            return 'hybrid'
-        return 'remote'
-    elif re.search(r'\b(hybrid|flex|flexible office)\b', combined):
-        return 'hybrid'
-    else:
-        return 'onsite'
-
-# ============================================================================
-# DATA CLASSES
-# ============================================================================
+@dataclass
+class JobPosting:
+    """Individual job posting"""
+    id: str
+    title: str
+    url: str
+    location: Optional[str] = None
+    department: Optional[str] = None
+    work_type: Optional[str] = None
+    posted_date: Optional[str] = None
+    metadata: Dict = field(default_factory=dict)
 
 @dataclass
 class JobBoard:
-    ats_type: str
-    token: str
+    """Job board information"""
     company_name: str
-    job_count: int = 0
-    remote_count: int = 0
-    hybrid_count: int = 0
-    onsite_count: int = 0
-    locations: List[str] = field(default_factory=list)
-    departments: List[str] = field(default_factory=list)
-    normalized_locations: Dict[str, Dict[str, int]] = field(default_factory=lambda: {'city': {}, 'region': {}, 'country': {}})
-    extracted_skills: Dict[str, int] = field(default_factory=dict)
-    department_distribution: Dict[str, int] = field(default_factory=dict)
-    jobs: List[Dict] = field(default_factory=list)
-    source: str = ""
-    discovered_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
-    careers_url: str = ""
+    ats_type: str
+    board_url: str
+    jobs: List[JobPosting] = field(default_factory=list)
+    
+    def to_dict(self) -> Dict:
+        return {
+            'company_name': self.company_name,
+            'ats_type': self.ats_type,
+            'board_url': self.board_url,
+            'job_count': len(self.jobs),
+            'jobs': [
+                {
+                    'id': job.id,
+                    'title': job.title,
+                    'url': job.url,
+                    'location': job.location,
+                    'department': job.department,
+                    'work_type': job.work_type,
+                    'posted_date': job.posted_date,
+                    'metadata': job.metadata
+                }
+                for job in self.jobs
+            ]
+        }
 
 @dataclass
-class CollectorStats:
-    total_companies: int = 0
-    total_jobs: int = 0
-    greenhouse_found: int = 0
-    lever_found: int = 0
-    workday_found: int = 0
-    ashby_found: int = 0
-    jobvite_found: int = 0
-    smartrecruiters_found: int = 0
-    custom_found: int = 0
+class CollectionStats:
+    """Collection statistics"""
     total_tested: int = 0
-    refreshed: int = 0
-    closed_jobs: int = 0
-    archived_jobs: int = 0
-    start_time: datetime = field(default_factory=datetime.utcnow)
+    total_discovered: int = 0
+    total_jobs_collected: int = 0
+    total_new_jobs: int = 0
+    total_updated_jobs: int = 0
+    total_closed_jobs: int = 0
+    start_time: datetime = field(default_factory=datetime.now)
     end_time: Optional[datetime] = None
-
+    
     def to_dict(self) -> Dict:
-        d = asdict(self)
-        d['duration_seconds'] = (self.end_time - self.start_time).total_seconds() if self.end_time else 0
-        d['start_time'] = self.start_time.isoformat()
-        d['end_time'] = self.end_time.isoformat() if self.end_time else None
-        return d
+        return {
+            'total_tested': self.total_tested,
+            'total_discovered': self.total_discovered,
+            'total_jobs_collected': self.total_jobs_collected,
+            'total_new_jobs': self.total_new_jobs,
+            'total_updated_jobs': self.total_updated_jobs,
+            'total_closed_jobs': self.total_closed_jobs,
+            'duration_seconds': (self.end_time - self.start_time).total_seconds() if self.end_time else 0
+        }
 
 # ============================================================================
-# MAIN COLLECTOR CLASS
+# Job Intelligence Collector
 # ============================================================================
 
 class JobIntelCollector:
-    def __init__(self, db: Optional[Database] = None, progress_callback: Optional[Callable[[float, Dict], None]] = None):
+    """Main collector for discovering companies and scraping job boards"""
+    
+    def __init__(self, db: Optional[Database] = None, progress_callback: Optional[Callable] = None):
         self.db = db or get_db()
-        self.stats = CollectorStats()
         self.client: Optional[aiohttp.ClientSession] = None
-        self._running = False
-        self._semaphore = asyncio.Semaphore(8)
+        self.stats = CollectionStats()
         self.progress_callback = progress_callback
-
-    def _report_progress(self, progress: float, extra: Dict[str, Any] = None):
-        if self.progress_callback:
-            stats_dict = self.stats.to_dict()
-            if extra:
-                stats_dict.update(extra)
-            self.progress_callback(progress, stats_dict)
-
+        self._semaphore = asyncio.Semaphore(10)
+    
     async def _get_client(self) -> aiohttp.ClientSession:
+        """Get or create aiohttp client session"""
         if self.client is None or self.client.closed:
+            headers = {
+                'User-Agent': ua.random,
+                'Accept': 'text/html,application/json,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+            }
             self.client = aiohttp.ClientSession(
-                headers={'User-Agent': ua.random},
-                timeout=aiohttp.ClientTimeout(total=40),
-                connector=aiohttp.TCPConnector(limit_per_host=10, ssl=False)
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=30),
+                connector=aiohttp.TCPConnector(limit=50, limit_per_host=10)
             )
         return self.client
-
-    async def _close_client(self):
+    
+    async def close(self):
+        """Close client session"""
         if self.client and not self.client.closed:
             await self.client.close()
-
-    async def _fetch_greenhouse_jobs(self, token: str, company_name: str) -> Optional[JobBoard]:
-        """Fetch jobs from Greenhouse ATS"""
-        client = await self._get_client()
-        url = f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true"
-        
-        try:
-            async with self._semaphore:
-                async with client.get(url) as response:
-                    if response.status != 200:
-                        return None
-                    
-                    data = await response.json()
-                    jobs_data = data.get('jobs', [])
-                    
-                    if not jobs_data:
-                        return None
-                    
-                    board = JobBoard(ats_type='greenhouse', token=token, company_name=company_name)
-                    board.job_count = len(jobs_data)
-                    
-                    for job in jobs_data:
-                        job_title = job.get('title', 'Unknown')
-                        location = job.get('location', {}).get('name', 'Unknown')
-                        department = job.get('departments', [{}])[0].get('name') if job.get('departments') else None
-                        
-                        # Normalize location
-                        city, region, country = _normalize_location(location)
-                        work_type = _determine_work_type(location, job_title)
-                        
-                        # Extract skills from description
-                        description = job.get('content', '')
-                        skills = _extract_skills(description)
-                        
-                        # Aggregate skills
-                        for skill, count in skills.items():
-                            board.extracted_skills[skill] = board.extracted_skills.get(skill, 0) + count
-                        
-                        # Count work types
-                        if work_type == 'remote':
-                            board.remote_count += 1
-                        elif work_type == 'hybrid':
-                            board.hybrid_count += 1
-                        else:
-                            board.onsite_count += 1
-                        
-                        # Track locations
-                        if location not in board.locations:
-                            board.locations.append(location)
-                        if city:
-                            board.normalized_locations['city'][city] = board.normalized_locations['city'].get(city, 0) + 1
-                        if region:
-                            board.normalized_locations['region'][region] = board.normalized_locations['region'].get(region, 0) + 1
-                        if country:
-                            board.normalized_locations['country'][country] = board.normalized_locations['country'].get(country, 0) + 1
-                        
-                        # Track departments
-                        if department:
-                            if department not in board.departments:
-                                board.departments.append(department)
-                            board.department_distribution[department] = board.department_distribution.get(department, 0) + 1
-                        
-                        # Store full job data for archiving
-                        board.jobs.append({
-                            'title': job_title,
-                            'location': location,
-                            'city': city,
-                            'region': region,
-                            'country': country,
-                            'department': department,
-                            'work_type': work_type,
-                            'skills': list(skills.keys()),
-                            'description': description,
-                            'url': job.get('absolute_url', ''),
-                            'posted_date': job.get('updated_at')
-                        })
-                    
-                    return board
-                    
-        except Exception as e:
-            logger.debug(f"Greenhouse fetch error for {token}: {e}")
-            return None
-
-    async def _fetch_lever_jobs(self, token: str, company_name: str) -> Optional[JobBoard]:
-        """Fetch jobs from Lever ATS"""
-        client = await self._get_client()
-        url = f"https://api.lever.co/v0/postings/{token}?mode=json"
-        
-        try:
-            async with self._semaphore:
-                async with client.get(url) as response:
-                    if response.status != 200:
-                        return None
-                    
-                    jobs_data = await response.json()
-                    
-                    if not jobs_data:
-                        return None
-                    
-                    board = JobBoard(ats_type='lever', token=token, company_name=company_name)
-                    board.job_count = len(jobs_data)
-                    
-                    for job in jobs_data:
-                        job_title = job.get('text', 'Unknown')
-                        location = job.get('categories', {}).get('location', 'Unknown')
-                        department = job.get('categories', {}).get('team')
-                        
-                        city, region, country = _normalize_location(location)
-                        work_type = _determine_work_type(location, job_title)
-                        
-                        description = job.get('description', '') + ' ' + job.get('lists', [{}])[0].get('content', '')
-                        skills = _extract_skills(description)
-                        
-                        for skill, count in skills.items():
-                            board.extracted_skills[skill] = board.extracted_skills.get(skill, 0) + count
-                        
-                        if work_type == 'remote':
-                            board.remote_count += 1
-                        elif work_type == 'hybrid':
-                            board.hybrid_count += 1
-                        else:
-                            board.onsite_count += 1
-                        
-                        if location not in board.locations:
-                            board.locations.append(location)
-                        if city:
-                            board.normalized_locations['city'][city] = board.normalized_locations['city'].get(city, 0) + 1
-                        if region:
-                            board.normalized_locations['region'][region] = board.normalized_locations['region'].get(region, 0) + 1
-                        if country:
-                            board.normalized_locations['country'][country] = board.normalized_locations['country'].get(country, 0) + 1
-                        
-                        if department:
-                            if department not in board.departments:
-                                board.departments.append(department)
-                            board.department_distribution[department] = board.department_distribution.get(department, 0) + 1
-                        
-                        board.jobs.append({
-                            'title': job_title,
-                            'location': location,
-                            'city': city,
-                            'region': region,
-                            'country': country,
-                            'department': department,
-                            'work_type': work_type,
-                            'skills': list(skills.keys()),
-                            'description': description,
-                            'url': job.get('hostedUrl', ''),
-                            'posted_date': job.get('createdAt')
-                        })
-                    
-                    return board
-                    
-        except Exception as e:
-            logger.debug(f"Lever fetch error for {token}: {e}")
-            return None
-
-    async def _fetch_job_data_from_token(self, ats_type: str, token: str, company_name: str) -> Optional[JobBoard]:
-        """Fetch job data from known ATS type and token"""
-        if ats_type == 'greenhouse':
-            return await self._fetch_greenhouse_jobs(token, company_name)
-        elif ats_type == 'lever':
-            return await self._fetch_lever_jobs(token, company_name)
-        # Add other ATS types here (Workday, Ashby, etc.)
-        return None
-
+    
+    def _update_progress(self, progress: float):
+        """Update progress callback if provided"""
+        if self.progress_callback:
+            self.progress_callback(progress, self.stats.to_dict())
+    
     # ========================================================================
-    # JOB ARCHIVE INTEGRATION (CRITICAL FOR HISTORICAL TRACKING)
+    # ATS Detection Methods
     # ========================================================================
-
-    def process_and_archive_jobs(self, board: JobBoard, company_id: str) -> Tuple[int, int]:
-        """
-        Process scraped jobs and add to archive for historical tracking
-        Returns: (active_jobs_count, closed_jobs_count)
-        """
-        current_time = datetime.utcnow()
-        seen_hashes = set()
+    
+    async def _test_greenhouse(self, company_name: str) -> Optional[JobBoard]:
+        """Test for Greenhouse ATS"""
+        token = self.db._name_to_token(company_name)
+        test_urls = [
+            f"https://boards.greenhouse.io/{token}",
+            f"https://boards.greenhouse.io/embed/job_board?for={token}",
+            f"https://job-boards.greenhouse.io/{token}"
+        ]
         
-        for job in board.jobs:
-            job_title = job.get('title', 'Unknown')
-            location = job.get('location', 'Unknown')
-            department = job.get('department')
-            
-            # Calculate unique hash for this job
-            job_hash = calculate_job_hash(company_id, job_title, location, department)
-            seen_hashes.add(job_hash)
-            
-            # Prepare job data for archiving
-            job_data = {
-                'job_hash': job_hash,
-                'company_id': company_id,
-                'job_title': job_title,
-                'department': department,
-                'city': job.get('city'),
-                'region': job.get('region'),
-                'country': job.get('country'),
-                'work_type': job.get('work_type'),
-                'skills': job.get('skills', []),
-                'first_seen': current_time,
-                'last_seen': current_time,
-                'status': 'open'
-            }
-            
-            # Upsert to job archive
-            self.db.upsert_job_in_archive(job_data)
-        
-        # Mark jobs that weren't seen this time as closed
-        closed_count = self.db.mark_stale_jobs_closed(company_id, current_time)
-        
-        if closed_count > 0 or len(seen_hashes) > 0:
-            logger.info(f"📦 {company_id}: {len(seen_hashes)} active jobs, {closed_count} marked closed")
-        
-        return len(seen_hashes), closed_count
-
-    def _save_company(self, board: JobBoard):
-        """Save company data to database"""
-        company_data = {
-            'id': f"{board.ats_type}_{board.token}",
-            'company_name': board.company_name,
-            'ats_type': board.ats_type,
-            'token': board.token,
-            'job_count': board.job_count,
-            'remote_count': board.remote_count,
-            'hybrid_count': board.hybrid_count,
-            'onsite_count': board.onsite_count,
-            'locations': board.locations,
-            'departments': board.departments,
-            'normalized_locations': board.normalized_locations,
-            'extracted_skills': board.extracted_skills,
-            'department_distribution': board.department_distribution,
-            'careers_url': board.careers_url,
-        }
-        self.db.upsert_company(company_data)
-
-    async def _scrape_for_token_and_data(self, company_name: str, token_slug: str) -> Optional[JobBoard]:
-        """Try to discover ATS type and scrape job data"""
         client = await self._get_client()
         
-        # Try Greenhouse first
-        gh_board = await self._fetch_greenhouse_jobs(token_slug, company_name)
-        if gh_board and gh_board.job_count > 0:
-            return gh_board
-        
-        # Try Lever
-        lever_board = await self._fetch_lever_jobs(token_slug, company_name)
-        if lever_board and lever_board.job_count > 0:
-            return lever_board
-        
-        # Try career page variants
-        urls = _generate_career_url_variants(token_slug)
-        
-        for url in urls[:3]:  # Try first 3 variants
+        for url in test_urls:
             try:
-                async with self._semaphore:
-                    async with client.get(url, allow_redirects=True) as response:
-                        if response.status == 200:
-                            html = await response.text()
-                            
-                            # Try to detect ATS
-                            if 'greenhouse' in html.lower():
-                                # Try to extract token
-                                match = re.search(r'boards\.greenhouse\.io/([^/"]+)', html)
-                                if match:
-                                    token = match.group(1)
-                                    board = await self._fetch_greenhouse_jobs(token, company_name)
-                                    if board and board.job_count > 0:
-                                        board.careers_url = str(response.url)
-                                        return board
-                            
-                            elif 'lever' in html.lower():
-                                match = re.search(r'jobs\.lever\.co/([^/"]+)', html)
-                                if match:
-                                    token = match.group(1)
-                                    board = await self._fetch_lever_jobs(token, company_name)
-                                    if board and board.job_count > 0:
-                                        board.careers_url = str(response.url)
-                                        return board
-                            
+                async with client.get(url) as resp:
+                    if resp.status == 200:
+                        text = await resp.text()
+                        if 'greenhouse' in text.lower() or 'job_app' in text:
+                            logger.info(f"✅ Found Greenhouse board: {company_name}")
+                            return JobBoard(company_name, 'greenhouse', url)
             except Exception as e:
-                logger.debug(f"Error trying {url}: {e}")
+                logger.debug(f"Greenhouse test failed for {url}: {e}")
                 continue
             
-            await asyncio.sleep(random.uniform(2, 4))
+            await asyncio.sleep(0.5)
         
         return None
-
-    async def _test_company(self, seed_id: int, company_name: str, token_slug: str, source: str) -> Tuple[bool, int]:
-        """Test a seed company for job board"""
+    
+    async def _test_lever(self, company_name: str) -> Optional[JobBoard]:
+        """Test for Lever ATS"""
+        token = self.db._name_to_token(company_name)
+        test_urls = [
+            f"https://jobs.lever.co/{token}",
+            f"https://{token}.lever.co"
+        ]
+        
+        client = await self._get_client()
+        
+        for url in test_urls:
+            try:
+                async with client.get(url) as resp:
+                    if resp.status == 200:
+                        text = await resp.text()
+                        if 'lever' in text.lower() or 'postings' in url:
+                            logger.info(f"✅ Found Lever board: {company_name}")
+                            return JobBoard(company_name, 'lever', url)
+            except Exception as e:
+                logger.debug(f"Lever test failed for {url}: {e}")
+                continue
+            
+            await asyncio.sleep(0.5)
+        
+        return None
+    
+    async def _test_workday(self, company_name: str) -> Optional[JobBoard]:
+        """Test for Workday ATS"""
+        token = self.db._name_to_token(company_name)
+        
+        # Workday URLs are less predictable, try common patterns
+        test_urls = [
+            f"https://{token}.wd5.myworkdayjobs.com/{token}",
+            f"https://{token}.wd1.myworkdayjobs.com/{token}",
+            f"https://{token}.wd3.myworkdayjobs.com/{token}",
+        ]
+        
+        client = await self._get_client()
+        
+        for url in test_urls:
+            try:
+                async with client.get(url, allow_redirects=True) as resp:
+                    if resp.status == 200:
+                        text = await resp.text()
+                        if 'workday' in text.lower() or 'myworkdayjobs' in str(resp.url):
+                            logger.info(f"✅ Found Workday board: {company_name}")
+                            return JobBoard(company_name, 'workday', str(resp.url))
+            except Exception as e:
+                logger.debug(f"Workday test failed for {url}: {e}")
+                continue
+            
+            await asyncio.sleep(0.5)
+        
+        return None
+    
+    async def _test_ashby(self, company_name: str) -> Optional[JobBoard]:
+        """Test for Ashby ATS"""
+        token = self.db._name_to_token(company_name)
+        test_urls = [
+            f"https://jobs.ashbyhq.com/{token}",
+            f"https://{token}.ashbyhq.com"
+        ]
+        
+        client = await self._get_client()
+        
+        for url in test_urls:
+            try:
+                async with client.get(url) as resp:
+                    if resp.status == 200:
+                        text = await resp.text()
+                        if 'ashby' in text.lower():
+                            logger.info(f"✅ Found Ashby board: {company_name}")
+                            return JobBoard(company_name, 'ashby', url)
+            except Exception as e:
+                logger.debug(f"Ashby test failed for {url}: {e}")
+                continue
+            
+            await asyncio.sleep(0.5)
+        
+        return None
+    
+    async def _test_jobvite(self, company_name: str) -> Optional[JobBoard]:
+        """Test for Jobvite ATS"""
+        token = self.db._name_to_token(company_name)
+        test_urls = [
+            f"https://jobs.jobvite.com/{token}",
+            f"https://{token}.jobvite.com"
+        ]
+        
+        client = await self._get_client()
+        
+        for url in test_urls:
+            try:
+                async with client.get(url) as resp:
+                    if resp.status == 200:
+                        text = await resp.text()
+                        if 'jobvite' in text.lower():
+                            logger.info(f"✅ Found Jobvite board: {company_name}")
+                            return JobBoard(company_name, 'jobvite', url)
+            except Exception as e:
+                logger.debug(f"Jobvite test failed for {url}: {e}")
+                continue
+            
+            await asyncio.sleep(0.5)
+        
+        return None
+    
+    async def _test_smartrecruiters(self, company_name: str) -> Optional[JobBoard]:
+        """Test for SmartRecruiters ATS"""
+        token = self.db._name_to_token(company_name)
+        test_urls = [
+            f"https://jobs.smartrecruiters.com/{token}",
+            f"https://{token}.smartrecruiters.com"
+        ]
+        
+        client = await self._get_client()
+        
+        for url in test_urls:
+            try:
+                async with client.get(url) as resp:
+                    if resp.status == 200:
+                        text = await resp.text()
+                        if 'smartrecruiters' in text.lower():
+                            logger.info(f"✅ Found SmartRecruiters board: {company_name}")
+                            return JobBoard(company_name, 'smartrecruiters', url)
+            except Exception as e:
+                logger.debug(f"SmartRecruiters test failed for {url}: {e}")
+                continue
+            
+            await asyncio.sleep(0.5)
+        
+        return None
+    
+    async def _test_custom_board(self, company_name: str) -> Optional[JobBoard]:
+        """Test for custom/unknown job boards (fallback)"""
+        # This is a placeholder - could be expanded with more heuristics
+        return None
+    
+    async def _test_company(self, company_name: str, board_hint: str = None) -> Optional[JobBoard]:
+        """Test a single company for ATS detection - ALL PLATFORMS WITH SEED TRACKING"""
         self.stats.total_tested += 1
-
-        board = await self._scrape_for_token_and_data(company_name, token_slug)
+        
+        # Update seed tracking - times_tested
+        try:
+            self.db.increment_seed_tested(company_name)
+        except Exception as e:
+            logger.debug(f"Could not update seed stats: {e}")
+        
+        # Test order - ALL PLATFORMS
+        test_order = [
+            ('greenhouse', self._test_greenhouse),
+            ('lever', self._test_lever),
+            ('workday', self._test_workday),
+            ('ashby', self._test_ashby),
+            ('jobvite', self._test_jobvite),
+            ('smartrecruiters', self._test_smartrecruiters),
+            ('custom', self._test_custom_board),
+        ]
+        
+        # If hint provided, test that first
+        if board_hint:
+            for ats_type, test_func in test_order:
+                if ats_type == board_hint.lower():
+                    board = await test_func(company_name)
+                    if board:
+                        # Update seed tracking - success!
+                        try:
+                            self.db.increment_seed_success(company_name)
+                        except Exception as e:
+                            logger.debug(f"Could not update seed success: {e}")
+                        return board
+                    break  # If hint fails, try all others
+        
+        # Test all platforms
+        for ats_type, test_func in test_order:
+            if board_hint and ats_type == board_hint.lower():
+                continue  # Already tested
+            
+            board = await test_func(company_name)
+            if board:
+                # Update seed tracking - success!
+                try:
+                    self.db.increment_seed_success(company_name)
+                except Exception as e:
+                    logger.debug(f"Could not update seed success: {e}")
+                return board
+            
+            await asyncio.sleep(0.5)  # Small delay between tests
+        
+        return None
+    
+    # ========================================================================
+    # Job Scraping Methods
+    # ========================================================================
+    
+    async def _scrape_greenhouse(self, board: JobBoard) -> List[JobPosting]:
+        """Scrape Greenhouse job board"""
+        jobs = []
+        
+        try:
+            client = await self._get_client()
+            
+            # Try JSON API first
+            api_url = board.board_url.replace('/embed/job_board?for=', '/embed/job_board/jobs?for=')
+            
+            try:
+                async with client.get(api_url) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        
+                        if isinstance(data, dict) and 'jobs' in data:
+                            for job in data['jobs']:
+                                jobs.append(JobPosting(
+                                    id=str(job.get('id', job.get('title', ''))),
+                                    title=job.get('title', ''),
+                                    url=job.get('absolute_url', ''),
+                                    location=job.get('location', {}).get('name') if isinstance(job.get('location'), dict) else job.get('location'),
+                                    department=job.get('departments', [{}])[0].get('name') if job.get('departments') else None,
+                                    metadata=job
+                                ))
+                        
+                        return jobs
+            except:
+                pass  # Fall back to HTML scraping
+            
+            # HTML scraping fallback
+            async with client.get(board.board_url) as resp:
+                if resp.status == 200:
+                    text = await resp.text()
+                    soup = BeautifulSoup(text, 'html.parser')
+                    
+                    for job_elem in soup.find_all(['div', 'a'], class_=re.compile(r'opening|job|position')):
+                        title_elem = job_elem.find(['h3', 'h4', 'span', 'a'])
+                        if title_elem:
+                            title = title_elem.get_text(strip=True)
+                            url = job_elem.get('href', '') or job_elem.find('a', href=True)
+                            if url:
+                                url = urljoin(board.board_url, url.get('href') if hasattr(url, 'get') else url)
+                            
+                            jobs.append(JobPosting(
+                                id=title,
+                                title=title,
+                                url=url
+                            ))
+        
+        except Exception as e:
+            logger.error(f"Error scraping Greenhouse board: {e}")
+        
+        return jobs
+    
+    async def _scrape_lever(self, board: JobBoard) -> List[JobPosting]:
+        """Scrape Lever job board"""
+        jobs = []
+        
+        try:
+            client = await self._get_client()
+            
+            # Lever has JSON API
+            api_url = board.board_url.rstrip('/') + '/postings'
+            
+            async with client.get(api_url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    
+                    for job in data:
+                        jobs.append(JobPosting(
+                            id=job.get('id', ''),
+                            title=job.get('text', ''),
+                            url=job.get('hostedUrl', ''),
+                            location=job.get('categories', {}).get('location'),
+                            department=job.get('categories', {}).get('team'),
+                            work_type=job.get('categories', {}).get('commitment'),
+                            posted_date=job.get('createdAt'),
+                            metadata=job
+                        ))
+        
+        except Exception as e:
+            logger.error(f"Error scraping Lever board: {e}")
+        
+        return jobs
+    
+    async def _scrape_workday(self, board: JobBoard) -> List[JobPosting]:
+        """Scrape Workday job board"""
+        jobs = []
+        
+        try:
+            client = await self._get_client()
+            
+            async with client.get(board.board_url) as resp:
+                if resp.status == 200:
+                    text = await resp.text()
+                    soup = BeautifulSoup(text, 'html.parser')
+                    
+                    # Workday uses various structures
+                    for job_elem in soup.find_all(['li', 'div'], class_=re.compile(r'job|position')):
+                        title_elem = job_elem.find(['h3', 'a'])
+                        if title_elem:
+                            title = title_elem.get_text(strip=True)
+                            url = job_elem.find('a', href=True)
+                            if url:
+                                url = urljoin(board.board_url, url['href'])
+                            
+                            jobs.append(JobPosting(
+                                id=title,
+                                title=title,
+                                url=url
+                            ))
+        
+        except Exception as e:
+            logger.error(f"Error scraping Workday board: {e}")
+        
+        return jobs
+    
+    async def _scrape_ashby(self, board: JobBoard) -> List[JobPosting]:
+        """Scrape Ashby job board"""
+        jobs = []
+        
+        try:
+            client = await self._get_client()
+            
+            async with client.get(board.board_url) as resp:
+                if resp.status == 200:
+                    text = await resp.text()
+                    soup = BeautifulSoup(text, 'html.parser')
+                    
+                    for job_elem in soup.find_all(['div', 'a'], class_=re.compile(r'job|posting')):
+                        title_elem = job_elem.find(['h3', 'h4', 'span'])
+                        if title_elem:
+                            title = title_elem.get_text(strip=True)
+                            url = job_elem.get('href', '') or job_elem.find('a', href=True)
+                            if url:
+                                url = urljoin(board.board_url, url.get('href') if hasattr(url, 'get') else url)
+                            
+                            jobs.append(JobPosting(
+                                id=title,
+                                title=title,
+                                url=url
+                            ))
+        
+        except Exception as e:
+            logger.error(f"Error scraping Ashby board: {e}")
+        
+        return jobs
+    
+    async def _scrape_jobvite(self, board: JobBoard) -> List[JobPosting]:
+        """Scrape Jobvite job board"""
+        jobs = []
+        
+        try:
+            client = await self._get_client()
+            
+            async with client.get(board.board_url) as resp:
+                if resp.status == 200:
+                    text = await resp.text()
+                    soup = BeautifulSoup(text, 'html.parser')
+                    
+                    for job_elem in soup.find_all(['tr', 'div'], class_=re.compile(r'job|position')):
+                        title_elem = job_elem.find(['td', 'a', 'span'])
+                        if title_elem:
+                            title = title_elem.get_text(strip=True)
+                            url = job_elem.find('a', href=True)
+                            if url:
+                                url = urljoin(board.board_url, url['href'])
+                            
+                            jobs.append(JobPosting(
+                                id=title,
+                                title=title,
+                                url=url
+                            ))
+        
+        except Exception as e:
+            logger.error(f"Error scraping Jobvite board: {e}")
+        
+        return jobs
+    
+    async def _scrape_smartrecruiters(self, board: JobBoard) -> List[JobPosting]:
+        """Scrape SmartRecruiters job board"""
+        jobs = []
+        
+        try:
+            client = await self._get_client()
+            
+            async with client.get(board.board_url) as resp:
+                if resp.status == 200:
+                    text = await resp.text()
+                    soup = BeautifulSoup(text, 'html.parser')
+                    
+                    for job_elem in soup.find_all(['li', 'div'], class_=re.compile(r'job|opening')):
+                        title_elem = job_elem.find(['h4', 'a', 'span'])
+                        if title_elem:
+                            title = title_elem.get_text(strip=True)
+                            url = job_elem.find('a', href=True)
+                            if url:
+                                url = urljoin(board.board_url, url['href'])
+                            
+                            jobs.append(JobPosting(
+                                id=title,
+                                title=title,
+                                url=url
+                            ))
+        
+        except Exception as e:
+            logger.error(f"Error scraping SmartRecruiters board: {e}")
+        
+        return jobs
+    
+    async def scrape_board(self, board: JobBoard) -> JobBoard:
+        """Scrape jobs from a detected board"""
+        logger.info(f"🔍 Scraping {board.ats_type} board for {board.company_name}")
+        
+        # Route to appropriate scraper
+        if board.ats_type == 'greenhouse':
+            board.jobs = await self._scrape_greenhouse(board)
+        elif board.ats_type == 'lever':
+            board.jobs = await self._scrape_lever(board)
+        elif board.ats_type == 'workday':
+            board.jobs = await self._scrape_workday(board)
+        elif board.ats_type == 'ashby':
+            board.jobs = await self._scrape_ashby(board)
+        elif board.ats_type == 'jobvite':
+            board.jobs = await self._scrape_jobvite(board)
+        elif board.ats_type == 'smartrecruiters':
+            board.jobs = await self._scrape_smartrecruiters(board)
+        
+        logger.info(f"✅ Scraped {len(board.jobs)} jobs from {board.company_name}")
+        self.stats.total_jobs_collected += len(board.jobs)
+        
+        return board
+    
+    # ========================================================================
+    # Main Collection Workflows
+    # ========================================================================
+    
+    async def test_single_company(self, company_name: str, website_url: str = None, ats_hint: str = None) -> Optional[JobBoard]:
+        """Test and scrape a single company (for manual submissions)"""
+        logger.info(f"Testing single company: {company_name}")
+        
+        board = await self._test_company(company_name, ats_hint)
+        
         if board:
-            self._save_company(board)
+            board = await self.scrape_board(board)
             
-            # CRITICAL: Archive jobs for historical tracking
-            company_id = f"{board.ats_type}_{board.token}"
-            active, closed = self.process_and_archive_jobs(board, company_id)
-            self.stats.archived_jobs += active
-
-            if board.ats_type == 'greenhouse':
-                self.stats.greenhouse_found += 1
-            elif board.ats_type == 'lever':
-                self.stats.lever_found += 1
-
-            self.stats.total_companies += 1
-            self.stats.total_jobs += board.job_count
-            return True, board.job_count
-
-        return False, 0
-
-    async def _refresh_company(self, company: Dict) -> bool:
-        """Refresh an existing company's job data"""
-        company_id = company['id']
-        ats_type = company['ats_type']
-        token = company['token']
-        company_name = company['company_name']
-
-        board = await self._fetch_job_data_from_token(ats_type, token, company_name)
-        if board:
-            # Update company data
-            company_data = {
-                'id': company_id,
-                'company_name': company_name,
-                'ats_type': ats_type,
-                'token': token,
-                'job_count': board.job_count,
-                'remote_count': board.remote_count,
-                'hybrid_count': board.hybrid_count,
-                'onsite_count': board.onsite_count,
-                'locations': board.locations,
-                'departments': board.departments,
-                'normalized_locations': board.normalized_locations,
-                'extracted_skills': board.extracted_skills,
-                'department_distribution': board.department_distribution,
-                'careers_url': company.get('careers_url', ''),
-            }
-            self.db.upsert_company(company_data)
+            # Add to database
+            company_id = self.db.add_company(
+                company_name=board.company_name,
+                ats_type=board.ats_type,
+                board_url=board.board_url,
+                job_count=len(board.jobs)
+            )
             
-            # CRITICAL: Archive jobs and track changes
-            active, closed = self.process_and_archive_jobs(board, company_id)
+            if company_id:
+                # Archive jobs
+                new, updated, closed = self.db.archive_jobs(company_id, [
+                    {
+                        'id': job.id,
+                        'title': job.title,
+                        'location': job.location,
+                        'department': job.department,
+                        'work_type': job.work_type,
+                        'url': job.url,
+                        'posted_date': job.posted_date,
+                        'metadata': job.metadata
+                    }
+                    for job in board.jobs
+                ])
+                
+                logger.info(f"✅ Added {company_name}: {new} new jobs, {updated} updated, {closed} closed")
             
-            self.stats.total_jobs += board.job_count
-            self.stats.closed_jobs += closed
-            self.stats.archived_jobs += active
-
-            return True
-        return False
-
-    async def run_discovery(self, max_companies: Optional[int] = None) -> CollectorStats:
-        """Run discovery on untested seed companies"""
-        self._running = True
-        self.stats = CollectorStats()
-        seeds = self.db.get_seeds_for_collection(max_companies or 500)
-        total = len(seeds)
-        logger.info(f"🔍 Starting discovery on {total} seeds")
-
+            return board
+        
+        logger.info(f"❌ No ATS found for {company_name}")
+        return None
+    
+    async def run_discovery(self, max_companies: int = 500) -> CollectionStats:
+        """Run company discovery - PRIORITIZE QUALITY SEEDS"""
+        logger.info(f"🔍 Starting discovery on up to {max_companies} seed companies")
+        
+        # Get seeds prioritized by success rate
+        seeds = self.db.get_seeds(limit=max_companies, prioritize_quality=True)
+        
+        logger.info(f"📋 Testing {len(seeds)} seeds (prioritized by quality)")
+        
+        tasks = []
+        for seed in seeds:
+            task = self._discover_and_scrape(seed['company_name'])
+            tasks.append(task)
+        
+        # Process in batches
         batch_size = 20
-        processed = 0
-        for i in range(0, total, batch_size):
-            if not self._running:
-                break
-            batch = seeds[i:i + batch_size]
-            tasks = [self._test_company(seed_id, name, slug, src) for seed_id, name, slug, src in batch]
-            results = await asyncio.gather(*tasks)
-
-            tested_ids = [s[0] for s in batch]
-            self.db.mark_seeds_tested(tested_ids, datetime.utcnow())
-            for idx, (found, _) in enumerate(results):
-                if found:
-                    self.db.mark_seed_hit(batch[idx][0])
-
-            processed += len(batch)
-            progress = (processed / total) * 100
-            self._report_progress(progress, {'phase': 'discovery'})
-
-            await asyncio.sleep(random.uniform(5, 12))
-
-        # Create snapshot after discovery
-        self.db.create_6h_snapshots()
-        self.db.create_monthly_snapshot()
+        for i in range(0, len(tasks), batch_size):
+            batch = tasks[i:i + batch_size]
+            await asyncio.gather(*batch, return_exceptions=True)
+            
+            progress = min(100, (i + batch_size) / len(tasks) * 100)
+            self._update_progress(progress)
+            
+            await asyncio.sleep(2)  # Rate limiting between batches
         
-        self.stats.end_time = datetime.utcnow()
-        await self._close_client()
-        self._running = False
+        # After testing, blacklist poor performers
+        try:
+            blacklisted = self.db.blacklist_poor_seeds(min_tests=3, max_success_rate=5.0)
+            if blacklisted:
+                logger.info(f"🚫 Blacklisted {blacklisted} poor-performing seeds")
+        except Exception as e:
+            logger.debug(f"Seed blacklisting not available: {e}")
         
-        logger.info(f"✅ Discovery complete: {self.stats.to_dict()}")
+        self.stats.end_time = datetime.now()
+        logger.info(f"✅ Discovery complete: {self.stats.total_discovered} companies, {self.stats.total_jobs_collected} jobs")
+        
         return self.stats
-
-    async def run_refresh(self, hours_since_update: int = 6, max_companies: int = 500) -> CollectorStats:
-        """Refresh existing companies"""
-        self._running = True
-        self.stats = CollectorStats()
-        companies = self.db.get_companies_for_refresh(hours_since_update, max_companies)
-        total = len(companies)
-        logger.info(f"🔄 Starting refresh on {total} companies")
-
-        batch_size = 20
-        processed = 0
-        for i in range(0, total, batch_size):
-            if not self._running:
-                break
-            batch = companies[i:i + batch_size]
-            tasks = [self._refresh_company(c) for c in batch]
-            results = await asyncio.gather(*tasks)
-
-            self.stats.refreshed += sum(1 for r in results if r)
-            processed += len(batch)
-            progress = (processed / total) * 100
-            self._report_progress(progress, {'phase': 'refresh'})
-
-            await asyncio.sleep(random.uniform(4, 10))
-
-        # Create snapshot after refresh
-        self.db.create_6h_snapshots()
-        
-        self.stats.end_time = datetime.utcnow()
-        await self._close_client()
-        self._running = False
-        
-        logger.info(f"✅ Refresh complete: {self.stats.to_dict()}")
-        return self.stats
-
-    def stop(self):
-        """Stop the collector"""
-        self._running = False
+    
+    async def _discover_and_scrape(self, company_name: str):
+        """Test, discover, and scrape a company"""
+        async with self._semaphore:
+            try:
+                board = await self._test_company(company_name)
+                
+                if board:
+                    self.stats.total_discovered += 1
+                    
+                    # Scrape jobs
+                    board = await self.scrape_board(board)
+                    
+                    # Add to database
+                    company_id = self.db.add_company(
+                        company_name=board.company_name,
+                        ats_type=board.ats_type,
+                        board_url=board.board_url,
+                        job_count=len(board.jobs)
+                    )
+                    
+                    if company_id:
+                        # Archive jobs
+                        new, updated, closed = self.db.archive_jobs(company_id, [
+                            {
+                                'id': job.id,
+                                'title': job.title,
+                                'location': job.location,
+                                'department': job.department,
+                                'work_type': job.work_type,
+                                'url': job.url,
+                                'posted_date': job.posted_date,
+                                'metadata': job.metadata
+                            }
+                            for job in board.jobs
+                        ])
+                        
+                        self.stats.total_new_jobs += new
+                        self.stats.total_updated_jobs += updated
+                        self.stats.total_closed_jobs += closed
+            
+            except Exception as e:
+                logger.error(f"Error processing {company_name}: {e}")
 
 # ============================================================================
-# CONVENIENCE FUNCTIONS
+# Convenience Functions
 # ============================================================================
 
-async def run_collection(max_companies: int = None) -> CollectorStats:
-    """Run discovery collection"""
+async def run_collection(max_companies: int = 500) -> CollectionStats:
+    """Run company discovery collection"""
     collector = JobIntelCollector()
-    return await collector.run_discovery(max_companies=max_companies)
+    try:
+        return await collector.run_discovery(max_companies=max_companies)
+    finally:
+        await collector.close()
 
-async def run_refresh(hours_since_update: int = 6, max_companies: int = 500) -> CollectorStats:
-    """Run refresh on existing companies"""
+async def run_refresh(hours_since_update: int = 6, max_companies: int = 500) -> CollectionStats:
+    """Refresh existing companies"""
     collector = JobIntelCollector()
-    return await collector.run_refresh(hours_since_update=hours_since_update, max_companies=max_companies)
-
-if __name__ == "__main__":
-    import sys
-    mode = sys.argv[1] if len(sys.argv) > 1 else "discover"
-    max_companies = int(sys.argv[2]) if len(sys.argv) > 2 else None
-    if mode == "refresh":
-        stats = asyncio.run(run_refresh(max_companies=max_companies or 500))
-    else:
-        stats = asyncio.run(run_collection(max_companies=max_companies))
-    print(json.dumps(stats.to_dict(), indent=2))
+    stats = CollectionStats()
+    
+    try:
+        companies = collector.db.get_companies_for_refresh(hours_since_update, max_companies)
+        logger.info(f"🔄 Refreshing {len(companies)} companies")
+        
+        for company in companies:
+            board = JobBoard(
+                company_name=company['company_name'],
+                ats_type=company['ats_type'],
+                board_url=company['board_url']
+            )
+            
+            board = await collector.scrape_board(board)
+            
+            # Update database
+            collector.db.update_company_job_count(company['id'], len(board.jobs))
+            
+            # Archive jobs
+            new, updated, closed = collector.db.archive_jobs(company['id'], [
+                {
+                    'id': job.id,
+                    'title': job.title,
+                    'location': job.location,
+                    'department': job.department,
+                    'work_type': job.work_type,
+                    'url': job.url,
+                    'posted_date': job.posted_date,
+                    'metadata': job.metadata
+                }
+                for job in board.jobs
+            ])
+            
+            stats.total_jobs_collected += len(board.jobs)
+            stats.total_new_jobs += new
+            stats.total_updated_jobs += updated
+            stats.total_closed_jobs += closed
+        
+        stats.end_time = datetime.now()
+        logger.info(f"✅ Refresh complete: {stats.total_jobs_collected} jobs processed")
+        
+        return stats
+    
+    finally:
+        await collector.close()
