@@ -62,6 +62,25 @@
             0%, 100% { opacity: 1; }
             50% { opacity: 0.5; }
         }
+        
+        /* FIX: Prevent infinite chart expansion */
+        .chart-container {
+            position: relative;
+            height: 300px !important;
+            max-height: 300px !important;
+            width: 100%;
+            overflow: hidden;
+        }
+        
+        .chart-container canvas {
+            max-height: 300px !important;
+        }
+        
+        /* Prevent body from expanding infinitely */
+        body {
+            max-width: 100vw;
+            overflow-x: hidden;
+        }
     </style>
 </head>
 <body class="bg-gray-50">
@@ -140,7 +159,7 @@
                             💼 Jobs
                         </a>
                         <a href="/submit-seed" class="nav-link px-3 py-2 rounded-md text-sm font-medium">
-                            ➕ Submit Company
+                            ➕ Submit
                         </a>
                     </div>
                 </div>
@@ -149,16 +168,35 @@
                         <div class="w-2 h-2 bg-green-500 rounded-full pulse"></div>
                         <span class="text-gray-600">Connected</span>
                     </div>
-                    <button id="settings-btn" class="text-gray-600 hover:text-gray-900 p-2 rounded-md hover:bg-gray-100 transition">
+                    <!-- MIGRATION BUTTON - PROMINENT LOCATION -->
+                    <button id="run-migrations-btn-header" class="hidden bg-yellow-500 text-white px-4 py-2 rounded-md hover:bg-yellow-600 transition font-medium shadow-md text-sm">
+                        🔧 Migrate DB
+                    </button>
+                    <button id="settings-btn" class="text-gray-600 hover:text-gray-900 p-2 rounded-md hover:bg-gray-100 transition" title="Settings">
                         ⚙️
                     </button>
-                    <button id="refresh-btn" class="text-gray-600 hover:text-gray-900 p-2 rounded-md hover:bg-gray-100 transition">
+                    <button id="refresh-btn" class="text-gray-600 hover:text-gray-900 p-2 rounded-md hover:bg-gray-100 transition" title="Refresh Dashboard">
                         🔄
                     </button>
                 </div>
             </div>
         </div>
     </nav>
+
+    <!-- Admin Alert Banner (shown when admin logged in) -->
+    <div id="admin-banner" class="hidden bg-gradient-to-r from-purple-600 to-blue-600 text-white">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-3">
+                    <span class="text-xl">🔐</span>
+                    <span class="font-medium">Admin Mode Active</span>
+                </div>
+                <button id="run-migrations-btn-banner" class="bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded-md font-medium transition shadow-md">
+                    🔧 Run Database Migrations
+                </button>
+            </div>
+        </div>
+    </div>
 
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <!-- Header -->
@@ -308,7 +346,7 @@
         </div>
 
         <!-- Intelligence Events (3 columns: Surges, Declines, Expansions) -->
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8" id="intelligence-events">
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
             <!-- Hiring Surges -->
             <div class="bg-white rounded-lg shadow p-6">
                 <h3 class="text-lg font-semibold text-gray-900 mb-4 flex items-center">
@@ -349,18 +387,22 @@
             </div>
         </div>
 
-        <!-- Charts -->
+        <!-- Charts - FIXED WITH CONTAINER HEIGHTS -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
             <!-- Job Trends Chart -->
             <div class="bg-white rounded-lg shadow p-6">
                 <h3 class="text-lg font-semibold text-gray-900 mb-4">Job Market Trends (7 Days)</h3>
-                <canvas id="trends-chart" height="200"></canvas>
+                <div class="chart-container">
+                    <canvas id="trends-chart"></canvas>
+                </div>
             </div>
 
             <!-- ATS Distribution Chart -->
             <div class="bg-white rounded-lg shadow p-6">
                 <h3 class="text-lg font-semibold text-gray-900 mb-4">ATS Platform Distribution</h3>
-                <canvas id="ats-chart" height="200"></canvas>
+                <div class="chart-container">
+                    <canvas id="ats-chart"></canvas>
+                </div>
             </div>
         </div>
 
@@ -370,10 +412,7 @@
                 <span class="text-2xl mr-2">🔧</span>
                 Admin Actions
             </h3>
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <button id="run-migrations-btn" class="bg-yellow-500 border-2 border-yellow-600 text-white px-6 py-3 rounded-lg hover:bg-yellow-600 transition font-medium shadow-md">
-                    🔧 Run Migrations
-                </button>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <button id="expand-tier1-btn" class="bg-white border-2 border-purple-200 text-purple-700 px-6 py-3 rounded-lg hover:bg-purple-50 transition font-medium">
                     🌱 Expand Seeds (Tier 1)
                 </button>
@@ -444,6 +483,19 @@
             document.getElementById('api-key-modal').classList.add('hidden');
         }
 
+        // Show/hide admin features
+        function updateAdminUI() {
+            if (ADMIN_API_KEY) {
+                document.getElementById('admin-section').classList.remove('hidden');
+                document.getElementById('admin-banner').classList.remove('hidden');
+                document.getElementById('run-migrations-btn-header').classList.remove('hidden');
+            } else {
+                document.getElementById('admin-section').classList.add('hidden');
+                document.getElementById('admin-banner').classList.add('hidden');
+                document.getElementById('run-migrations-btn-header').classList.add('hidden');
+            }
+        }
+
         document.getElementById('save-api-key-btn').addEventListener('click', () => {
             const apiKey = document.getElementById('api-key-input').value.trim();
             const adminApiKey = document.getElementById('admin-api-key-input').value.trim();
@@ -455,9 +507,9 @@
                 if (adminApiKey) {
                     localStorage.setItem('admin_api_key', adminApiKey);
                     ADMIN_API_KEY = adminApiKey;
-                    document.getElementById('admin-section').classList.remove('hidden');
                 }
                 
+                updateAdminUI();
                 hideApiKeyModal();
                 loadDashboard();
             } else {
@@ -478,6 +530,39 @@
         document.getElementById('refresh-btn').addEventListener('click', () => {
             loadDashboard();
         });
+
+        // Run Migrations Function
+        async function runMigrations() {
+            if (!ADMIN_API_KEY) {
+                alert('Admin API key required for this action');
+                showApiKeyModal();
+                return;
+            }
+
+            if (!confirm('Run database migrations? This will add missing columns to your database.')) {
+                return;
+            }
+
+            try {
+                const response = await apiRequest('/api/admin/run-migrations', {
+                    method: 'POST',
+                    admin: true
+                });
+
+                if (response.success) {
+                    alert('✅ Migrations completed successfully!\n\n' + response.message);
+                    loadDashboard(); // Refresh the dashboard
+                } else {
+                    alert('❌ Migration failed: ' + (response.error || 'Unknown error'));
+                }
+            } catch (error) {
+                alert('❌ Error running migrations: ' + error.message);
+            }
+        }
+
+        // Attach migration button handlers (header and banner)
+        document.getElementById('run-migrations-btn-header').addEventListener('click', runMigrations);
+        document.getElementById('run-migrations-btn-banner').addEventListener('click', runMigrations);
 
         // Load Stats
         async function loadStats() {
@@ -721,35 +806,6 @@
             }
         });
 
-        // Run Migrations Button (NEW)
-        document.getElementById('run-migrations-btn').addEventListener('click', async () => {
-            if (!ADMIN_API_KEY) {
-                alert('Admin API key required for this action');
-                showApiKeyModal();
-                return;
-            }
-
-            if (!confirm('Run database migrations? This will add missing columns to your database.')) {
-                return;
-            }
-
-            try {
-                const response = await apiRequest('/api/admin/run-migrations', {
-                    method: 'POST',
-                    admin: true
-                });
-
-                if (response.success) {
-                    alert('✅ Migrations completed successfully!\n\n' + response.message);
-                    loadDashboard(); // Refresh the dashboard
-                } else {
-                    alert('❌ Migration failed: ' + (response.error || 'Unknown error'));
-                }
-            } catch (error) {
-                alert('❌ Error running migrations: ' + error.message);
-            }
-        });
-
         // Seed Expansion Actions
         document.getElementById('expand-tier1-btn').addEventListener('click', async () => {
             if (!ADMIN_API_KEY) {
@@ -828,9 +884,7 @@
         if (!API_KEY) {
             showApiKeyModal();
         } else {
-            if (ADMIN_API_KEY) {
-                document.getElementById('admin-section').classList.remove('hidden');
-            }
+            updateAdminUI();
             loadDashboard();
             
             // Auto-refresh every 30 seconds
