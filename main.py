@@ -44,8 +44,15 @@ app = Flask(__name__)
 app.config['JSON_SORT_KEYS'] = False
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max request size
 
-# Force immediate template check
+# After these lines:
+# app = Flask(__name__)
+# CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+# ADD THIS:
+import os
 import sys
+
+# Force immediate template check
 print("=" * 80, file=sys.stderr)
 print("🔍 TEMPLATE CHECK ON STARTUP", file=sys.stderr)
 print("=" * 80, file=sys.stderr)
@@ -295,10 +302,10 @@ scheduler.add_job(scheduled_tier1_expansion, CronTrigger(day_of_week='sun', hour
 scheduler.add_job(scheduled_tier2_expansion, CronTrigger(day=1, hour=4), id='tier2_expansion', replace_existing=True)
 
 logger.info("📅 Scheduler configured:")
-logger.info("    - Refresh: Daily at 6:00 AM UTC")
-logger.info("    - Discovery: Daily at 7:00 AM UTC")
-logger.info("    - Tier 1 Expansion: Weekly (Sunday 3:00 AM UTC)")
-logger.info("    - Tier 2 Expansion: Monthly (1st at 4:00 AM UTC)")
+logger.info("   - Refresh: Daily at 6:00 AM UTC")
+logger.info("   - Discovery: Daily at 7:00 AM UTC")
+logger.info("   - Tier 1 Expansion: Weekly (Sunday 3:00 AM UTC)")
+logger.info("   - Tier 2 Expansion: Monthly (1st at 4:00 AM UTC)")
 
 # ============================================================================
 # Web Routes (Public)
@@ -308,11 +315,7 @@ logger.info("    - Tier 2 Expansion: Monthly (1st at 4:00 AM UTC)")
 @limiter.exempt
 @require_admin_key
 def run_migrations_endpoint():
-    """
-    Run database migrations to add missing columns.
-    NOTE: This is largely redundant if database.py's _create_tables runs correctly.
-    Keeping for manual admin trigger, but only running simplified migration check.
-    """
+    """Run database migrations to add missing columns"""
     try:
         db = get_db()
         
@@ -320,26 +323,25 @@ def run_migrations_endpoint():
             with conn.cursor() as cur:
                 logger.info("Running database migrations...")
                 
-                # Check 1: Add metadata column to intelligence_events if missing
-                cur.execute("""
-                    ALTER TABLE intelligence_events  
-                    ADD COLUMN IF NOT EXISTS metadata JSONB
-                """)
-                logger.info("✅ Checked/Added metadata column to intelligence_events")
+                # Add metadata column to intelligence_events if missing
+                try:
+                    cur.execute("""
+                        ALTER TABLE intelligence_events 
+                        ADD COLUMN IF NOT EXISTS metadata JSONB
+                    """)
+                    logger.info("✅ Added metadata column to intelligence_events")
+                except Exception as e:
+                    logger.warning(f"metadata column may already exist: {e}")
                 
-                # Check 2: Verify job_archive has location column
-                cur.execute("""
-                    ALTER TABLE job_archive  
-                    ADD COLUMN IF NOT EXISTS location TEXT
-                """)
-                logger.info("✅ Checked/Added location column to job_archive")
-                
-                # Check 3: Verify job_archive has closed_at column (The key fix from last session)
-                cur.execute("""
-                    ALTER TABLE job_archive  
-                    ADD COLUMN IF NOT EXISTS closed_at TIMESTAMP
-                """)
-                logger.info("✅ Checked/Added closed_at column to job_archive")
+                # Verify job_archive has location column
+                try:
+                    cur.execute("""
+                        ALTER TABLE job_archive 
+                        ADD COLUMN IF NOT EXISTS location TEXT
+                    """)
+                    logger.info("✅ Added location column to job_archive")
+                except Exception as e:
+                    logger.warning(f"location column may already exist: {e}")
                 
                 conn.commit()
                 logger.info("✅ All migrations complete!")
@@ -375,8 +377,7 @@ def health():
     """Health check endpoint for monitoring"""
     try:
         db = get_db()
-        # NOTE: db.get_stats() MUST exist in database.py
-        stats = db.get_stats() 
+        stats = db.get_stats()
         
         scheduler_running = scheduler.running
         job_count = len(scheduler.get_jobs()) if scheduler_running else 0
@@ -408,7 +409,6 @@ def ready():
     """Readiness probe for Railway"""
     try:
         db = get_db()
-        # NOTE: db.get_stats() MUST exist in database.py
         db.get_stats()
         return jsonify({'status': 'ready'}), 200
     except Exception as e:
@@ -465,7 +465,6 @@ def api_trends():
     
     try:
         db = get_db()
-        # NOTE: db.get_market_trends() MUST exist in database.py
         granular = db.get_market_trends(days=validated.days)
         monthly = db.get_monthly_snapshots()
         
@@ -493,7 +492,6 @@ def api_intel():
     try:
         db = get_db()
         surges, declines = db.get_job_count_changes(days=validated.days)
-        # NOTE: db.get_location_expansions() MUST exist in database.py
         expansions = db.get_location_expansions(days=validated.days)
         
         return jsonify({
@@ -513,7 +511,6 @@ def api_advanced_analytics():
     """Get comprehensive analytics"""
     try:
         db = get_db()
-        # NOTE: db.get_advanced_analytics() MUST exist in database.py
         analytics = db.get_advanced_analytics()
         return jsonify(analytics), 200
         
@@ -640,12 +637,12 @@ def api_company_detail(company_id):
                 columns = [desc[0] for desc in cur.description]
                 company_data = dict(zip(columns, company))
                 
-                # Get jobs for this company - FIXED TABLE NAME
+                # Get jobs for this company
                 cur.execute("""
                     SELECT 
                         id, title, location, department, work_type,
                         job_url, posted_date, status, created_at
-                    FROM job_archive -- <-- FIX: Changed 'jobs' to 'job_archive'
+                    FROM jobs
                     WHERE company_id = %s
                     ORDER BY 
                         CASE WHEN status = 'active' THEN 0 ELSE 1 END,
@@ -656,7 +653,7 @@ def api_company_detail(company_id):
                 jobs_columns = [desc[0] for desc in cur.description]
                 jobs = [dict(zip(jobs_columns, row)) for row in cur.fetchall()]
                 
-                # Get job stats - FIXED TABLE NAME
+                # Get job stats
                 cur.execute("""
                     SELECT 
                         COUNT(*) as total,
@@ -664,7 +661,7 @@ def api_company_detail(company_id):
                         COUNT(CASE WHEN status = 'closed' THEN 1 END) as closed,
                         COUNT(DISTINCT department) as departments,
                         COUNT(DISTINCT location) as locations
-                    FROM job_archive -- <-- FIX: Changed 'jobs' to 'job_archive'
+                    FROM jobs
                     WHERE company_id = %s
                 """, (company_id,))
                 
@@ -697,13 +694,12 @@ def api_jobs():
         
         db = get_db()
         
-        # Build query - FIXED TABLE NAME
         query = """
             SELECT 
                 j.id, j.title, j.location, j.department, j.work_type,
                 j.job_url, j.posted_date, j.status, j.created_at,
                 c.company_name, c.ats_type
-            FROM job_archive j -- <-- FIX: Changed 'jobs' to 'job_archive'
+            FROM jobs j
             JOIN companies c ON j.company_id = c.id
             WHERE 1=1
         """
@@ -745,10 +741,10 @@ def api_jobs():
                 columns = [desc[0] for desc in cur.description]
                 jobs = [dict(zip(columns, row)) for row in cur.fetchall()]
                 
-                # Get total count - FIXED TABLE NAME
+                # Get total count
                 count_query = """
                     SELECT COUNT(*) 
-                    FROM job_archive j -- <-- FIX: Changed 'jobs' to 'job_archive'
+                    FROM jobs j
                     JOIN companies c ON j.company_id = c.id
                     WHERE 1=1
                 """
@@ -799,12 +795,11 @@ def api_job_detail(job_id):
         
         with db.get_connection() as conn:
             with conn.cursor() as cur:
-                # FIXED TABLE NAME
                 cur.execute("""
                     SELECT 
                         j.*,
                         c.company_name, c.ats_type, c.board_url
-                    FROM job_archive j -- <-- FIX: Changed 'jobs' to 'job_archive'
+                    FROM jobs j
                     JOIN companies c ON j.company_id = c.id
                     WHERE j.id = %s
                 """, (job_id,))
@@ -843,8 +838,7 @@ def debug_tables():
                     cur.execute("SELECT COUNT(*) FROM job_archive")
                     job_count = cur.fetchone()[0]
                 except:
-                    # NOTE: If this fails, it's a critical DB setup failure
-                    job_count = "Table doesn't exist (job_archive)"
+                    job_count = "Table doesn't exist"
                 
                 return jsonify({
                     'companies': company_count,
@@ -896,7 +890,7 @@ def api_manual_seed():
                 'message': f'Added {company_name} and testing immediately',
                 'company_name': company_name
             }), 201
-            
+        
         return jsonify({
             'success': True,
             'message': f'Added {company_name} to seed database',
@@ -923,3 +917,254 @@ def api_seeds_get():
     except Exception as e:
         logger.error(f"Error getting seeds: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/seeds', methods=['POST'])
+@limiter.limit(RATE_LIMITS['write'])
+@require_admin_key
+def api_seeds_post():
+    """Add manual seed companies (Admin only)"""
+    data = request.get_json() or {}
+    validated, error = validate_request(SeedCreateRequest, data)
+    
+    if error:
+        return jsonify(error), 400
+    
+    try:
+        db = get_db()
+        added = sum(1 for name in validated.companies if db.add_manual_seed(name))
+        
+        logger.info(f"Added {added}/{len(validated.companies)} manual seeds")
+        
+        return jsonify({
+            'added': added,
+            'total_submitted': len(validated.companies),
+            'success': True
+        }), 201
+        
+    except Exception as e:
+        logger.error(f"Error adding seeds: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+# ============================================================================
+# API Routes - Collection Operations (Admin Only)
+# ============================================================================
+
+@app.route('/api/collect', methods=['POST'])
+@limiter.limit(RATE_LIMITS['expensive'])
+@require_admin_key
+def api_collect():
+    """Start company discovery collection (Admin only)"""
+    if collection_state.get_dict()['running']:
+        return jsonify({'error': 'Collection already running'}), 409
+    
+    data = request.get_json() or {}
+    validated, error = validate_request(CollectionRequest, data)
+    
+    if error:
+        return jsonify(error), 400
+    
+    def run():
+        collection_state.update(
+            running=True,
+            mode='discovery',
+            current_progress=0.0,
+            error=None,
+            last_run=datetime.utcnow().isoformat()
+        )
+        
+        try:
+            collector = JobIntelCollector(progress_callback=progress_callback)
+            stats = asyncio.run(collector.run_discovery(max_companies=validated.max_companies))
+            collection_state.update(last_stats=stats.to_dict())
+            logger.info(f"✅ Manual collection complete: {stats.to_dict()}")
+            
+        except Exception as e:
+            logger.error(f"❌ Manual collection failed: {e}", exc_info=True)
+            collection_state.update(error=str(e))
+        finally:
+            collection_state.update(running=False, current_progress=100)
+            run_daily_maintenance()
+    
+    threading.Thread(target=run, daemon=True).start()
+    
+    return jsonify({
+        'status': 'started',
+        'message': 'Company discovery initiated',
+        'max_companies': validated.max_companies
+    }), 202
+
+@app.route('/api/refresh', methods=['POST'])
+@limiter.limit(RATE_LIMITS['expensive'])
+@require_admin_key
+def api_refresh():
+    """Refresh existing companies (Admin only)"""
+    if collection_state.get_dict()['running']:
+        return jsonify({'error': 'Collection already running'}), 409
+    
+    data = request.get_json() or {}
+    validated, error = validate_request(RefreshRequest, data)
+    
+    if error:
+        return jsonify(error), 400
+    
+    def run():
+        collection_state.update(
+            running=True,
+            mode='refresh',
+            current_progress=0.0,
+            error=None,
+            last_run=datetime.utcnow().isoformat()
+        )
+        
+        try:
+            stats = asyncio.run(run_refresh(
+                hours_since_update=validated.hours_since_update,
+                max_companies=validated.max_companies
+            ))
+            collection_state.update(last_stats=stats.to_dict() if hasattr(stats, 'to_dict') else stats)
+            logger.info(f"✅ Manual refresh complete")
+            
+        except Exception as e:
+            logger.error(f"❌ Manual refresh failed: {e}", exc_info=True)
+            collection_state.update(error=str(e))
+        finally:
+            collection_state.update(running=False, current_progress=100)
+            run_daily_maintenance()
+    
+    threading.Thread(target=run, daemon=True).start()
+    
+    return jsonify({
+        'status': 'started',
+        'message': 'Company refresh initiated',
+        'hours_since_update': validated.hours_since_update,
+        'max_companies': validated.max_companies
+    }), 202
+
+@app.route('/api/expand-seeds', methods=['POST'])
+@limiter.limit(RATE_LIMITS['very_expensive'])
+@require_admin_key
+def api_expand_seeds():
+    """Expand seed database (Admin only)"""
+    if collection_state.get_dict()['running']:
+        return jsonify({'error': 'Collection already running'}), 409
+    
+    data = request.get_json() or {}
+    validated, error = validate_request(SeedExpansionRequest, data)
+    
+    if error:
+        return jsonify(error), 400
+    
+    def run():
+        collection_state.update(
+            running=True,
+            mode=f'expansion_{validated.tier}',
+            current_progress=0.0,
+            error=None,
+            last_run=datetime.utcnow().isoformat()
+        )
+        
+        try:
+            if validated.tier == 'tier1':
+                asyncio.run(run_tier1_expansion())
+            elif validated.tier == 'tier2':
+                asyncio.run(run_tier2_expansion())
+            else:
+                asyncio.run(run_full_expansion())
+            
+            logger.info(f"✅ Seed expansion complete: {validated.tier}")
+            
+        except Exception as e:
+            logger.error(f"❌ Seed expansion failed: {e}", exc_info=True)
+            collection_state.update(error=str(e))
+        finally:
+            collection_state.update(running=False, current_progress=100)
+    
+    threading.Thread(target=run, daemon=True).start()
+    
+    return jsonify({
+        'status': 'started',
+        'message': f'Seed expansion initiated: {validated.tier}',
+        'tier': validated.tier
+    }), 202
+
+# ============================================================================
+# Error Handlers
+# ============================================================================
+
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({'error': 'Not found', 'message': 'Endpoint does not exist'}), 404
+
+@app.errorhandler(405)
+def method_not_allowed(error):
+    return jsonify({'error': 'Method not allowed', 'message': 'HTTP method not supported for this endpoint'}), 405
+
+@app.errorhandler(429)
+def rate_limit_handler(error):
+    return jsonify({
+        'error': 'Rate limit exceeded',
+        'message': 'Too many requests. Please try again later.',
+        'retry_after': str(error.description)
+    }), 429
+
+@app.errorhandler(500)
+def internal_error(error):
+    logger.error(f"Internal server error: {error}", exc_info=True)
+    return jsonify({'error': 'Internal server error'}), 500
+
+# ============================================================================
+# Application Startup
+# ============================================================================
+
+def initialize_app():
+    """Initialize application on startup"""
+    logger.info("=" * 80)
+    logger.info("🚀 Job Intelligence Platform Starting...")
+    logger.info("=" * 80)
+    
+    # Test database connection
+    try:
+        db = get_db()
+        stats = db.get_stats()
+        logger.info(f"✅ Database connected: {stats.get('total_companies', 0)} companies, {stats.get('total_jobs', 0)} jobs")
+    except Exception as e:
+        logger.error(f"❌ Database connection failed: {e}")
+        raise
+    
+    # Start scheduler
+    try:
+        scheduler.start()
+        logger.info(f"✅ Scheduler started with {len(scheduler.get_jobs())} jobs")
+    except Exception as e:
+        logger.error(f"❌ Scheduler failed to start: {e}")
+        raise
+    
+    # Log security configuration
+    logger.info(f"✅ Authentication enabled (API keys configured)")
+    logger.info(f"✅ Rate limiting enabled ({'Redis' if os.getenv('REDIS_URL') else 'Memory'})")
+    
+    logger.info("=" * 80)
+    logger.info("✅ Application initialized successfully!")
+    logger.info("=" * 80)
+
+# ============================================================================
+# Main Entry Point
+# ============================================================================
+
+if __name__ == '__main__':
+    initialize_app()
+    
+    port = int(os.getenv('PORT', 8080))
+    debug = os.getenv('DEBUG', 'false').lower() == 'true'
+    
+    logger.info(f"🌐 Starting server on port {port}...")
+    
+    try:
+        # Use Waitress for production
+        from waitress import serve
+        logger.info("📦 Using Waitress WSGI server (production mode)")
+        serve(app, host='0.0.0.0', port=port, threads=8)
+    except ImportError:
+        logger.warning("⚠️ Waitress not available, using Flask development server")
+        logger.warning("⚠️ NOT RECOMMENDED FOR PRODUCTION")
+        app.run(host='0.0.0.0', port=port, debug=debug, threaded=True)
