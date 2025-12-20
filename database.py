@@ -1,13 +1,14 @@
-"""Database Interface for Job Intelligence Platform"""
+"""Database Interface for Job Intelligence Platform - Production Grade"""
 
 import os
 import logging
 import json
+import re
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta
 from contextlib import contextmanager
 import psycopg2
-from psycopg2.extras import execute_batch
+from psycopg2.extras import execute_batch, RealDictCursor
 from psycopg2.pool import ThreadedConnectionPool
 
 logging.basicConfig(level=logging.INFO)
@@ -88,6 +89,8 @@ class Database:
                 
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_job_archive_status ON job_archive(status)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_job_archive_company_status ON job_archive(company_id, status)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_job_archive_title ON job_archive(title)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_job_archive_location ON job_archive(location)")
                 
                 # Seeds
                 cur.execute("""
@@ -156,12 +159,98 @@ class Database:
                 conn.commit()
     
     def _name_to_token(self, name: str) -> str:
-        import re
         token = name.lower()
         token = re.sub(r'\s+(inc|llc|ltd|co|corp|corporation|gmbh|sa|ag|plc)\.?$', '', token, flags=re.IGNORECASE)
         token = re.sub(r'[^a-z0-9\s-]', '', token)
         token = re.sub(r'[\s-]+', '-', token).strip('-')
         return token
+    
+    def _extract_skills_from_text(self, text: str) -> Dict[str, int]:
+        """Extract skills from job title/description"""
+        if not text:
+            return {}
+        
+        skills = {}
+        
+        # Comprehensive skill patterns
+        skill_patterns = {
+            # Programming Languages
+            'Python': r'\bPython\b',
+            'JavaScript': r'\bJavaScript\b|\bJS\b',
+            'TypeScript': r'\bTypeScript\b|\bTS\b',
+            'Java': r'\bJava\b(?!Script)',
+            'Go': r'\bGo\b|\bGolang\b',
+            'Rust': r'\bRust\b',
+            'C++': r'\bC\+\+\b',
+            'C#': r'\bC#\b',
+            'Ruby': r'\bRuby\b',
+            'PHP': r'\bPHP\b',
+            'Swift': r'\bSwift\b',
+            'Kotlin': r'\bKotlin\b',
+            
+            # Frontend
+            'React': r'\bReact\b|\bReactJS\b',
+            'Vue': r'\bVue\.js\b|\bVue\b',
+            'Angular': r'\bAngular\b',
+            'Next.js': r'\bNext\.js\b',
+            'Svelte': r'\bSvelte\b',
+            'HTML': r'\bHTML\b',
+            'CSS': r'\bCSS\b',
+            'Tailwind': r'\bTailwind\b',
+            
+            # Backend
+            'Node.js': r'\bNode\.?js\b',
+            'Django': r'\bDjango\b',
+            'Flask': r'\bFlask\b',
+            'FastAPI': r'\bFastAPI\b',
+            'Spring': r'\bSpring\b',
+            'Express': r'\bExpress\b',
+            
+            # Cloud
+            'AWS': r'\bAWS\b',
+            'Azure': r'\bAzure\b',
+            'GCP': r'\bGCP\b|\bGoogle Cloud\b',
+            'Docker': r'\bDocker\b',
+            'Kubernetes': r'\bKubernetes\b|\bK8s\b',
+            'Terraform': r'\bTerraform\b',
+            
+            # Databases
+            'SQL': r'\bSQL\b',
+            'PostgreSQL': r'\bPostgreSQL\b|\bPostgres\b',
+            'MySQL': r'\bMySQL\b',
+            'MongoDB': r'\bMongoDB\b',
+            'Redis': r'\bRedis\b',
+            'Elasticsearch': r'\bElasticsearch\b',
+            
+            # Data & AI
+            'Machine Learning': r'\bMachine Learning\b|\bML\b',
+            'AI': r'\bAI\b|\bArtificial Intelligence\b',
+            'Data Science': r'\bData Science\b',
+            'TensorFlow': r'\bTensorFlow\b',
+            'PyTorch': r'\bPyTorch\b',
+            'Spark': r'\bSpark\b',
+            
+            # DevOps
+            'CI/CD': r'\bCI/CD\b',
+            'Jenkins': r'\bJenkins\b',
+            'Git': r'\bGit\b(?!Hub|Lab)',
+            'Linux': r'\bLinux\b',
+            
+            # Roles (for categorization)
+            'Full Stack': r'\bFull[- ]?Stack\b',
+            'Frontend': r'\bFront[- ]?end\b|\bFront[- ]?End\b',
+            'Backend': r'\bBack[- ]?end\b|\bBack[- ]?End\b',
+            'DevOps': r'\bDevOps\b',
+            'Data Engineer': r'\bData Engineer\b',
+            'Mobile': r'\bMobile\b|\biOS\b|\bAndroid\b',
+        }
+        
+        text_lower = text.lower()
+        for skill, pattern in skill_patterns.items():
+            if re.search(pattern, text, re.IGNORECASE):
+                skills[skill] = skills.get(skill, 0) + 1
+        
+        return skills
     
     def acquire_advisory_lock(self, lock_name: str, timeout: int = 0) -> bool:
         try:
@@ -367,6 +456,7 @@ class Database:
                             ORDER BY 
                                 CASE WHEN times_tested = 0 THEN 0 ELSE 1 END,
                                 success_rate DESC NULLS LAST,
+                                tier ASC,
                                 created_at DESC
                             LIMIT %s
                         """, (limit,))
@@ -579,9 +669,11 @@ class Database:
             logger.error(f"Error tracking location expansion: {e}")
     
     def get_time_to_fill_metrics(self) -> Dict:
+        """Get comprehensive time-to-fill metrics"""
         try:
             with self.get_connection() as conn:
-                with conn.cursor() as cur:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    # Overall metrics
                     cur.execute("""
                         SELECT 
                             COUNT(*) as sample_size,
@@ -593,16 +685,51 @@ class Database:
                         WHERE status = 'closed'
                           AND closed_at IS NOT NULL
                           AND closed_at > first_seen
-                          AND closed_at > NOW() - INTERVAL '6 months'
+                          AND closed_at > NOW() - INTERVAL '90 days'
                     """)
-                    row = cur.fetchone()
-                    if row and row[0] > 0:
+                    overall = cur.fetchone()
+                    
+                    # By work type
+                    cur.execute("""
+                        SELECT 
+                            work_type,
+                            AVG(EXTRACT(EPOCH FROM (closed_at - first_seen)) / 86400) as avg_days
+                        FROM job_archive
+                        WHERE status = 'closed'
+                          AND closed_at IS NOT NULL
+                          AND closed_at > first_seen
+                          AND work_type IS NOT NULL
+                          AND closed_at > NOW() - INTERVAL '90 days'
+                        GROUP BY work_type
+                    """)
+                    by_work_type = {row['work_type']: round(row['avg_days'], 1) for row in cur.fetchall()}
+                    
+                    # By department
+                    cur.execute("""
+                        SELECT 
+                            department,
+                            AVG(EXTRACT(EPOCH FROM (closed_at - first_seen)) / 86400) as avg_days
+                        FROM job_archive
+                        WHERE status = 'closed'
+                          AND closed_at IS NOT NULL
+                          AND closed_at > first_seen
+                          AND department IS NOT NULL
+                          AND closed_at > NOW() - INTERVAL '90 days'
+                        GROUP BY department
+                        ORDER BY avg_days DESC
+                        LIMIT 10
+                    """)
+                    by_department = {row['department']: round(row['avg_days'], 1) for row in cur.fetchall()}
+                    
+                    if overall and overall['sample_size'] > 0:
                         return {
-                            'sample_size': row[0],
-                            'overall_avg_ttf_days': round(row[1], 1) if row[1] else None,
-                            'median_ttf_days': round(row[2], 1) if row[2] else None,
-                            'min_ttf_days': round(row[3], 1) if row[3] else None,
-                            'max_ttf_days': round(row[4], 1) if row[4] else None
+                            'sample_size': overall['sample_size'],
+                            'overall_avg_ttf_days': round(overall['avg_ttf_days'], 1) if overall['avg_ttf_days'] else None,
+                            'median_ttf_days': round(overall['median_ttf_days'], 1) if overall['median_ttf_days'] else None,
+                            'min_ttf_days': round(overall['min_ttf_days'], 1) if overall['min_ttf_days'] else None,
+                            'max_ttf_days': round(overall['max_ttf_days'], 1) if overall['max_ttf_days'] else None,
+                            'by_work_type': by_work_type,
+                            'by_department': by_department
                         }
                     return {}
         except Exception as e:
@@ -669,25 +796,170 @@ class Database:
             return []
     
     def get_advanced_analytics(self) -> Dict:
+        """Get comprehensive advanced analytics with skills extraction"""
         try:
             with self.get_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT company_name, job_count FROM companies ORDER BY job_count DESC LIMIT 20")
-                    top_companies = [{'company': row[0], 'jobs': row[1]} for row in cur.fetchall()]
-                    cur.execute("SELECT location, COUNT(*) as count FROM job_archive WHERE status = 'active' AND location IS NOT NULL GROUP BY location ORDER BY count DESC LIMIT 20")
-                    top_locations = [{'location': row[0], 'count': row[1]} for row in cur.fetchall()]
-                    cur.execute("SELECT department, COUNT(*) as count FROM job_archive WHERE status = 'active' AND department IS NOT NULL GROUP BY department ORDER BY count DESC LIMIT 20")
-                    top_departments = [{'department': row[0], 'count': row[1]} for row in cur.fetchall()]
-                    cur.execute("SELECT ats_type, COUNT(*) as count, SUM(job_count) as total_jobs FROM companies GROUP BY ats_type ORDER BY count DESC")
-                    ats_distribution = [{'ats': row[0], 'companies': row[1], 'jobs': row[2]} for row in cur.fetchall()]
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    # Top companies
+                    cur.execute("""
+                        SELECT company_name, job_count, ats_type
+                        FROM companies 
+                        ORDER BY job_count DESC 
+                        LIMIT 20
+                    """)
+                    top_companies = [dict(row) for row in cur.fetchall()]
+                    
+                    # Top hiring regions
+                    cur.execute("""
+                        SELECT location, COUNT(*) as count
+                        FROM job_archive 
+                        WHERE status = 'active' AND location IS NOT NULL
+                        GROUP BY location 
+                        ORDER BY count DESC 
+                        LIMIT 20
+                    """)
+                    top_hiring_regions = {row['location']: row['count'] for row in cur.fetchall()}
+                    
+                    # Department distribution
+                    cur.execute("""
+                        SELECT department, COUNT(*) as count
+                        FROM job_archive 
+                        WHERE status = 'active' AND department IS NOT NULL
+                        GROUP BY department 
+                        ORDER BY count DESC 
+                        LIMIT 20
+                    """)
+                    department_distribution = {row['department']: row['count'] for row in cur.fetchall()}
+                    
+                    # ATS distribution
+                    cur.execute("""
+                        SELECT ats_type, COUNT(*) as companies, SUM(job_count) as jobs
+                        FROM companies 
+                        GROUP BY ats_type 
+                        ORDER BY companies DESC
+                    """)
+                    ats_distribution = [dict(row) for row in cur.fetchall()]
+                    
+                    # Work type distribution
+                    cur.execute("""
+                        SELECT 
+                            COUNT(CASE WHEN LOWER(work_type) LIKE '%remote%' THEN 1 END) as remote,
+                            COUNT(CASE WHEN LOWER(work_type) LIKE '%hybrid%' THEN 1 END) as hybrid,
+                            COUNT(CASE WHEN LOWER(work_type) LIKE '%onsite%' OR LOWER(work_type) LIKE '%on-site%' THEN 1 END) as onsite,
+                            COUNT(*) as total
+                        FROM job_archive
+                        WHERE status = 'active'
+                    """)
+                    work_type_row = cur.fetchone()
+                    work_type_distribution = {
+                        'remote': work_type_row['remote'] or 0,
+                        'hybrid': work_type_row['hybrid'] or 0,
+                        'onsite': work_type_row['onsite'] or 0,
+                        'remote_percent': round((work_type_row['remote'] or 0) / max(work_type_row['total'], 1) * 100, 1),
+                        'hybrid_percent': round((work_type_row['hybrid'] or 0) / max(work_type_row['total'], 1) * 100, 1),
+                        'onsite_percent': round((work_type_row['onsite'] or 0) / max(work_type_row['total'], 1) * 100, 1),
+                    }
+                    
+                    # Salary insights
+                    cur.execute("""
+                        SELECT 
+                            MIN(salary_min) as min_salary,
+                            MAX(salary_max) as max_salary,
+                            AVG((salary_min + salary_max) / 2) as median_salary,
+                            COUNT(*) as with_salary
+                        FROM job_archive
+                        WHERE status = 'active' 
+                          AND salary_min IS NOT NULL 
+                          AND salary_max IS NOT NULL
+                    """)
+                    salary_row = cur.fetchone()
+                    salary_insights = {
+                        'min': int(salary_row['min_salary']) if salary_row['min_salary'] else None,
+                        'max': int(salary_row['max_salary']) if salary_row['max_salary'] else None,
+                        'median': int(salary_row['median_salary']) if salary_row['median_salary'] else None,
+                        'jobs_with_salary': salary_row['with_salary'] or 0
+                    }
+                    
+                    # Skills extraction from job titles
+                    cur.execute("""
+                        SELECT title
+                        FROM job_archive
+                        WHERE status = 'active' AND title IS NOT NULL
+                    """)
+                    jobs = cur.fetchall()
+                    
+                    all_skills = {}
+                    for job in jobs:
+                        skills = self._extract_skills_from_text(job['title'])
+                        for skill, count in skills.items():
+                            all_skills[skill] = all_skills.get(skill, 0) + count
+                    
+                    top_skills = dict(sorted(all_skills.items(), key=lambda x: x[1], reverse=True)[:30])
+                    
+                    # Fastest growing companies (last 14 days)
+                    cur.execute("""
+                        WITH recent AS (
+                            SELECT DISTINCT ON (company_id)
+                                company_id,
+                                job_count as current_jobs,
+                                snapshot_time
+                            FROM snapshots_6h
+                            WHERE snapshot_time >= NOW() - INTERVAL '1 day'
+                            ORDER BY company_id, snapshot_time DESC
+                        ),
+                        old AS (
+                            SELECT DISTINCT ON (company_id)
+                                company_id,
+                                job_count as old_jobs
+                            FROM snapshots_6h
+                            WHERE snapshot_time BETWEEN NOW() - INTERVAL '14 days' AND NOW() - INTERVAL '13 days'
+                            ORDER BY company_id, snapshot_time DESC
+                        )
+                        SELECT 
+                            c.company_name,
+                            c.ats_type,
+                            r.current_jobs,
+                            (r.current_jobs - COALESCE(o.old_jobs, 0)) as job_change,
+                            ROUND((r.current_jobs - COALESCE(o.old_jobs, 0))::DECIMAL / 14, 1) as jobs_per_day
+                        FROM recent r
+                        JOIN companies c ON r.company_id = c.id
+                        LEFT JOIN old o ON r.company_id = o.company_id
+                        WHERE (r.current_jobs - COALESCE(o.old_jobs, 0)) > 0
+                        ORDER BY job_change DESC
+                        LIMIT 10
+                    """)
+                    fastest_growing = [dict(row) for row in cur.fetchall()]
+                    
+                    # Time to fill
+                    time_to_fill = self.get_time_to_fill_metrics()
+                    
+                    # Recent events
+                    cur.execute("""
+                        SELECT 
+                            event_type,
+                            COUNT(*) as event_count,
+                            MAX(detected_at) as last_detected
+                        FROM intelligence_events
+                        WHERE detected_at >= NOW() - INTERVAL '30 days'
+                        GROUP BY event_type
+                        ORDER BY event_count DESC
+                    """)
+                    recent_events = [dict(row) for row in cur.fetchall()]
+                    
                     return {
                         'top_companies': top_companies,
-                        'top_locations': top_locations,
-                        'top_departments': top_departments,
-                        'ats_distribution': ats_distribution
+                        'top_hiring_regions': top_hiring_regions,
+                        'department_distribution': department_distribution,
+                        'ats_distribution': ats_distribution,
+                        'work_type_distribution': work_type_distribution,
+                        'salary_insights': salary_insights,
+                        'top_skills': top_skills,
+                        'fastest_growing': fastest_growing,
+                        'time_to_fill': time_to_fill,
+                        'recent_events': recent_events
                     }
         except Exception as e:
-            logger.error(f"Error getting advanced analytics: {e}")
+            logger.error(f"Error getting advanced analytics: {e}", exc_info=True)
             return {}
 
 _db_instance = None
