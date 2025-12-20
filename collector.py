@@ -420,7 +420,7 @@ class JobIntelCollector:
                 return []
             
             # Extract job data
-            for element in job_elements[:100]:  # Limit to first 100
+            for element in job_elements: # no limit
                 try:
                     title = await element.text_content()
                     if not title or len(title.strip()) < 3:
