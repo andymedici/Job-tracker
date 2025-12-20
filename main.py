@@ -144,6 +144,8 @@ def fix_schema():
         db = get_db()
         with db.get_connection() as conn:
             with conn.cursor() as cur:
+                logger.info("Starting schema fix...")
+                
                 # Check current schema
                 cur.execute("""
                     SELECT column_name, data_type 
@@ -157,7 +159,7 @@ def fix_schema():
                 # Rename old table
                 cur.execute("ALTER TABLE IF EXISTS companies RENAME TO companies_old")
                 
-                # Create new clean table
+                # Create new clean table with correct schema
                 cur.execute("""
                     CREATE TABLE companies (
                         id SERIAL PRIMARY KEY,
@@ -177,28 +179,82 @@ def fix_schema():
                     INSERT INTO companies (company_name, company_name_token, ats_type, board_url, job_count, last_scraped, created_at, metadata)
                     SELECT 
                         company_name,
-                        company_name_token,
+                        COALESCE(company_name_token, token) as company_name_token,
                         ats_type,
-                        board_url,
-                        job_count,
-                        last_scraped,
-                        created_at,
+                        COALESCE(board_url, careers_url) as board_url,
+                        COALESCE(job_count, 0) as job_count,
+                        COALESCE(last_scraped, last_updated) as last_scraped,
+                        COALESCE(created_at, first_discovered, NOW()) as created_at,
                         metadata
                     FROM companies_old
                     ON CONFLICT (company_name) DO NOTHING
                 """)
                 migrated = cur.rowcount
+                logger.info(f"Migrated {migrated} companies")
                 
-                # Drop old table
-                cur.execute("DROP TABLE companies_old")
+                # Update foreign key references
+                logger.info("Updating foreign key references...")
+                
+                # Update job_archive foreign keys
+                cur.execute("""
+                    UPDATE job_archive ja
+                    SET company_id = c.id
+                    FROM companies c
+                    JOIN companies_old co ON c.company_name = co.company_name
+                    WHERE ja.company_id::text = co.id
+                """)
+                
+                # Update snapshots_6h foreign keys
+                cur.execute("""
+                    UPDATE snapshots_6h s
+                    SET company_id = c.id
+                    FROM companies c
+                    JOIN companies_old co ON c.company_name = co.company_name
+                    WHERE s.company_id::text = co.id
+                """)
+                
+                # Update intelligence_events foreign keys
+                cur.execute("""
+                    UPDATE intelligence_events ie
+                    SET company_id = c.id
+                    FROM companies c
+                    JOIN companies_old co ON c.company_name = co.company_name
+                    WHERE ie.company_id::text = co.id
+                """)
+                
+                # Drop old table with CASCADE
+                cur.execute("DROP TABLE companies_old CASCADE")
+                
+                # Recreate foreign key constraints
+                cur.execute("""
+                    ALTER TABLE job_archive 
+                    DROP CONSTRAINT IF EXISTS job_archive_company_id_fkey,
+                    ADD CONSTRAINT job_archive_company_id_fkey 
+                    FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+                """)
+                
+                cur.execute("""
+                    ALTER TABLE snapshots_6h 
+                    DROP CONSTRAINT IF EXISTS snapshots_6h_company_id_fkey,
+                    ADD CONSTRAINT snapshots_6h_company_id_fkey 
+                    FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+                """)
+                
+                cur.execute("""
+                    ALTER TABLE intelligence_events 
+                    DROP CONSTRAINT IF EXISTS intelligence_events_company_id_fkey,
+                    ADD CONSTRAINT intelligence_events_company_id_fkey 
+                    FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+                """)
                 
                 conn.commit()
                 logger.info(f"✅ Schema fixed! Migrated {migrated} companies")
         
         return jsonify({
             'success': True, 
-            'message': f'Schema repaired, {migrated} companies migrated',
-            'old_schema': [f"{col[0]} {col[1]}" for col in current_schema]
+            'message': f'Schema repaired successfully! Migrated {migrated} companies.',
+            'old_columns': len(current_schema),
+            'new_columns': 9
         }), 200
     except Exception as e:
         logger.error(f"Schema fix failed: {e}", exc_info=True)
