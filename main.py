@@ -617,8 +617,10 @@ def run_migrations_endpoint():
             with conn.cursor() as cur:
                 logger.info("Running database migrations...")
                 
-                # Companies table columns
+                # Companies table - ALL missing columns
                 cur.execute("ALTER TABLE companies ADD COLUMN IF NOT EXISTS board_url TEXT")
+                cur.execute("ALTER TABLE companies ADD COLUMN IF NOT EXISTS last_scraped TIMESTAMP")
+                cur.execute("ALTER TABLE companies ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()")
                 cur.execute("ALTER TABLE companies ADD COLUMN IF NOT EXISTS metadata JSONB")
                 
                 # Intelligence events
@@ -626,32 +628,36 @@ def run_migrations_endpoint():
                 
                 # Job archive columns
                 cur.execute("ALTER TABLE job_archive ADD COLUMN IF NOT EXISTS location TEXT")
+                cur.execute("ALTER TABLE job_archive ADD COLUMN IF NOT EXISTS department TEXT")
+                cur.execute("ALTER TABLE job_archive ADD COLUMN IF NOT EXISTS work_type VARCHAR(50)")
                 cur.execute("ALTER TABLE job_archive ADD COLUMN IF NOT EXISTS salary_min INTEGER")
                 cur.execute("ALTER TABLE job_archive ADD COLUMN IF NOT EXISTS salary_max INTEGER")
                 cur.execute("ALTER TABLE job_archive ADD COLUMN IF NOT EXISTS salary_currency VARCHAR(10)")
                 cur.execute("ALTER TABLE job_archive ADD COLUMN IF NOT EXISTS closed_at TIMESTAMP")
+                cur.execute("ALTER TABLE job_archive ADD COLUMN IF NOT EXISTS first_seen TIMESTAMP DEFAULT NOW()")
+                cur.execute("ALTER TABLE job_archive ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP DEFAULT NOW()")
                 
                 # Snapshots
                 cur.execute("ALTER TABLE snapshots_6h ADD COLUMN IF NOT EXISTS active_jobs INTEGER")
+                cur.execute("ALTER TABLE snapshots_6h ADD COLUMN IF NOT EXISTS locations_count INTEGER")
+                cur.execute("ALTER TABLE snapshots_6h ADD COLUMN IF NOT EXISTS departments_count INTEGER")
                 
                 # Seed companies
-                cur.execute("""
-                    ALTER TABLE seed_companies 
-                    ADD COLUMN IF NOT EXISTS website_url TEXT,
-                    ADD COLUMN IF NOT EXISTS times_tested INTEGER DEFAULT 0,
-                    ADD COLUMN IF NOT EXISTS times_successful INTEGER DEFAULT 0,
-                    ADD COLUMN IF NOT EXISTS last_tested_at TIMESTAMP,
-                    ADD COLUMN IF NOT EXISTS success_rate DECIMAL(5,2) DEFAULT 0,
-                    ADD COLUMN IF NOT EXISTS is_blacklisted BOOLEAN DEFAULT FALSE
-                """)
+                cur.execute("ALTER TABLE seed_companies ADD COLUMN IF NOT EXISTS website_url TEXT")
+                cur.execute("ALTER TABLE seed_companies ADD COLUMN IF NOT EXISTS times_tested INTEGER DEFAULT 0")
+                cur.execute("ALTER TABLE seed_companies ADD COLUMN IF NOT EXISTS times_successful INTEGER DEFAULT 0")
+                cur.execute("ALTER TABLE seed_companies ADD COLUMN IF NOT EXISTS last_tested_at TIMESTAMP")
+                cur.execute("ALTER TABLE seed_companies ADD COLUMN IF NOT EXISTS success_rate DECIMAL(5,2) DEFAULT 0")
+                cur.execute("ALTER TABLE seed_companies ADD COLUMN IF NOT EXISTS is_blacklisted BOOLEAN DEFAULT FALSE")
                 
                 conn.commit()
                 logger.info("✅ All migrations complete!")
         
         return jsonify({'success': True, 'message': 'Database migrations completed'}), 200
     except Exception as e:
-        logger.error(f"Migration failed: {e}")
+        logger.error(f"Migration failed: {e}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
+        
 if __name__ == '__main__':
     logger.info("=" * 80)
     logger.info("🚀 Job Intelligence Platform Starting...")
