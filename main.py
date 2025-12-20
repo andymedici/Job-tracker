@@ -347,6 +347,141 @@ def index():
 def dashboard():
     return render_template('dashboard.html')
 
+@app.route('/salary-insights')
+@limiter.exempt
+def salary_insights_page():
+    """Salary insights page"""
+    return render_template('salary-insights.html')
+
+@app.route('/api/salary-insights', methods=['GET'])
+@limiter.limit("30 per minute")
+@require_admin_key
+def get_salary_insights():
+    """Get comprehensive salary insights"""
+    db = get_db()
+    
+    with db.get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Overview metrics
+            cur.execute("""
+                SELECT 
+                    COUNT(*) as jobs_with_salary,
+                    MIN(salary_min) as min_salary,
+                    MAX(salary_max) as max_salary,
+                    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY (salary_min + salary_max) / 2) as median_salary,
+                    (SELECT COUNT(*) FROM job_archive WHERE status = 'active') as total_jobs
+                FROM job_archive
+                WHERE status = 'active' AND salary_min IS NOT NULL AND salary_max IS NOT NULL
+            """)
+            overview = dict(cur.fetchone())
+            
+            # By role
+            cur.execute("""
+                SELECT 
+                    title as role,
+                    AVG((salary_min + salary_max) / 2) as avg_salary,
+                    COUNT(*) as count
+                FROM job_archive
+                WHERE status = 'active' AND salary_min IS NOT NULL
+                GROUP BY title
+                HAVING COUNT(*) >= 3
+                ORDER BY avg_salary DESC
+                LIMIT 20
+            """)
+            by_role = [dict(row) for row in cur.fetchall()]
+            
+            # By location
+            cur.execute("""
+                SELECT 
+                    location,
+                    AVG((salary_min + salary_max) / 2) as avg_salary,
+                    COUNT(*) as count
+                FROM job_archive
+                WHERE status = 'active' AND salary_min IS NOT NULL AND location IS NOT NULL
+                GROUP BY location
+                HAVING COUNT(*) >= 3
+                ORDER BY avg_salary DESC
+                LIMIT 15
+            """)
+            by_location = [dict(row) for row in cur.fetchall()]
+            
+            # By company
+            cur.execute("""
+                SELECT 
+                    c.company_name as company,
+                    AVG((j.salary_min + j.salary_max) / 2) as avg_salary,
+                    COUNT(*) as count
+                FROM job_archive j
+                JOIN companies c ON j.company_id = c.id
+                WHERE j.status = 'active' AND j.salary_min IS NOT NULL
+                GROUP BY c.company_name
+                HAVING COUNT(*) >= 5
+                ORDER BY avg_salary DESC
+                LIMIT 15
+            """)
+            by_company = [dict(row) for row in cur.fetchall()]
+            
+            # Distribution
+            cur.execute("""
+                SELECT 
+                    CASE 
+                        WHEN (salary_min + salary_max) / 2 < 75000 THEN '<$75k'
+                        WHEN (salary_min + salary_max) / 2 < 100000 THEN '$75k-$100k'
+                        WHEN (salary_min + salary_max) / 2 < 150000 THEN '$100k-$150k'
+                        WHEN (salary_min + salary_max) / 2 < 200000 THEN '$150k-$200k'
+                        WHEN (salary_min + salary_max) / 2 < 250000 THEN '$200k-$250k'
+                        ELSE '$250k+'
+                    END as range,
+                    COUNT(*) as count
+                FROM job_archive
+                WHERE status = 'active' AND salary_min IS NOT NULL
+                GROUP BY range
+                ORDER BY MIN((salary_min + salary_max) / 2)
+            """)
+            distribution = [dict(row) for row in cur.fetchall()]
+            
+            # Detailed breakdown
+            cur.execute("""
+                SELECT 
+                    j.title as role,
+                    c.company_name as company,
+                    j.location,
+                    j.salary_min,
+                    j.salary_max,
+                    j.salary_currency as currency,
+                    COUNT(*) as count
+                FROM job_archive j
+                JOIN companies c ON j.company_id = c.id
+                WHERE j.status = 'active' AND j.salary_min IS NOT NULL
+                GROUP BY j.title, c.company_name, j.location, j.salary_min, j.salary_max, j.salary_currency
+                ORDER BY j.salary_max DESC
+                LIMIT 100
+            """)
+            detailed = [dict(row) for row in cur.fetchall()]
+            
+            # Percentiles
+            cur.execute("""
+                SELECT 
+                    PERCENTILE_CONT(0.10) WITHIN GROUP (ORDER BY (salary_min + salary_max) / 2) as p10,
+                    PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY (salary_min + salary_max) / 2) as p25,
+                    PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY (salary_min + salary_max) / 2) as p50,
+                    PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY (salary_min + salary_max) / 2) as p75,
+                    PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY (salary_min + salary_max) / 2) as p90
+                FROM job_archive
+                WHERE status = 'active' AND salary_min IS NOT NULL
+            """)
+            percentiles = dict(cur.fetchone())
+            
+            return jsonify({
+                'overview': overview,
+                'by_role': by_role,
+                'by_location': by_location,
+                'by_company': by_company,
+                'distribution': distribution,
+                'detailed': detailed,
+                'percentiles': percentiles
+            }), 200
+
 @app.route('/analytics')
 @optional_auth
 def analytics():
