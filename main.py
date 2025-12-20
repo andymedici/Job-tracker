@@ -358,6 +358,7 @@ def salary_insights_page():
 @require_admin_key
 def get_salary_insights():
     """Get comprehensive salary insights"""
+    from psycopg2.extras import RealDictCursor
     db = get_db()
     
     with db.get_connection() as conn:
