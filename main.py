@@ -550,7 +550,7 @@ def api_company_detail(company_id):
                 company_data = dict(zip(columns, company))
                 
                 cur.execute("""
-                    SELECT id, job_id, title, location, department, work_type, job_url, 
+                    SELECT job_id, title, location, department, work_type, job_url, 
                            posted_date, salary_min, salary_max, salary_currency, status, first_seen, last_seen
                     FROM job_archive
                     WHERE company_id = %s
@@ -585,7 +585,7 @@ def api_jobs():
         db = get_db()
         query = """
             SELECT 
-                j.id, j.job_id, j.title, j.location, j.department, j.work_type,
+                j.job_id, j.title, j.location, j.department, j.work_type,
                 j.job_url, j.posted_date, j.salary_min, j.salary_max, j.salary_currency,
                 j.status, j.first_seen, j.last_seen,
                 c.company_name, c.ats_type
@@ -655,7 +655,7 @@ def api_jobs():
     except Exception as e:
         logger.error(f"Error getting jobs: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
-
+        
 @app.route('/api/jobs/<int:job_id>')
 @limiter.limit(RATE_LIMITS['authenticated_read'])
 @require_api_key
