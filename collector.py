@@ -1,4 +1,4 @@
-"""Job Intelligence Collector"""
+"""Job Intelligence Collector - FIXED VERSION"""
 
 import asyncio
 import aiohttp
@@ -12,9 +12,7 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
-
-# 1. ADD PLAYWRIGHT IMPORTS
-from playwright.async_api import async_playwright, Playwright, Browser, Page, expect
+from playwright.async_api import async_playwright, Playwright, Browser, TimeoutError as PlaywrightTimeout
 
 from database import get_db, Database
 
@@ -61,24 +59,25 @@ class JobIntelCollector:
         self.client: Optional[aiohttp.ClientSession] = None
         self.stats = CollectionStats()
         self._semaphore = asyncio.Semaphore(10)
-        
-        # 2. ADD PLAYWRIGHT PROPERTIES
         self.playwright: Optional[Playwright] = None
         self.browser: Optional[Browser] = None
     
     async def initialize_playwright(self):
-        """Initializes the Playwright environment and launches the browser once."""
+        """Initialize Playwright browser once"""
         if self.browser is None:
-            self.playwright = await async_playwright().start()
-            # Use a robust browser launch configuration
-            self.browser = await self.playwright.chromium.launch(
-                headless=True,
-                args=['--no-sandbox', '--disable-setuid-sandbox']
-            )
-            logger.info("⚙️ Playwright headless browser initialized.")
+            try:
+                self.playwright = await async_playwright().start()
+                self.browser = await self.playwright.chromium.launch(
+                    headless=True,
+                    args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+                )
+                logger.info("✅ Playwright browser initialized")
+            except Exception as e:
+                logger.error(f"Failed to start Playwright: {e}")
+                self.browser = None
 
     async def close_playwright(self):
-        """Closes the Playwright browser and instance."""
+        """Close Playwright browser"""
         if self.browser:
             await self.browser.close()
             self.browser = None
@@ -102,20 +101,16 @@ class JobIntelCollector:
         return self.client
     
     async def close(self):
-        """Clean up both aiohttp and Playwright"""
+        """Clean up resources"""
         if self.client and not self.client.closed:
             await self.client.close()
-        await self.close_playwright() # Make sure to close Playwright here
-    
-    # ... (Rest of _extract_salary, _test_greenhouse, _test_lever, _test_workday, _test_ashby, _test_company remain the same)
+        await self.close_playwright()
     
     def _extract_salary(self, text: str) -> Dict:
-        """Extract salary information from text (Keep this the same)"""
-        # ... (Your existing _extract_salary code)
+        """Extract salary from text"""
         if not text:
             return {}
         
-        # Look for patterns like "$100k-$150k", "$100,000 - $150,000"
         pattern = r'\$(\d{1,3}(?:,\d{3})*|\d+)k?\s*-\s*\$?(\d{1,3}(?:,\d{3})*|\d+)k?'
         match = re.search(pattern, text, re.IGNORECASE)
         
@@ -123,7 +118,6 @@ class JobIntelCollector:
             min_sal = match.group(1).replace(',', '')
             max_sal = match.group(2).replace(',', '')
             
-            # Handle 'k' notation
             if 'k' in match.group(0).lower():
                 min_sal = int(min_sal.replace('k', '')) * 1000 if 'k' in min_sal.lower() else int(min_sal) * 1000
                 max_sal = int(max_sal.replace('k', '')) * 1000 if 'k' in max_sal.lower() else int(max_sal) * 1000
@@ -139,7 +133,7 @@ class JobIntelCollector:
         
         return {}
 
-    # --- ATS Testing Functions (No Change) ---
+    # ATS Testing Functions
     async def _test_greenhouse(self, company_name: str) -> Optional[JobBoard]:
         token = self.db._name_to_token(company_name)
         test_urls = [
@@ -154,10 +148,6 @@ class JobIntelCollector:
                         text = await resp.text()
                         if 'greenhouse' in text.lower():
                             logger.info(f"✅ Found Greenhouse: {company_name}")
-                            # Use the embed URL as it's closer to the API path
-                            if 'embed' in url:
-                                return JobBoard(company_name, 'greenhouse', url)
-                            # Fallback to the main board if only that is found
                             return JobBoard(company_name, 'greenhouse', url)
             except:
                 pass
@@ -213,11 +203,9 @@ class JobIntelCollector:
                 pass
             await asyncio.sleep(0.5)
         return None
-    # --- End ATS Testing Functions ---
 
     async def _test_company(self, company_name: str, board_hint: str = None) -> Optional[JobBoard]:
-        """Test company - ONLY increment discovered if board found (Keep this the same)"""
-        # ... (Your existing _test_company code)
+        """Test company for ATS - increment discovered ONLY if found"""
         self.stats.total_tested += 1
         
         try:
@@ -258,21 +246,16 @@ class JobIntelCollector:
         
         return None
     
-    # --- SCRAPER FUNCTIONS WITH FIXES/ADDITIONS ---
-    
-    # _scrape_greenhouse and _scrape_lever remain the same as they use APIs/Simple HTML.
+    # Scraping Functions
     
     async def _scrape_greenhouse(self, board: JobBoard) -> List[JobPosting]:
-        # ... (Your existing _scrape_greenhouse code)
+        """Scrape Greenhouse - JSON API + HTML fallback"""
         jobs = []
         client = await self._get_client()
         
-        # 1. Try JSON API first (most reliable, your existing logic)
+        # Try JSON API first
         try:
-            # Change the board URL (which is often the embed HTML page) to the JSON endpoint
             api_url = board.board_url.replace('/embed/job_board?for=', '/embed/job_board/jobs?for=')
-            
-            # If the URL is the main board, try to infer the JSON API token
             if 'embed' not in board.board_url:
                 token_match = re.search(r'greenhouse.io/(\w+)', board.board_url)
                 if token_match:
@@ -296,49 +279,51 @@ class JobIntelCollector:
                                 salary_currency=salary_data.get('salary_currency'),
                                 metadata=job
                             ))
-                        if jobs:
-                            logger.info(f"✅ Greenhouse JSON API Success for {board.company_name}")
-                            return jobs
+                        logger.info(f"✅ Greenhouse JSON found {len(jobs)} jobs for {board.company_name}")
+                        return jobs
         except Exception as e:
-            logger.warning(f"Greenhouse JSON API failed for {board.company_name}. Falling back to HTML scrape. Error: {e}")
+            logger.debug(f"Greenhouse JSON failed for {board.company_name}: {e}")
 
-        # 2. Fallback to HTML scrape (for non-embed/non-API access boards)
+        # HTML fallback
         try:
             async with client.get(board.board_url) as resp:
                 if resp.status == 200:
                     text = await resp.text()
                     soup = BeautifulSoup(text, 'html.parser')
-                    
-                    # Target selector for job listings on a standard Greenhouse HTML page
-                    job_links = soup.select('div.posting, a.job-link')
+                    job_links = soup.select('div.opening, a[href*="/jobs/"]')
                     
                     for link in job_links:
-                        title = link.select_one('h4, a')
-                        location = link.select_one('span.location')
-                        
-                        if title and 'href' in link.attrs:
-                            # Ensure we extract the URL from the parent div if necessary
-                            job_url = urljoin(board.board_url, link.attrs['href']) if link.name == 'a' else urljoin(board.board_url, link.select_one('a')['href'])
+                        title_el = link.select_one('a, h4, .opening-title')
+                        if not title_el:
+                            continue
                             
-                            jobs.append(JobPosting(
-                                id=job_url.split('/')[-1], # Use a unique part of URL as ID fallback
-                                title=title.get_text(strip=True),
-                                url=job_url,
-                                location=location.get_text(strip=True) if location else None,
-                            ))
-            logger.info(f"✅ Greenhouse HTML Scrape found {len(jobs)} jobs for {board.company_name}")
-            return jobs
-
+                        href = link.get('href') or link.select_one('a').get('href') if link.select_one('a') else None
+                        if not href:
+                            continue
+                            
+                        job_url = urljoin(board.board_url, href)
+                        job_id = job_url.split('/')[-1] or title_el.get_text(strip=True).replace(' ', '-')
+                        
+                        location_el = link.select_one('.location, .posting-categories .location')
+                        
+                        jobs.append(JobPosting(
+                            id=job_id,
+                            title=title_el.get_text(strip=True),
+                            url=job_url,
+                            location=location_el.get_text(strip=True) if location_el else None
+                        ))
+            logger.info(f"✅ Greenhouse HTML found {len(jobs)} jobs for {board.company_name}")
         except Exception as e:
-            logger.error(f"Error scraping Greenhouse (HTML fallback) for {board.company_name}: {e}")
-            return []
+            logger.error(f"Greenhouse scrape failed for {board.company_name}: {e}")
+        
+        return jobs
 
     async def _scrape_lever(self, board: JobBoard) -> List[JobPosting]:
-        # ... (Your existing _scrape_lever code)
+        """Scrape Lever - JSON API + HTML fallback"""
         jobs = []
         client = await self._get_client()
         
-        # 1. Try JSON API (your existing logic)
+        # Try JSON API
         try:
             api_url = board.board_url.rstrip('/') + '/postings'
             async with client.get(api_url) as resp:
@@ -359,265 +344,241 @@ class JobIntelCollector:
                             salary_currency=salary_data.get('salary_currency'),
                             metadata=job
                         ))
-                    if jobs:
-                        logger.info(f"✅ Lever JSON API Success for {board.company_name}")
-                        return jobs
+                    logger.info(f"✅ Lever JSON found {len(jobs)} jobs for {board.company_name}")
+                    return jobs
         except Exception as e:
-            logger.warning(f"Lever JSON API failed for {board.company_name}. Falling back to HTML scrape. Error: {e}")
+            logger.debug(f"Lever JSON failed for {board.company_name}: {e}")
 
-        # 2. Fallback to HTML scrape (for when the JSON API is restricted)
+        # HTML fallback
         try:
             async with client.get(board.board_url) as resp:
                 if resp.status == 200:
                     text = await resp.text()
                     soup = BeautifulSoup(text, 'html.parser')
+                    job_postings = soup.select('.posting')
                     
-                    # Selector for job listings on a standard Lever HTML page
-                    job_links = soup.select('.posting')
-                    
-                    for link in job_links:
-                        title_el = link.select_one('h5')
-                        location_el = link.select_one('.location')
+                    for posting in job_postings:
+                        title_el = posting.select_one('h5, .posting-title')
+                        link_el = posting.select_one('a[href]')
                         
-                        if title_el and 'data-qa-posting-url' in link.attrs:
-                            job_url = link.attrs['data-qa-posting-url']
-                            
-                            jobs.append(JobPosting(
-                                id=job_url.split('/')[-1],
-                                title=title_el.get_text(strip=True),
-                                url=job_url,
-                                location=location_el.get_text(strip=True) if location_el else None,
-                            ))
-            logger.info(f"✅ Lever HTML Scrape found {len(jobs)} jobs for {board.company_name}")
-            return jobs
-        
+                        if not title_el or not link_el:
+                            continue
+                        
+                        location_el = posting.select_one('.location, .posting-categories .location')
+                        job_url = link_el.get('href')
+                        
+                        jobs.append(JobPosting(
+                            id=job_url.split('/')[-1],
+                            title=title_el.get_text(strip=True),
+                            url=job_url,
+                            location=location_el.get_text(strip=True) if location_el else None
+                        ))
+            logger.info(f"✅ Lever HTML found {len(jobs)} jobs for {board.company_name}")
         except Exception as e:
-            logger.error(f"Error scraping Lever (HTML fallback) for {board.company_name}: {e}")
-            return []
+            logger.error(f"Lever scrape failed for {board.company_name}: {e}")
+        
+        return jobs
 
     async def _scrape_workday(self, board: JobBoard) -> List[JobPosting]:
-        """
-        UPGRADED: Scrapes Workday using Playwright to handle dynamic loading.
-        Fallback to the old JSON API logic is removed as Playwright is more reliable.
-        """
-        jobs = []
+        """Scrape Workday with Playwright - ROBUST VERSION"""
         if not self.browser:
-            logger.error("Playwright browser is not initialized for Workday scrape.")
-            return jobs
+            logger.warning(f"Playwright not initialized, skipping Workday scrape for {board.company_name}")
+            return []
 
+        jobs = []
         page = None
+        
         try:
             page = await self.browser.new_page()
-            await page.set_default_timeout(30000) # Set 30s timeout for navigation/waiting
-
-            logger.info(f"🌐 Navigating to Workday board with Playwright: {board.board_url}")
-            await page.goto(board.board_url)
-
-            # CRITICAL FIX: Wait for the main job listing selector to appear.
-            # This is the step that guarantees the jobs have loaded dynamically.
-            # Workday job titles are usually contained within an <a> tag with role='button'
-            JOB_LISTING_SELECTOR = 'a[data-ph-at-text="job title"]'
+            await page.goto(board.board_url, wait_until='networkidle', timeout=20000)
             
-            # Use Playwright's expect to wait for visibility/existence
-            await expect(page.locator(JOB_LISTING_SELECTOR)).to_be_visible(timeout=20000)
-            logger.info("✅ Workday job selector found. Jobs are loaded.")
+            # Wait a bit for dynamic content
+            await asyncio.sleep(3)
             
-            # OPTIONAL: Scroll to load more jobs if Workday uses infinite scroll
-            # For simplicity, we just scrape the first view here, but you'd loop this:
-            # await page.evaluate("window.scrollTo(0, document.body.scrollHeight)") 
-            # await asyncio.sleep(2) # Give it time to load more
-
-            # Now, scrape the visible elements
-            job_elements = await page.locator(JOB_LISTING_SELECTOR).all()
-            base_url = page.url.split('/job/')[0]
-
-            for element in job_elements:
-                title = await element.text_content()
-                
-                # The job URL path is in the href attribute
-                job_url_path = await element.get_attribute('href')
-                job_url = urljoin(base_url, job_url_path) if job_url_path else ''
-
-                # Location data is often sibling text, but for Workday it's easier to find it
-                # near the title link, e.g., in a sibling div. This is a common pattern:
-                location_el = await element.locator('xpath=./../../following-sibling::div//dd').first.text_content()
-                
-                job_id = job_url.split('/')[-1] if job_url else title.replace(' ', '-').lower()
-
-                jobs.append(JobPosting(
-                    id=job_id,
-                    title=title.strip(),
-                    url=job_url,
-                    location=location_el.strip() if location_el else None,
-                    # Workday often shows department/work_type on the job detail page, not here.
-                ))
-
-            logger.info(f"✅ Workday Playwright Scrape found {len(jobs)} jobs for {board.company_name}.")
-            return jobs
-
+            # Try multiple selectors
+            job_selectors = [
+                'a[data-automation-id="jobTitle"]',
+                'a[aria-label*="job"]',
+                'div[data-automation-id="jobTitle"] a',
+                'li[class*="job"] a',
+                '.job-link',
+                'a[href*="/job/"]'
+            ]
+            
+            job_elements = []
+            for selector in job_selectors:
+                try:
+                    job_elements = await page.query_selector_all(selector)
+                    if job_elements:
+                        logger.info(f"✅ Found {len(job_elements)} jobs with selector: {selector}")
+                        break
+                except:
+                    continue
+            
+            if not job_elements:
+                logger.warning(f"No job elements found for {board.company_name}")
+                return []
+            
+            # Extract job data
+            for element in job_elements[:100]:  # Limit to first 100
+                try:
+                    title = await element.text_content()
+                    if not title or len(title.strip()) < 3:
+                        continue
+                    
+                    href = await element.get_attribute('href')
+                    if not href:
+                        continue
+                    
+                    job_url = urljoin(board.board_url, href) if not href.startswith('http') else href
+                    job_id = job_url.split('/')[-1] or title.replace(' ', '-').lower()
+                    
+                    # Try to get location from nearby elements
+                    location = None
+                    try:
+                        parent = await element.evaluate('el => el.closest("li") || el.closest("div")')
+                        if parent:
+                            location_el = await page.query_selector(f'text=/San Francisco|New York|Remote|Hybrid|Austin|Seattle|Boston|Chicago|Los Angeles/')
+                            if location_el:
+                                location = await location_el.text_content()
+                    except:
+                        pass
+                    
+                    jobs.append(JobPosting(
+                        id=job_id,
+                        title=title.strip(),
+                        url=job_url,
+                        location=location.strip() if location else None
+                    ))
+                except Exception as e:
+                    logger.debug(f"Error extracting job element: {e}")
+                    continue
+            
+            logger.info(f"✅ Workday found {len(jobs)} jobs for {board.company_name}")
+            
+        except PlaywrightTimeout:
+            logger.warning(f"Timeout loading Workday board for {board.company_name}")
         except Exception as e:
-            logger.error(f"Error scraping Workday for {board.company_name} with Playwright: {e}")
-            return []
+            logger.error(f"Workday scrape error for {board.company_name}: {e}")
         finally:
             if page:
                 await page.close()
-
+        
+        return jobs
 
     async def _scrape_ashby(self, board: JobBoard) -> List[JobPosting]:
-        """
-        UPGRADED: Scrapes Ashby using Playwright for reliability. 
-        It attempts the JSON API first, then falls back to Playwright.
-        """
+        """Scrape Ashby - JSON API + Playwright fallback"""
         jobs = []
         client = await self._get_client()
 
-        # 1. Try JSON API (Still the fastest if it works)
-        # Ashby's JSON API is usually at /api/postings
+        # Try JSON API first
         api_url = board.board_url.rstrip('/') + '/api/postings'
         try:
-            async with client.get(api_url, headers={'Accept': 'application/json'}) as resp:
+            async with client.get(api_url) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    if isinstance(data, list) and data:
-                        # ... (Your existing JSON processing logic)
+                    if isinstance(data, list):
                         for job in data:
                             location_list = [loc.get('name') for loc in job.get('locationNames', []) if loc.get('name')]
                             location = ', '.join(location_list) if location_list else None
-                            work_type = 'Full-time'
                             
                             jobs.append(JobPosting(
                                 id=job.get('id', ''),
                                 title=job.get('title', ''),
                                 url=job.get('url', ''),
                                 location=location,
-                                department=job.get('departmentName', None),
-                                work_type=work_type,
+                                department=job.get('departmentName'),
                                 metadata=job
                             ))
-                        logger.info(f"✅ Ashby JSON API Success for {board.company_name}. Found {len(jobs)} jobs.")
+                        logger.info(f"✅ Ashby JSON found {len(jobs)} jobs for {board.company_name}")
                         return jobs
         except Exception as e:
-            logger.warning(f"Ashby JSON API failed for {board.company_name}. Falling back to Playwright. Error: {e}")
+            logger.debug(f"Ashby JSON failed for {board.company_name}: {e}")
 
-        # 2. Playwright Fallback (for dynamically loaded Ashby boards)
+        # Playwright fallback
         if not self.browser:
-            logger.error("Playwright browser is not initialized for Ashby scrape fallback.")
             return []
 
         page = None
         try:
             page = await self.browser.new_page()
-            await page.set_default_timeout(30000)
+            await page.goto(board.board_url, wait_until='networkidle', timeout=20000)
+            await asyncio.sleep(2)
             
-            logger.info(f"🌐 Navigating to Ashby board with Playwright: {board.board_url}")
-            await page.goto(board.board_url)
-
-            # CRITICAL FIX: Wait for the main job listing selector.
-            # Common Ashby selector for job links/titles
-            JOB_LISTING_SELECTOR = 'a[data-ui="job-posting-link"]'
+            # Multiple selector attempts
+            job_links = []
+            selectors = ['a[href*="/job/"]', 'a[href*="/jobs/"]', '.job-link', 'div[role="listitem"] a']
             
-            await expect(page.locator(JOB_LISTING_SELECTOR)).to_be_visible(timeout=20000)
-            logger.info("✅ Ashby job selector found. Jobs are loaded.")
+            for selector in selectors:
+                try:
+                    job_links = await page.query_selector_all(selector)
+                    if job_links:
+                        break
+                except:
+                    continue
             
-            job_links = await page.locator(JOB_LISTING_SELECTOR).all()
-            base_url = board.board_url.split('/')[2] # Get base domain
-
-            jobs = []
-            for link_element in job_links:
-                title = await link_element.text_content()
-                job_url_path = await link_element.get_attribute('href')
-                
-                # Ashby URLs are typically absolute, but reconstruct just in case
-                if not job_url_path.startswith('http'):
-                    job_url = urljoin(board.board_url, job_url_path)
-                else:
-                    job_url = job_url_path
-
-                # Location is usually in a sibling element with a specific data attribute
-                location_el = await link_element.locator('xpath=./..//span[contains(@data-ui, "location")]').first.text_content()
-                
-                job_id = job_url.split('/')[-1]
-
-                jobs.append(JobPosting(
-                    id=job_id,
-                    title=title.strip(),
-                    url=job_url,
-                    location=location_el.strip() if location_el else None,
-                    # Department/work_type can be scraped from nearby elements if needed
-                ))
-
-            logger.info(f"✅ Ashby Playwright Scrape found {len(jobs)} jobs for {board.company_name}.")
-            return jobs
-
+            for link in job_links[:100]:
+                try:
+                    title = await link.text_content()
+                    href = await link.get_attribute('href')
+                    
+                    if not title or not href:
+                        continue
+                    
+                    job_url = href if href.startswith('http') else urljoin(board.board_url, href)
+                    job_id = job_url.split('/')[-1]
+                    
+                    jobs.append(JobPosting(
+                        id=job_id,
+                        title=title.strip(),
+                        url=job_url
+                    ))
+                except:
+                    continue
+            
+            logger.info(f"✅ Ashby Playwright found {len(jobs)} jobs for {board.company_name}")
+            
         except Exception as e:
-            logger.error(f"Error scraping Ashby with Playwright for {board.company_name}: {e}")
-            return []
+            logger.error(f"Ashby scrape failed for {board.company_name}: {e}")
         finally:
             if page:
                 await page.close()
+        
+        return jobs
 
     async def scrape_board(self, board: JobBoard) -> JobBoard:
+        """Scrape jobs from board"""
         logger.info(f"🔍 Scraping {board.ats_type} for {board.company_name}")
+        
         if board.ats_type == 'greenhouse':
             board.jobs = await self._scrape_greenhouse(board)
         elif board.ats_type == 'lever':
             board.jobs = await self._scrape_lever(board)
         elif board.ats_type == 'workday':
-            # WORKDAY/ASHBY NOW USE PLAYWRIGHT VIA run_collection/run_refresh
             board.jobs = await self._scrape_workday(board)
         elif board.ats_type == 'ashby':
             board.jobs = await self._scrape_ashby(board)
-        # Add other ATS scrapers here
             
         logger.info(f"✅ Scraped {len(board.jobs)} jobs from {board.company_name}")
         self.stats.total_jobs_collected += len(board.jobs)
         return board
     
-    # --- Remaining Logic with Playwright Initialization ---
-    
-    async def run_discovery(self, max_companies: int = 500) -> CollectionStats:
-        """Run discovery - NOW initializes Playwright"""
-        await self.initialize_playwright() # 🔑 New: Initialize Playwright
-        logger.info(f"🔍 Starting discovery on {max_companies} seeds")
-        # ... (Rest of your run_discovery logic remains the same)
-        
-        seeds = self.db.get_seeds(limit=max_companies, prioritize_quality=True)
-        logger.info(f"📋 Testing {len(seeds)} seeds")
-        
-        tasks = []
-        for seed in seeds:
-            task = self._discover_and_scrape(seed['company_name'])
-            tasks.append(task)
-        
-        batch_size = 20
-        for i in range(0, len(tasks), batch_size):
-            batch = tasks[i:i + batch_size]
-            await asyncio.gather(*batch, return_exceptions=True)
-            await asyncio.sleep(2)
-        
-        try:
-            self.db.blacklist_poor_seeds(min_tests=3, max_success_rate=5.0)
-        except:
-            pass
-        
-        self.stats.end_time = datetime.now()
-        logger.info(f"✅ Discovery complete: {self.stats.total_discovered} companies, {self.stats.total_jobs_collected} jobs")
-        return self.stats
-    
     async def _discover_and_scrape(self, company_name: str):
-        # ... (Your existing _discover_and_scrape logic remains the same)
+        """Discover and scrape a single company"""
         async with self._semaphore:
             try:
                 board = await self._test_company(company_name)
                 if board:
-                    self.stats.total_discovered += 1  # ONLY increment if found
+                    self.stats.total_discovered += 1
                     board = await self.scrape_board(board)
+                    
                     company_id = self.db.add_company(
                         company_name=board.company_name,
                         ats_type=board.ats_type,
                         board_url=board.board_url,
                         job_count=len(board.jobs)
                     )
+                    
                     if company_id:
                         new, updated, closed = self.db.archive_jobs(company_id, [
                             {
@@ -641,66 +602,92 @@ class JobIntelCollector:
             except Exception as e:
                 logger.error(f"Error processing {company_name}: {e}")
 
-async def run_collection(max_companies: int = 500) -> CollectionStats:
-    collector = JobIntelCollector()
-    try:
-        # Call run_discovery which now handles Playwright initialization
-        return await collector.run_discovery(max_companies=max_companies)
-    finally:
-        await collector.close() # Now closes both aiohttp and Playwright
+    async def run_discovery(self, max_companies: int = 500) -> CollectionStats:
+        """Run discovery on seed companies"""
+        await self.initialize_playwright()
+        logger.info(f"🔍 Starting discovery on {max_companies} seeds")
+        
+        seeds = self.db.get_seeds(limit=max_companies, prioritize_quality=True)
+        logger.info(f"📋 Testing {len(seeds)} seeds")
+        
+        tasks = []
+        for seed in seeds:
+            task = self._discover_and_scrape(seed['company_name'])
+            tasks.append(task)
+        
+        batch_size = 20
+        for i in range(0, len(tasks), batch_size):
+            batch = tasks[i:i + batch_size]
+            await asyncio.gather(*batch, return_exceptions=True)
+            await asyncio.sleep(2)
+        
+        try:
+            self.db.blacklist_poor_seeds(min_tests=3, max_success_rate=5.0)
+        except:
+            pass
+        
+        self.stats.end_time = datetime.now()
+        logger.info(f"✅ Discovery complete: {self.stats.total_discovered} companies, {self.stats.total_jobs_collected} jobs")
+        return self.stats
 
-async def run_refresh(hours_since_update: int = 6, max_companies: int = 500) -> CollectionStats:
-    collector = JobIntelCollector()
-    stats = CollectionStats()
-    await collector.initialize_playwright() # 🔑 New: Initialize Playwright
-    
-    try:
-        companies = collector.db.get_companies_for_refresh(hours_since_update, max_companies)
+    async def run_refresh(self, hours_since_update: int = 6, max_companies: int = 500) -> CollectionStats:
+        """Refresh existing companies"""
+        await self.initialize_playwright()
+        stats = CollectionStats()
+        
+        companies = self.db.get_companies_for_refresh(hours_since_update, max_companies)
         logger.info(f"🔄 Refreshing {len(companies)} companies")
         
-        # Parallelize the scraping of Workday/Ashby boards
-        tasks = []
         for company in companies:
-            # Re-create JobBoard object
-            board = JobBoard(company['company_name'], company['ats_type'], company['board_url'])
-            tasks.append(collector.scrape_board(board))
+            try:
+                board = JobBoard(company['company_name'], company['ats_type'], company['board_url'])
+                board = await self.scrape_board(board)
+                
+                self.db.update_company_job_count(company['id'], len(board.jobs))
+                new, updated, closed = self.db.archive_jobs(company['id'], [
+                    {
+                        'id': job.id,
+                        'title': job.title,
+                        'location': job.location,
+                        'department': job.department,
+                        'work_type': job.work_type,
+                        'url': job.url,
+                        'posted_date': job.posted_date,
+                        'salary_min': job.salary_min,
+                        'salary_max': job.salary_max,
+                        'salary_currency': job.salary_currency,
+                        'metadata': job.metadata
+                    }
+                    for job in board.jobs
+                ])
+                
+                stats.total_jobs_collected += len(board.jobs)
+                stats.total_new_jobs += new
+                stats.total_updated_jobs += updated
+                stats.total_closed_jobs += closed
+                
+            except Exception as e:
+                logger.error(f"Error refreshing {company['company_name']}: {e}")
             
-        # Run all scraping tasks concurrently
-        refreshed_boards = await asyncio.gather(*tasks, return_exceptions=True)
-
-        for board_or_error in refreshed_boards:
-            if isinstance(board_or_error, Exception):
-                logger.error(f"Error in refresh task: {board_or_error}")
-                continue
-            
-            board = board_or_error
-            company_info = next((c for c in companies if c['company_name'] == board.company_name), None)
-            if not company_info: continue
-
-            collector.db.update_company_job_count(company_info['id'], len(board.jobs))
-            new, updated, closed = collector.db.archive_jobs(company_info['id'], [
-                {
-                    'id': job.id,
-                    'title': job.title,
-                    'location': job.location,
-                    'department': job.department,
-                    'work_type': job.work_type,
-                    'url': job.url,
-                    'posted_date': job.posted_date,
-                    'salary_min': job.salary_min,
-                    'salary_max': job.salary_max,
-                    'salary_currency': job.salary_currency,
-                    'metadata': job.metadata
-                }
-                for job in board.jobs
-            ])
-            stats.total_jobs_collected += len(board.jobs)
-            stats.total_new_jobs += new
-            stats.total_updated_jobs += updated
-            stats.total_closed_jobs += closed
-            
+            await asyncio.sleep(1)
+        
         stats.end_time = datetime.now()
         logger.info(f"✅ Refresh complete: {stats.total_jobs_collected} jobs")
         return stats
+
+
+# Entry point functions
+async def run_collection(max_companies: int = 500) -> CollectionStats:
+    collector = JobIntelCollector()
+    try:
+        return await collector.run_discovery(max_companies=max_companies)
+    finally:
+        await collector.close()
+
+
+async def run_refresh(hours_since_update: int = 6, max_companies: int = 500) -> CollectionStats:
+    collector = JobIntelCollector()
+    try:
+        return await collector.run_refresh(hours_since_update, max_companies)
     finally:
         await collector.close()
