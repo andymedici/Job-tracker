@@ -1,16 +1,13 @@
-"""
-Middleware package for authentication, rate limiting, and validation
-"""
-from .auth import require_api_key, require_admin_key, optional_auth, auth_manager
-from .rate_limit import create_limiter, RATE_LIMITS
-from .validators import validate_request
+"""Middleware package"""
+
+from .auth import AuthManager, require_api_key, require_admin_key, optional_auth
+from .rate_limit import setup_rate_limiter, get_rate_limit_key
 
 __all__ = [
+    'AuthManager',
     'require_api_key',
-    'require_admin_key', 
+    'require_admin_key',
     'optional_auth',
-    'auth_manager',
-    'create_limiter',
-    'RATE_LIMITS',
-    'validate_request'
+    'setup_rate_limiter',
+    'get_rate_limit_key'
 ]
