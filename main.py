@@ -179,6 +179,35 @@ def admin_sql_query():
         logging.error(f"Admin SQL error: {e}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/api/admin/reset-database', methods=['POST'])
+@limiter.exempt
+@require_admin_key
+def reset_database():
+    try:
+        db = get_db()
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                logger.info("RESETTING DATABASE...")
+                
+                # Drop all tables
+                cur.execute("DROP TABLE IF EXISTS intelligence_events CASCADE")
+                cur.execute("DROP TABLE IF EXISTS snapshots_6h CASCADE")
+                cur.execute("DROP TABLE IF EXISTS snapshots_monthly CASCADE")
+                cur.execute("DROP TABLE IF EXISTS job_archive CASCADE")
+                cur.execute("DROP TABLE IF EXISTS companies CASCADE")
+                cur.execute("DROP TABLE IF EXISTS seed_companies CASCADE")
+                
+                # Recreate from scratch
+                db._create_tables()
+                
+                conn.commit()
+                logger.info("✅ Database reset complete!")
+        
+        return jsonify({'success': True, 'message': 'Database reset successfully'}), 200
+    except Exception as e:
+        logger.error(f"Reset failed: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.route('/admin/debug-sql', methods=['GET', 'POST'])
 @require_admin_key  # Keeps it protected with your existing admin check
 def debug_sql_page():
