@@ -146,20 +146,16 @@ def fix_schema():
             with conn.cursor() as cur:
                 logger.info("Starting schema fix...")
                 
-                # Check current schema
-                cur.execute("""
-                    SELECT column_name, data_type 
-                    FROM information_schema.columns 
-                    WHERE table_name = 'companies' 
-                    ORDER BY ordinal_position
-                """)
-                current_schema = cur.fetchall()
-                logger.info(f"Current companies schema: {current_schema}")
+                # Step 1: Drop all foreign key constraints first
+                logger.info("Dropping foreign key constraints...")
+                cur.execute("ALTER TABLE job_archive DROP CONSTRAINT IF EXISTS job_archive_company_id_fkey")
+                cur.execute("ALTER TABLE snapshots_6h DROP CONSTRAINT IF EXISTS snapshots_6h_company_id_fkey")
+                cur.execute("ALTER TABLE intelligence_events DROP CONSTRAINT IF EXISTS intelligence_events_company_id_fkey")
                 
-                # Rename old table
+                # Step 2: Rename old table
                 cur.execute("ALTER TABLE IF EXISTS companies RENAME TO companies_old")
                 
-                # Create new clean table with correct schema
+                # Step 3: Create new clean table
                 cur.execute("""
                     CREATE TABLE companies (
                         id SERIAL PRIMARY KEY,
@@ -174,7 +170,8 @@ def fix_schema():
                     )
                 """)
                 
-                # Migrate data from old table
+                # Step 4: Migrate data
+                logger.info("Migrating company data...")
                 cur.execute("""
                     INSERT INTO companies (company_name, company_name_token, ats_type, board_url, job_count, last_scraped, created_at, metadata)
                     SELECT 
@@ -192,69 +189,71 @@ def fix_schema():
                 migrated = cur.rowcount
                 logger.info(f"Migrated {migrated} companies")
                 
-                # Update foreign key references
-                logger.info("Updating foreign key references...")
+                # Step 5: Create mapping table for ID conversion
+                cur.execute("""
+                    CREATE TEMP TABLE id_mapping AS
+                    SELECT co.id::text as old_id, c.id as new_id, c.company_name
+                    FROM companies_old co
+                    JOIN companies c ON c.company_name = co.company_name
+                """)
                 
-                # Update job_archive foreign keys
+                # Step 6: Update foreign keys using mapping
+                logger.info("Updating job_archive references...")
                 cur.execute("""
                     UPDATE job_archive ja
-                    SET company_id = c.id
-                    FROM companies c
-                    JOIN companies_old co ON c.company_name = co.company_name
-                    WHERE ja.company_id::text = co.id
+                    SET company_id = im.new_id
+                    FROM id_mapping im
+                    WHERE ja.company_id::text = im.old_id
                 """)
+                jobs_updated = cur.rowcount
                 
-                # Update snapshots_6h foreign keys
+                logger.info("Updating snapshots_6h references...")
                 cur.execute("""
                     UPDATE snapshots_6h s
-                    SET company_id = c.id
-                    FROM companies c
-                    JOIN companies_old co ON c.company_name = co.company_name
-                    WHERE s.company_id::text = co.id
+                    SET company_id = im.new_id
+                    FROM id_mapping im
+                    WHERE s.company_id::text = im.old_id
                 """)
+                snapshots_updated = cur.rowcount
                 
-                # Update intelligence_events foreign keys
+                logger.info("Updating intelligence_events references...")
                 cur.execute("""
                     UPDATE intelligence_events ie
-                    SET company_id = c.id
-                    FROM companies c
-                    JOIN companies_old co ON c.company_name = co.company_name
-                    WHERE ie.company_id::text = co.id
+                    SET company_id = im.new_id
+                    FROM id_mapping im
+                    WHERE ie.company_id::text = im.old_id
                 """)
+                events_updated = cur.rowcount
                 
-                # Drop old table with CASCADE
+                # Step 7: Drop old table
                 cur.execute("DROP TABLE companies_old CASCADE")
                 
-                # Recreate foreign key constraints
+                # Step 8: Recreate foreign key constraints
+                logger.info("Recreating foreign key constraints...")
                 cur.execute("""
                     ALTER TABLE job_archive 
-                    DROP CONSTRAINT IF EXISTS job_archive_company_id_fkey,
                     ADD CONSTRAINT job_archive_company_id_fkey 
                     FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
                 """)
                 
                 cur.execute("""
                     ALTER TABLE snapshots_6h 
-                    DROP CONSTRAINT IF EXISTS snapshots_6h_company_id_fkey,
                     ADD CONSTRAINT snapshots_6h_company_id_fkey 
                     FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
                 """)
                 
                 cur.execute("""
                     ALTER TABLE intelligence_events 
-                    DROP CONSTRAINT IF EXISTS intelligence_events_company_id_fkey,
                     ADD CONSTRAINT intelligence_events_company_id_fkey 
                     FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
                 """)
                 
                 conn.commit()
-                logger.info(f"✅ Schema fixed! Migrated {migrated} companies")
+                logger.info(f"✅ Schema fixed! {migrated} companies, {jobs_updated} jobs, {snapshots_updated} snapshots, {events_updated} events")
         
         return jsonify({
             'success': True, 
-            'message': f'Schema repaired successfully! Migrated {migrated} companies.',
-            'old_columns': len(current_schema),
-            'new_columns': 9
+            'message': f'Schema fixed! Migrated {migrated} companies, updated {jobs_updated} jobs, {snapshots_updated} snapshots, {events_updated} events.',
         }), 200
     except Exception as e:
         logger.error(f"Schema fix failed: {e}", exc_info=True)
