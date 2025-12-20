@@ -179,24 +179,6 @@ def admin_sql_query():
         logging.error(f"Admin SQL error: {e}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@app.route('/api/admin/reset-database', methods=['POST'])
-@limiter.exempt
-@require_admin_key
-def reset_database():
-    """Delete all data but keep table structure"""
-    try:
-        db = get_db()
-        with db.get_connection() as conn:
-            with conn.cursor() as cur:
-                # Just delete data, keep tables
-                cur.execute("TRUNCATE intelligence_events, job_archive, snapshots_6h, snapshots_monthly, seed_companies, companies RESTART IDENTITY CASCADE")
-                conn.commit()
-        
-        logger.info("✅ Data cleared")
-        return jsonify({'success': True, 'message': 'All data deleted'}), 200
-    except Exception as e:
-        logger.error(f"Reset failed: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/admin/fix-schema', methods=['POST'])
 @limiter.exempt
