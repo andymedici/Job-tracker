@@ -191,9 +191,14 @@
                     <span class="text-xl">🔐</span>
                     <span class="font-medium">Admin Mode Active</span>
                 </div>
-                <button id="run-migrations-btn-banner" class="bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded-md font-medium transition shadow-md">
-                    🔧 Run Database Migrations
-                </button>
+                <div class="flex space-x-2">
+                    <button id="fix-schema-btn" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-md font-medium transition shadow-md">
+                        🔧 Fix Schema
+                    </button>
+                    <button id="run-migrations-btn-banner" class="bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded-md font-medium transition shadow-md">
+                        🔧 Run Migrations
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -560,9 +565,39 @@
             }
         }
 
-        // Attach migration button handlers (header and banner)
+        // Fix Schema Function
+        async function fixSchema() {
+            if (!ADMIN_API_KEY) {
+                alert('Admin API key required for this action');
+                showApiKeyModal();
+                return;
+            }
+
+            if (!confirm('⚠️ WARNING: This will rebuild the companies table schema.\n\nYour existing companies will be preserved.\n\nContinue?')) {
+                return;
+            }
+
+            try {
+                const response = await apiRequest('/api/admin/fix-schema', {
+                    method: 'POST',
+                    admin: true
+                });
+
+                if (response.success) {
+                    alert('✅ Schema fixed!\n\n' + response.message + '\n\nOld schema: ' + response.old_schema.join(', '));
+                    loadDashboard(); // Refresh the dashboard
+                } else {
+                    alert('❌ Schema fix failed: ' + (response.error || 'Unknown error'));
+                }
+            } catch (error) {
+                alert('❌ Error fixing schema: ' + error.message);
+            }
+        }
+
+        // Attach button handlers
         document.getElementById('run-migrations-btn-header').addEventListener('click', runMigrations);
         document.getElementById('run-migrations-btn-banner').addEventListener('click', runMigrations);
+        document.getElementById('fix-schema-btn').addEventListener('click', fixSchema);
 
         // Load Stats
         async function loadStats() {
