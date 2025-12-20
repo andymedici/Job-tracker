@@ -584,6 +584,10 @@ def api_expand_seeds():
     
     def run_expansion():
         try:
+            # Import inside thread to avoid issues
+            import sys
+            sys.path.insert(0, '/app')
+            
             if tier == 'tier1':
                 from seed_expander import run_tier1_expansion
                 added = run_tier1_expansion()
@@ -593,9 +597,10 @@ def api_expand_seeds():
             else:
                 from seed_expander import run_full_expansion
                 added = run_full_expansion()
+            
             logger.info(f"Seed expansion complete: {added} seeds added")
         except Exception as e:
-            logger.error(f"Seed expansion failed: {e}")
+            logger.error(f"Seed expansion failed: {e}", exc_info=True)
     
     thread = threading.Thread(target=run_expansion, daemon=True)
     thread.start()
