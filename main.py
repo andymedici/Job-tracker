@@ -215,6 +215,8 @@ def fix_schema():
                     WHERE s.company_id::text = im.old_id
                 """)
                 snapshots_updated = cur.rowcount
+
+        
                 
                 logger.info("Updating intelligence_events references...")
                 cur.execute("""
@@ -224,6 +226,18 @@ def fix_schema():
                     WHERE ie.company_id::text = im.old_id
                 """)
                 events_updated = cur.rowcount
+
+                # === ADD THIS NEW BLOCK ===
+                logger.info("Converting company_id columns to INTEGER...")
+                try:
+                    cur.execute("ALTER TABLE job_archive ALTER COLUMN company_id TYPE INTEGER USING company_id::INTEGER")
+                    cur.execute("ALTER TABLE snapshots_6h ALTER COLUMN company_id TYPE INTEGER USING company_id::INTEGER")
+                    cur.execute("ALTER TABLE intelligence_events ALTER COLUMN company_id TYPE INTEGER USING company_id::INTEGER")
+                    logger.info("✅ All company_id columns converted to INTEGER")
+                except Exception as conv_error:
+                    logger.error(f"Column type conversion failed: {conv_error}")
+                    raise  # Will rollback everything safely
+                # ===========================
                 
                 # Step 7: Drop old table
                 cur.execute("DROP TABLE companies_old CASCADE")
