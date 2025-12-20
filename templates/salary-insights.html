@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Salary Insights - Job Intelligence Platform</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        .chart-container {
+            position: relative;
+            height: 350px;
+        }
+        .metric-card {
+            transition: all 0.3s ease;
+        }
+        .metric-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        }
+        .salary-badge {
+            display: inline-block;
+            padding: 0.5rem 1rem;
+            border-radius: 9999px;
+            font-weight: 600;
+            font-size: 0.875rem;
+        }
+        .loading-spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3b82f6;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .data-table {
+            width: 100%;
+        }
+        .data-table th {
+            background-color: #f9fafb;
+            padding: 0.75rem;
+            text-align: left;
+            font-weight: 600;
+            color: #374151;
+            border-bottom: 2px solid #e5e7eb;
+        }
+        .data-table td {
+            padding: 0.75rem;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .data-table tr:hover {
+            background-color: #f9fafb;
+        }
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .currency-badge {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+            background: #e5e7eb;
+            border-radius: 0.25rem;
+            margin-left: 0.5rem;
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <!-- Navigation -->
+    <nav class="bg-white shadow-sm border-b border-gray-200">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center space-x-8">
+                    <h1 class="text-2xl font-bold text-gray-900">
+                        💰 Job Intelligence Platform
+                    </h1>
+                    <div class="hidden md:flex items-center space-x-1">
+                        <a href="/dashboard" class="nav-link px-3 py-2 rounded-md text-sm font-medium">
+                            📈 Dashboard
+                        </a>
+                        <a href="/analytics" class="nav-link px-3 py-2 rounded-md text-sm font-medium">
+                            📊 Analytics
+                        </a>
+                        <a href="/companies" class="nav-link px-3 py-2 rounded-md text-sm font-medium">
+                            🏢 Companies
+                        </a>
+                        <a href="/jobs" class="nav-link px-3 py-2 rounded-md text-sm font-medium">
+                            💼 Jobs
+                        </a>
+                        <a href="/salary-insights" class="nav-link active px-3 py-2 rounded-md text-sm font-medium">
+                            💰 Salary Insights
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <style>
+        .nav-link {
+            color: #6b7280;
+            transition: all 0.2s;
+        }
+        .nav-link:hover {
+            color: #1f2937;
+            background-color: #f3f4f6;
+        }
+        .nav-link.active {
+            color: #3b82f6;
+            background-color: #eff6ff;
+        }
+    </style>
+
+    <!-- Main Content -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        
+        <!-- Hero Section -->
+        <div class="gradient-bg rounded-lg shadow-lg p-8 mb-8 text-white">
+            <h2 class="text-3xl font-bold mb-2">💰 Salary Intelligence</h2>
+            <p class="text-lg opacity-90">Real-time compensation data from 5,000+ job postings across top tech companies</p>
+        </div>
+
+        <!-- Alert -->
+        <div id="alert-bar" class="hidden mb-6 rounded-lg p-4"></div>
+
+        <!-- Key Metrics -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <div class="metric-card bg-white rounded-lg shadow p-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-600">Median Salary</p>
+                        <p id="metric-median" class="text-3xl font-bold text-gray-900 mt-2">-</p>
+                        <p class="text-xs text-gray-500 mt-1">across all roles</p>
+                    </div>
+                    <div class="bg-green-100 rounded-full p-3">
+                        <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+
+            <div class="metric-card bg-white rounded-lg shadow p-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-600">Salary Range</p>
+                        <p id="metric-range" class="text-2xl font-bold text-gray-900 mt-2">-</p>
+                        <p class="text-xs text-gray-500 mt-1">min to max</p>
+                    </div>
+                    <div class="bg-blue-100 rounded-full p-3">
+                        <svg class="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+
+            <div class="metric-card bg-white rounded-lg shadow p-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-600">Jobs with Salary</p>
+                        <p id="metric-with-salary" class="text-3xl font-bold text-gray-900 mt-2">-</p>
+                        <p id="metric-salary-percent" class="text-xs text-gray-500 mt-1">-% of total</p>
+                    </div>
+                    <div class="bg-purple-100 rounded-full p-3">
+                        <svg class="w-8 h-8 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+
+            <div class="metric-card bg-white rounded-lg shadow p-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-600">Top Paying Role</p>
+                        <p id="metric-top-role" class="text-xl font-bold text-gray-900 mt-2">-</p>
+                        <p id="metric-top-salary" class="text-xs text-gray-500 mt-1">-</p>
+                    </div>
+                    <div class="bg-yellow-100 rounded-full p-3">
+                        <svg class="w-8 h-8 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"></path>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts Row 1 -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            <!-- Salary Distribution by Role -->
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">💼 Average Salary by Role</h3>
+                <div class="chart-container">
+                    <canvas id="salary-by-role-chart"></canvas>
+                </div>
+            </div>
+
+            <!-- Salary Distribution by Location -->
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">🌍 Average Salary by Location</h3>
+                <div class="chart-container">
+                    <canvas id="salary-by-location-chart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts Row 2 -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            <!-- Salary Range Distribution -->
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">📊 Salary Range Distribution</h3>
+                <div class="chart-container">
+                    <canvas id="salary-range-chart"></canvas>
+                </div>
+            </div>
+
+            <!-- Company Salary Comparison -->
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">🏢 Top Paying Companies</h3>
+                <div class="chart-container">
+                    <canvas id="company-salary-chart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Detailed Salary Table -->
+        <div class="bg-white rounded-lg shadow p-6 mb-8">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold text-gray-900">📋 Detailed Salary Breakdown</h3>
+                <div class="flex space-x-2">
+                    <select id="filter-currency" class="border-gray-300 rounded-md shadow-sm text-sm">
+                        <option value="all">All Currencies</option>
+                        <option value="USD">USD</option>
+                        <option value="GBP">GBP</option>
+                        <option value="EUR">EUR</option>
+                    </select>
+                    <select id="filter-role" class="border-gray-300 rounded-md shadow-sm text-sm">
+                        <option value="all">All Roles</option>
+                        <option value="engineer">Engineer</option>
+                        <option value="manager">Manager</option>
+                        <option value="designer">Designer</option>
+                        <option value="data">Data/ML</option>
+                    </select>
+                </div>
+            </div>
+            <div id="salary-table-container" class="overflow-x-auto">
+                <div class="loading-spinner"></div>
+            </div>
+        </div>
+
+        <!-- Salary Percentiles -->
+        <div class="bg-white rounded-lg shadow p-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">📈 Salary Percentiles</h3>
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+                <div class="text-center p-4 bg-gray-50 rounded-lg">
+                    <p class="text-sm text-gray-600">10th Percentile</p>
+                    <p id="percentile-10" class="text-2xl font-bold text-gray-900 mt-2">-</p>
+                </div>
+                <div class="text-center p-4 bg-gray-50 rounded-lg">
+                    <p class="text-sm text-gray-600">25th Percentile</p>
+                    <p id="percentile-25" class="text-2xl font-bold text-gray-900 mt-2">-</p>
+                </div>
+                <div class="text-center p-4 bg-blue-50 rounded-lg border-2 border-blue-500">
+                    <p class="text-sm text-blue-600 font-medium">50th (Median)</p>
+                    <p id="percentile-50" class="text-2xl font-bold text-blue-900 mt-2">-</p>
+                </div>
+                <div class="text-center p-4 bg-gray-50 rounded-lg">
+                    <p class="text-sm text-gray-600">75th Percentile</p>
+                    <p id="percentile-75" class="text-2xl font-bold text-gray-900 mt-2">-</p>
+                </div>
+                <div class="text-center p-4 bg-gray-50 rounded-lg">
+                    <p class="text-sm text-gray-600">90th Percentile</p>
+                    <p id="percentile-90" class="text-2xl font-bold text-gray-900 mt-2">-</p>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // Configuration
+        const API_BASE = window.location.origin;
+        let API_KEY = localStorage.getItem('api_key') || '';
+        
+        // Chart instances
+        let charts = {};
+        
+        // Utility: Format Currency
+        function formatCurrency(amount, currency = 'USD') {
+            if (!amount) return '-';
+            return new Intl.NumberFormat('en-US', {
+                style: 'currency',
+                currency: currency,
+                minimumFractionDigits: 0,
+                maximumFractionDigits: 0
+            }).format(amount);
+        }
+        
+        // Utility: API Request
+        async function apiRequest(endpoint) {
+            try {
+                const response = await fetch(`${API_BASE}${endpoint}`, {
+                    headers: {
+                        'X-API-Key': API_KEY
+                    }
+                });
+                
+                if (response.status === 401) {
+                    window.location.href = '/dashboard';
+                    throw new Error('Authentication required');
+                }
+                
+                if (!response.ok) {
+                    throw new Error('API request failed');
+                }
+                
+                return await response.json();
+            } catch (error) {
+                console.error('API Error:', error);
+                throw error;
+            }
+        }
+        
+        // Load Salary Data
+        async function loadSalaryInsights() {
+            try {
+                const data = await apiRequest('/api/salary-insights');
+                
+                updateMetrics(data);
+                updateCharts(data);
+                updateTable(data);
+                updatePercentiles(data);
+                
+            } catch (error) {
+                showAlert('Failed to load salary insights', 'error');
+            }
+        }
+        
+        // Update Metrics
+        function updateMetrics(data) {
+            const metrics = data.overview || {};
+            
+            document.getElementById('metric-median').textContent = formatCurrency(metrics.median_salary);
+            
+            if (metrics.min_salary && metrics.max_salary) {
+                document.getElementById('metric-range').textContent = 
+                    `${formatCurrency(metrics.min_salary, 'USD', true)} - ${formatCurrency(metrics.max_salary, 'USD', true)}`;
+            }
+            
+            document.getElementById('metric-with-salary').textContent = 
+                (metrics.jobs_with_salary || 0).toLocaleString();
+            
+            if (metrics.total_jobs) {
+                const percent = ((metrics.jobs_with_salary / metrics.total_jobs) * 100).toFixed(1);
+                document.getElementById('metric-salary-percent').textContent = `${percent}% of total`;
+            }
+            
+            if (data.by_role && data.by_role.length > 0) {
+                const topRole = data.by_role[0];
+                document.getElementById('metric-top-role').textContent = topRole.role;
+                document.getElementById('metric-top-salary').textContent = formatCurrency(topRole.avg_salary);
+            }
+        }
+        
+        // Update Charts
+        function updateCharts(data) {
+            // Salary by Role
+            if (data.by_role && data.by_role.length > 0) {
+                const ctx = document.getElementById('salary-by-role-chart').getContext('2d');
+                if (charts.byRole) charts.byRole.destroy();
+                
+                const roles = data.by_role.slice(0, 10);
+                charts.byRole = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: roles.map(r => r.role),
+                        datasets: [{
+                            label: 'Average Salary',
+                            data: roles.map(r => r.avg_salary),
+                            backgroundColor: '#3b82f6'
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false }
+                        },
+                        scales: {
+                            y: {
+                                ticks: {
+                                    callback: function(value) {
+                                        return '$' + (value/1000) + 'k';
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+            
+            // Salary by Location
+            if (data.by_location && data.by_location.length > 0) {
+                const ctx = document.getElementById('salary-by-location-chart').getContext('2d');
+                if (charts.byLocation) charts.byLocation.destroy();
+                
+                const locations = data.by_location.slice(0, 10);
+                charts.byLocation = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: locations.map(l => l.location),
+                        datasets: [{
+                            label: 'Average Salary',
+                            data: locations.map(l => l.avg_salary),
+                            backgroundColor: '#10b981'
+                        }]
+                    },
+                    options: {
+                        indexAxis: 'y',
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false }
+                        },
+                        scales: {
+                            x: {
+                                ticks: {
+                                    callback: function(value) {
+                                        return '$' + (value/1000) + 'k';
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+            
+            // Salary Range Distribution
+            if (data.distribution && data.distribution.length > 0) {
+                const ctx = document.getElementById('salary-range-chart').getContext('2d');
+                if (charts.distribution) charts.distribution.destroy();
+                
+                charts.distribution = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: data.distribution.map(d => d.range),
+                        datasets: [{
+                            data: data.distribution.map(d => d.count),
+                            backgroundColor: [
+                                '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'
+                            ]
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { position: 'right' }
+                        }
+                    }
+                });
+            }
+            
+            // Top Paying Companies
+            if (data.by_company && data.by_company.length > 0) {
+                const ctx = document.getElementById('company-salary-chart').getContext('2d');
+                if (charts.byCompany) charts.byCompany.destroy();
+                
+                const companies = data.by_company.slice(0, 10);
+                charts.byCompany = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: companies.map(c => c.company),
+                        datasets: [{
+                            label: 'Avg Salary',
+                            data: companies.map(c => c.avg_salary),
+                            backgroundColor: '#8b5cf6'
+                        }]
+                    },
+                    options: {
+                        indexAxis: 'y',
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false }
+                        },
+                        scales: {
+                            x: {
+                                ticks: {
+                                    callback: function(value) {
+                                        return '$' + (value/1000) + 'k';
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        }
+        
+        // Update Table
+        function updateTable(data) {
+            const container = document.getElementById('salary-table-container');
+            
+            if (!data.detailed || data.detailed.length === 0) {
+                container.innerHTML = '<p class="text-center text-gray-500 py-4">No salary data available</p>';
+                return;
+            }
+            
+            container.innerHTML = `
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Role</th>
+                            <th>Company</th>
+                            <th>Location</th>
+                            <th>Salary Range</th>
+                            <th>Currency</th>
+                            <th>Job Count</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${data.detailed.slice(0, 50).map(job => `
+                            <tr>
+                                <td class="font-medium">${job.role}</td>
+                                <td>${job.company}</td>
+                                <td>${job.location || 'Remote'}</td>
+                                <td class="font-semibold text-green-600">
+                                    ${formatCurrency(job.salary_min, job.currency)} - ${formatCurrency(job.salary_max, job.currency)}
+                                </td>
+                                <td><span class="currency-badge">${job.currency}</span></td>
+                                <td>${job.count}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+        
+        // Update Percentiles
+        function updatePercentiles(data) {
+            const percentiles = data.percentiles || {};
+            
+            document.getElementById('percentile-10').textContent = formatCurrency(percentiles.p10);
+            document.getElementById('percentile-25').textContent = formatCurrency(percentiles.p25);
+            document.getElementById('percentile-50').textContent = formatCurrency(percentiles.p50);
+            document.getElementById('percentile-75').textContent = formatCurrency(percentiles.p75);
+            document.getElementById('percentile-90').textContent = formatCurrency(percentiles.p90);
+        }
+        
+        // Show Alert
+        function showAlert(message, type = 'info') {
+            const alertBar = document.getElementById('alert-bar');
+            const colors = {
+                success: 'bg-green-100 text-green-800 border border-green-200',
+                error: 'bg-red-100 text-red-800 border border-red-200',
+                info: 'bg-blue-100 text-blue-800 border border-blue-200'
+            };
+            
+            alertBar.className = `mb-6 rounded-lg p-4 ${colors[type]}`;
+            alertBar.textContent = message;
+            alertBar.classList.remove('hidden');
+            
+            setTimeout(() => {
+                alertBar.classList.add('hidden');
+            }, 5000);
+        }
+        
+        // Initialize
+        if (!API_KEY) {
+            window.location.href = '/dashboard';
+        } else {
+            loadSalaryInsights();
+        }
+    </script>
+</body>
+</html>
