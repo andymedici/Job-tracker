@@ -801,19 +801,18 @@ def api_expand_seeds():
     
     def run_expansion():
         try:
-            # Import inside thread to avoid issues
             import sys
             sys.path.insert(0, '/app')
             
             if tier == 'tier1':
                 from seed_expander import run_tier1_expansion
-                added = run_tier1_expansion()
+                added = asyncio.run(run_tier1_expansion())
             elif tier == 'tier2':
                 from seed_expander import run_tier2_expansion
-                added = run_tier2_expansion()
+                added = asyncio.run(run_tier2_expansion())
             else:
                 from seed_expander import run_full_expansion
-                added = run_full_expansion()
+                added = asyncio.run(run_full_expansion())
             
             logger.info(f"Seed expansion complete: {added} seeds added")
         except Exception as e:
