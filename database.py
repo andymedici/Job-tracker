@@ -447,16 +447,17 @@ class Database:
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("""
-                        INSERT INTO snapshots_6h (company_id, job_count, active_jobs, locations_count, departments_count)
+                        INSERT INTO snapshots_6h (company_id, job_count, active_jobs, locations_count, departments_count, snapshot_time)
                         SELECT 
-                            c.id,
+                            c.id AS company_id,
                             c.job_count,
-                            COUNT(DISTINCT CASE WHEN j.status = 'active' THEN j.id END) as active_jobs,
-                            COUNT(DISTINCT j.location) as locations_count,
-                            COUNT(DISTINCT j.department) as departments_count
+                            COUNT(DISTINCT CASE WHEN ja.status = 'active' THEN ja.job_id END) AS active_jobs,
+                            COUNT(DISTINCT ja.location) AS locations_count,
+                            COUNT(DISTINCT ja.department) AS departments_count,
+                            NOW() AS snapshot_time
                         FROM companies c
-                        LEFT JOIN job_archive j ON c.id = j.company_id
-                        GROUP BY c.id
+                        LEFT JOIN job_archive ja ON ja.company_id = c.id
+                        GROUP BY c.id, c.job_count
                     """)
                     count = cur.rowcount
                     conn.commit()
