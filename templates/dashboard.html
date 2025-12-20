@@ -168,7 +168,6 @@
                         <div class="w-2 h-2 bg-green-500 rounded-full pulse"></div>
                         <span class="text-gray-600">Connected</span>
                     </div>
-                    <!-- MIGRATION BUTTON - PROMINENT LOCATION -->
                     <button id="run-migrations-btn-header" class="hidden bg-yellow-500 text-white px-4 py-2 rounded-md hover:bg-yellow-600 transition font-medium shadow-md text-sm">
                         🔧 Migrate DB
                     </button>
@@ -192,6 +191,9 @@
                     <span class="font-medium">Admin Mode Active</span>
                 </div>
                 <div class="flex space-x-2">
+                    <button id="reset-database-btn" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md font-medium transition shadow-md">
+                        ⚠️ Reset DB
+                    </button>
                     <button id="fix-schema-btn" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-md font-medium transition shadow-md">
                         🔧 Fix Schema
                     </button>
@@ -392,7 +394,7 @@
             </div>
         </div>
 
-        <!-- Charts - FIXED WITH CONTAINER HEIGHTS -->
+        <!-- Charts -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
             <!-- Job Trends Chart -->
             <div class="bg-white rounded-lg shadow p-6">
@@ -556,7 +558,7 @@
 
                 if (response.success) {
                     alert('✅ Migrations completed successfully!\n\n' + response.message);
-                    loadDashboard(); // Refresh the dashboard
+                    loadDashboard();
                 } else {
                     alert('❌ Migration failed: ' + (response.error || 'Unknown error'));
                 }
@@ -584,8 +586,8 @@
                 });
 
                 if (response.success) {
-                    alert('✅ Schema fixed!\n\n' + response.message + '\n\nOld schema: ' + response.old_schema.join(', '));
-                    loadDashboard(); // Refresh the dashboard
+                    alert('✅ Schema fixed!\n\n' + response.message);
+                    loadDashboard();
                 } else {
                     alert('❌ Schema fix failed: ' + (response.error || 'Unknown error'));
                 }
@@ -594,10 +596,44 @@
             }
         }
 
+        // Reset Database Function
+        async function resetDatabase() {
+            if (!ADMIN_API_KEY) {
+                alert('Admin API key required for this action');
+                showApiKeyModal();
+                return;
+            }
+
+            if (!confirm('⚠️⚠️⚠️ DANGER ⚠️⚠️⚠️\n\nThis will DELETE ALL DATA and reset the database to a clean state.\n\nYou will lose:\n- All companies\n- All jobs\n- All analytics\n\nAre you ABSOLUTELY SURE?')) {
+                return;
+            }
+
+            if (!confirm('Last chance! This cannot be undone. Click OK to proceed.')) {
+                return;
+            }
+
+            try {
+                const response = await apiRequest('/api/admin/reset-database', {
+                    method: 'POST',
+                    admin: true
+                });
+
+                if (response.success) {
+                    alert('✅ Database reset complete!\n\nNext steps:\n1. Run Migrations\n2. Expand Seeds (Tier 1)\n3. Start Discovery');
+                    loadDashboard();
+                } else {
+                    alert('❌ Reset failed: ' + response.error);
+                }
+            } catch (error) {
+                alert('❌ Error: ' + error.message);
+            }
+        }
+
         // Attach button handlers
         document.getElementById('run-migrations-btn-header').addEventListener('click', runMigrations);
         document.getElementById('run-migrations-btn-banner').addEventListener('click', runMigrations);
         document.getElementById('fix-schema-btn').addEventListener('click', fixSchema);
+        document.getElementById('reset-database-btn').addEventListener('click', resetDatabase);
 
         // Load Stats
         async function loadStats() {
