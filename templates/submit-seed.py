@@ -14,204 +14,219 @@
                 <div class="flex items-center space-x-8">
                     <h1 class="text-2xl font-bold text-gray-900">📊 Job Intelligence Platform</h1>
                     <div class="hidden md:flex items-center space-x-1">
-                        <a href="/dashboard" class="nav-link px-3 py-2 rounded-md text-sm font-medium">📈 Dashboard</a>
-                        <a href="/analytics" class="nav-link px-3 py-2 rounded-md text-sm font-medium">📊 Analytics</a>
-                        <a href="/companies" class="nav-link px-3 py-2 rounded-md text-sm font-medium">🏢 Companies</a>
-                        <a href="/jobs" class="nav-link px-3 py-2 rounded-md text-sm font-medium">💼 Jobs</a>
-                        <a href="/submit-seed" class="nav-link active px-3 py-2 rounded-md text-sm font-medium">➕ Submit</a>
+                        <a href="/dashboard" class="px-3 py-2 rounded-md text-sm font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100">📈 Dashboard</a>
+                        <a href="/analytics" class="px-3 py-2 rounded-md text-sm font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100">📊 Analytics</a>
+                        <a href="/companies" class="px-3 py-2 rounded-md text-sm font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100">🏢 Companies</a>
+                        <a href="/jobs" class="px-3 py-2 rounded-md text-sm font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100">💼 Jobs</a>
                     </div>
                 </div>
             </div>
         </div>
     </nav>
 
+    <!-- Main Content -->
     <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <div class="bg-white rounded-lg shadow-lg p-8">
-            <h2 class="text-2xl font-bold text-gray-900 mb-2">Submit a Company</h2>
-            <p class="text-gray-600 mb-6">
-                Add a company to our seed database. We'll test if they use Greenhouse, Lever, Workday, or other ATS platforms.
-            </p>
+            <h2 class="text-3xl font-bold text-gray-900 mb-2">🌱 Submit a Company</h2>
+            <p class="text-gray-600 mb-8">Add a company to track their job postings. We'll automatically detect their ATS and start collecting jobs.</p>
 
-            <div id="alert" class="hidden mb-6 p-4 rounded-lg"></div>
+            <!-- Alert -->
+            <div id="alert" class="hidden mb-6 rounded-lg p-4"></div>
 
+            <!-- Form -->
             <form id="submit-form" class="space-y-6">
+                <!-- Company Name -->
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                    <label for="company-name" class="block text-sm font-medium text-gray-700 mb-2">
                         Company Name <span class="text-red-500">*</span>
                     </label>
                     <input 
                         type="text" 
                         id="company-name" 
+                        name="company_name"
                         required
-                        placeholder="e.g., Acme Corporation"
-                        class="w-full border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                        placeholder="e.g., Stripe, Netflix, Airbnb"
+                        class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
-                    <p class="mt-1 text-sm text-gray-500">Official company name</p>
+                    <p class="mt-1 text-sm text-gray-500">Just the company name - not a URL</p>
                 </div>
 
+                <!-- Website URL (Optional) -->
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                    <label for="website-url" class="block text-sm font-medium text-gray-700 mb-2">
                         Website URL (Optional)
                     </label>
                     <input 
                         type="url" 
                         id="website-url" 
+                        name="website_url"
                         placeholder="https://example.com"
-                        class="w-full border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                        class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
-                    <p class="mt-1 text-sm text-gray-500">Company website or careers page URL</p>
+                    <p class="mt-1 text-sm text-gray-500">Optional - helps with validation</p>
                 </div>
 
+                <!-- ATS Hint -->
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">
-                        ATS Type Hint (Optional)
+                    <label for="ats-hint" class="block text-sm font-medium text-gray-700 mb-2">
+                        ATS Platform (Optional)
                     </label>
                     <select 
-                        id="ats-hint"
-                        class="w-full border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                        id="ats-hint" 
+                        name="ats_hint"
+                        class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
-                        <option value="">Unknown - Test All</option>
+                        <option value="">Auto-detect (recommended)</option>
                         <option value="greenhouse">Greenhouse</option>
                         <option value="lever">Lever</option>
                         <option value="workday">Workday</option>
                         <option value="ashby">Ashby</option>
-                        <option value="jobvite">Jobvite</option>
-                        <option value="smartrecruiters">SmartRecruiters</option>
                     </select>
-                    <p class="mt-1 text-sm text-gray-500">If you know which platform they use</p>
+                    <p class="mt-1 text-sm text-gray-500">If you know their ATS, selecting it speeds up discovery</p>
                 </div>
 
-                <div class="flex items-center">
-                    <input 
-                        type="checkbox" 
-                        id="test-immediately"
-                        class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                    >
-                    <label for="test-immediately" class="ml-2 block text-sm text-gray-700">
-                        Test immediately (otherwise will be tested in next scheduled discovery)
-                    </label>
+                <!-- Test Immediately -->
+                <div class="flex items-start">
+                    <div class="flex items-center h-5">
+                        <input 
+                            type="checkbox" 
+                            id="test-immediately" 
+                            name="test_immediately"
+                            checked
+                            class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                        >
+                    </div>
+                    <div class="ml-3">
+                        <label for="test-immediately" class="font-medium text-gray-700">Test Immediately</label>
+                        <p class="text-sm text-gray-500">Discover and scrape jobs right away (recommended)</p>
+                    </div>
                 </div>
 
-                <div class="flex space-x-4">
+                <!-- Submit Button -->
+                <div class="pt-4">
                     <button 
-                        type="submit"
-                        class="flex-1 bg-blue-600 text-white px-6 py-3 rounded-md hover:bg-blue-700 font-medium transition"
+                        type="submit" 
+                        id="submit-btn"
+                        class="w-full bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition font-medium"
                     >
-                        Submit Company
-                    </button>
-                    <button 
-                        type="button"
-                        onclick="window.location.href='/dashboard'"
-                        class="px-6 py-3 border border-gray-300 rounded-md hover:bg-gray-50 font-medium transition"
-                    >
-                        Cancel
+                        🚀 Submit Company
                     </button>
                 </div>
             </form>
 
-            <div class="mt-8 p-4 bg-blue-50 rounded-lg">
-                <h3 class="font-semibold text-blue-900 mb-2">💡 Tips</h3>
-                <ul class="text-sm text-blue-800 space-y-1">
-                    <li>• We'll automatically detect which ATS platform they use</li>
-                    <li>• Submissions are added to the seed database for testing</li>
-                    <li>• If immediate testing is enabled, results appear within minutes</li>
-                    <li>• Check the Companies page to see if we found their jobs</li>
-                </ul>
+            <!-- Examples -->
+            <div class="mt-8 pt-8 border-t border-gray-200">
+                <h3 class="font-semibold text-gray-900 mb-3">💡 Quick Examples</h3>
+                <div class="grid grid-cols-2 gap-3">
+                    <button class="example-btn text-left px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50 transition" data-company="Stripe" data-ats="greenhouse">
+                        <div class="font-medium">Stripe</div>
+                        <div class="text-xs text-gray-500">Greenhouse • 80+ jobs</div>
+                    </button>
+                    <button class="example-btn text-left px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50 transition" data-company="Netflix" data-ats="greenhouse">
+                        <div class="font-medium">Netflix</div>
+                        <div class="text-xs text-gray-500">Greenhouse • 60+ jobs</div>
+                    </button>
+                    <button class="example-btn text-left px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50 transition" data-company="Airbnb" data-ats="greenhouse">
+                        <div class="font-medium">Airbnb</div>
+                        <div class="text-xs text-gray-500">Greenhouse • 120+ jobs</div>
+                    </button>
+                    <button class="example-btn text-left px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50 transition" data-company="Anthropic" data-ats="greenhouse">
+                        <div class="font-medium">Anthropic</div>
+                        <div class="text-xs text-gray-500">Greenhouse • 25+ jobs</div>
+                    </button>
+                </div>
             </div>
         </div>
     </div>
 
-    <style>
-        .nav-link {
-            color: #6b7280;
-            transition: all 0.2s;
-        }
-        .nav-link:hover {
-            color: #1f2937;
-            background-color: #f3f4f6;
-        }
-        .nav-link.active {
-            color: #3b82f6;
-            background-color: #eff6ff;
-        }
-    </style>
-
     <script>
         const API_BASE = window.location.origin;
-        const ADMIN_API_KEY = localStorage.getItem('admin_api_key') || '';
+        let API_KEY = localStorage.getItem('api_key') || '';
 
+        // Show Alert
         function showAlert(message, type = 'info') {
             const alert = document.getElementById('alert');
             const colors = {
-                success: 'bg-green-100 border-green-400 text-green-800',
-                error: 'bg-red-100 border-red-400 text-red-800',
-                info: 'bg-blue-100 border-blue-400 text-blue-800'
+                success: 'bg-green-100 text-green-800 border border-green-200',
+                error: 'bg-red-100 text-red-800 border border-red-200',
+                info: 'bg-blue-100 text-blue-800 border border-blue-200',
+                warning: 'bg-yellow-100 text-yellow-800 border border-yellow-200'
             };
             
-            alert.className = `mb-6 p-4 rounded-lg border ${colors[type]}`;
+            alert.className = `mb-6 rounded-lg p-4 ${colors[type]}`;
             alert.textContent = message;
             alert.classList.remove('hidden');
             
-            setTimeout(() => {
-                alert.classList.add('hidden');
-            }, 5000);
+            if (type === 'success') {
+                setTimeout(() => {
+                    window.location.href = '/companies';
+                }, 3000);
+            }
         }
 
+        // Form Submit
         document.getElementById('submit-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             
-            if (!ADMIN_API_KEY) {
-                showAlert('Admin API key required. Please set it in the dashboard.', 'error');
-                setTimeout(() => window.location.href = '/dashboard', 2000);
-                return;
-            }
-
-            const companyName = document.getElementById('company-name').value.trim();
-            const websiteUrl = document.getElementById('website-url').value.trim();
-            const atsHint = document.getElementById('ats-hint').value;
-            const testImmediately = document.getElementById('test-immediately').checked;
-
-            if (!companyName) {
-                showAlert('Company name is required', 'error');
-                return;
-            }
-
+            const submitBtn = document.getElementById('submit-btn');
+            submitBtn.disabled = true;
+            submitBtn.textContent = '⏳ Submitting...';
+            
+            const formData = {
+                company_name: document.getElementById('company-name').value.trim(),
+                website_url: document.getElementById('website-url').value.trim() || null,
+                ats_hint: document.getElementById('ats-hint').value || null,
+                test_immediately: document.getElementById('test-immediately').checked
+            };
+            
             try {
                 const response = await fetch(`${API_BASE}/api/seeds/manual`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'X-API-Key': ADMIN_API_KEY
+                        'X-API-Key': API_KEY
                     },
-                    body: JSON.stringify({
-                        company_name: companyName,
-                        website_url: websiteUrl,
-                        ats_hint: atsHint,
-                        test_immediately: testImmediately
-                    })
+                    body: JSON.stringify(formData)
                 });
-
-                const data = await response.json();
-
+                
+                const result = await response.json();
+                
                 if (response.ok) {
-                    showAlert(data.message, 'success');
-                    document.getElementById('submit-form').reset();
+                    let message = `✅ ${formData.company_name} added successfully!`;
                     
-                    if (testImmediately) {
-                        showAlert('Company submitted and testing started! Check the Companies page in a few minutes.', 'success');
+                    if (result.found && result.jobs > 0) {
+                        message += ` Found ${result.jobs} jobs via ${result.ats_type}.`;
+                    } else if (result.found) {
+                        message += ` Discovered on ${result.ats_type} but no jobs found.`;
+                    } else if (formData.test_immediately) {
+                        message += ` Added to seeds. ATS not detected yet - will be tested in next discovery run.`;
                     }
+                    
+                    showAlert(message, 'success');
                 } else {
-                    showAlert(data.error || 'Failed to submit company', 'error');
+                    showAlert(result.error || 'Failed to submit company', 'error');
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = '🚀 Submit Company';
                 }
             } catch (error) {
-                showAlert('Network error: ' + error.message, 'error');
+                showAlert(`Error: ${error.message}`, 'error');
+                submitBtn.disabled = false;
+                submitBtn.textContent = '🚀 Submit Company';
             }
         });
 
-        // Check for admin key on load
-        if (!ADMIN_API_KEY) {
-            showAlert('Admin access required. Redirecting to dashboard...', 'error');
-            setTimeout(() => window.location.href = '/dashboard', 2000);
+        // Example Buttons
+        document.querySelectorAll('.example-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.getElementById('company-name').value = btn.dataset.company;
+                document.getElementById('ats-hint').value = btn.dataset.ats;
+                document.getElementById('test-immediately').checked = true;
+            });
+        });
+
+        // Check API key
+        if (!API_KEY) {
+            showAlert('Please set your API key in the dashboard first', 'warning');
         }
     </script>
 </body>
