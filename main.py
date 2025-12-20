@@ -179,6 +179,43 @@ def admin_sql_query():
         logging.error(f"Admin SQL error: {e}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/admin/debug-sql', methods=['GET', 'POST'])
+@require_admin_key  # Keeps it protected with your existing admin check
+def debug_sql_page():
+    if request.method == 'GET':
+        return render_template_string("""
+        <!DOCTYPE html>
+        <html>
+        <head><title>SQL Debug</title></head>
+        <body style="font-family: Arial; max-width: 800px; margin: 40px auto;">
+            <h1>Quick SQL Debug (SELECT only)</h1>
+            <textarea id="query" rows="10" cols="80" placeholder="Enter SELECT query here">
+SELECT COUNT(*) as active_jobs FROM job_archive WHERE status = 'active';</textarea><br><br>
+            <button onclick="run()">Run Query</button>
+            <pre id="result" style="background:#f0f0f0; padding:10px;"></pre>
+            <script>
+            async function run() {
+                const query = document.getElementById('query').value.trim();
+                if (!query.toUpperCase().startsWith('SELECT')) {
+                    alert('Only SELECT queries allowed');
+                    return;
+                }
+                const resp = await fetch('/api/admin/sql', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({query})
+                });
+                const data = await resp.json();
+                document.getElementById('result').textContent = JSON.stringify(data, null, 2);
+            }
+            </script>
+        </body>
+        </html>
+        """)
+
+    # POST handled by your existing /api/admin/sql endpoint
+    return "Use GET", 200
+
 @app.route('/api/admin/fix-schema', methods=['POST'])
 @limiter.exempt
 @require_admin_key
