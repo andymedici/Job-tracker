@@ -612,13 +612,24 @@ def run_migrations_endpoint():
             with conn.cursor() as cur:
                 logger.info("Running database migrations...")
                 
+                # Companies table columns
+                cur.execute("ALTER TABLE companies ADD COLUMN IF NOT EXISTS board_url TEXT")
+                cur.execute("ALTER TABLE companies ADD COLUMN IF NOT EXISTS metadata JSONB")
+                
+                # Intelligence events
                 cur.execute("ALTER TABLE intelligence_events ADD COLUMN IF NOT EXISTS metadata JSONB")
+                
+                # Job archive columns
                 cur.execute("ALTER TABLE job_archive ADD COLUMN IF NOT EXISTS location TEXT")
                 cur.execute("ALTER TABLE job_archive ADD COLUMN IF NOT EXISTS salary_min INTEGER")
                 cur.execute("ALTER TABLE job_archive ADD COLUMN IF NOT EXISTS salary_max INTEGER")
                 cur.execute("ALTER TABLE job_archive ADD COLUMN IF NOT EXISTS salary_currency VARCHAR(10)")
                 cur.execute("ALTER TABLE job_archive ADD COLUMN IF NOT EXISTS closed_at TIMESTAMP")
+                
+                # Snapshots
                 cur.execute("ALTER TABLE snapshots_6h ADD COLUMN IF NOT EXISTS active_jobs INTEGER")
+                
+                # Seed companies
                 cur.execute("""
                     ALTER TABLE seed_companies 
                     ADD COLUMN IF NOT EXISTS website_url TEXT,
@@ -636,7 +647,6 @@ def run_migrations_endpoint():
     except Exception as e:
         logger.error(f"Migration failed: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
-
 if __name__ == '__main__':
     logger.info("=" * 80)
     logger.info("🚀 Job Intelligence Platform Starting...")
