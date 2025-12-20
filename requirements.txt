@@ -11,3 +11,4 @@ flask-limiter==3.5.0
 lxml==4.9.3
 brotli==1.1.0
 pydantic==2.5.0
+playwright
