@@ -136,6 +136,49 @@ logger.info("   - Discovery: Daily at 7:00 AM UTC")
 logger.info("   - Tier 1 Expansion: Weekly (Sunday 3:00 AM UTC)")
 logger.info("   - Tier 2 Expansion: Monthly (1st at 4:00 AM UTC)")
 
+@app.route('/api/admin/sql', methods=['POST'])
+@require_admin_key  # Keep your existing admin decorator
+@limiter.exempt     # Optional: exempt from rate limiting
+def admin_sql_query():
+    """
+    Quick admin endpoint to run raw SQL queries.
+    POST JSON: {"query": "SELECT COUNT(*) FROM job_archive WHERE status = 'active';"}
+    Returns results as list of dicts.
+    """
+    try:
+        data = request.get_json()
+        if not data or 'query' not in data:
+            return jsonify({'success': False, 'error': 'Missing "query" in JSON body'}), 400
+        
+        query = data['query'].strip()
+        
+        # Safety: Only allow SELECT queries (prevents accidental DELETE/TRUNCATE/etc.)
+        if not query.upper().startswith('SELECT'):
+            return jsonify({'success': False, 'error': 'Only SELECT queries are allowed'}), 400
+        
+        db = get_db()
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query)
+                # Fetch column names
+                columns = [desc[0] for desc in cur.description] if cur.description else []
+                # Fetch rows
+                rows = cur.fetchall()
+                # Convert to list of dicts
+                results = [dict(zip(columns, row)) for row in rows]
+                
+                logging.info(f"Admin SQL executed: {query[:200]}{'...' if len(query) > 200 else ''}")
+                
+                return jsonify({
+                    'success': True,
+                    'row_count': len(results),
+                    'results': results
+                }), 200
+                
+    except Exception as e:
+        logging.error(f"Admin SQL error: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.route('/api/admin/fix-schema', methods=['POST'])
 @limiter.exempt
 @require_admin_key
