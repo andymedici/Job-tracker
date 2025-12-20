@@ -62,7 +62,7 @@ class Database:
                     )
                 """)
                 
-                # Job archive - FIXED with all columns
+                # Job archive
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS job_archive (
                         id SERIAL PRIMARY KEY,
@@ -107,7 +107,7 @@ class Database:
                     )
                 """)
                 
-                # Snapshots - FIXED with all columns
+                # Snapshots
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS snapshots_6h (
                         id SERIAL PRIMARY KEY,
@@ -139,7 +139,7 @@ class Database:
                     )
                 """)
                 
-                # Intelligence events - FIXED with metadata
+                # Intelligence events
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS intelligence_events (
                         id SERIAL PRIMARY KEY,
@@ -447,17 +447,16 @@ class Database:
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("""
-                        INSERT INTO snapshots_6h (company_id, job_count, active_jobs, locations_count, departments_count, snapshot_time)
+                        INSERT INTO snapshots_6h (company_id, job_count, active_jobs, locations_count, departments_count)
                         SELECT 
-                            c.id AS company_id,
+                            c.id,
                             c.job_count,
-                            COUNT(DISTINCT CASE WHEN ja.status = 'active' THEN ja.job_id END) AS active_jobs,
-                            COUNT(DISTINCT ja.location) AS locations_count,
-                            COUNT(DISTINCT ja.department) AS departments_count,
-                            NOW() AS snapshot_time
+                            COUNT(DISTINCT CASE WHEN j.status = 'active' THEN j.id END) as active_jobs,
+                            COUNT(DISTINCT j.location) as locations_count,
+                            COUNT(DISTINCT j.department) as departments_count
                         FROM companies c
-                        LEFT JOIN job_archive ja ON ja.company_id = c.id
-                        GROUP BY c.id, c.job_count
+                        LEFT JOIN job_archive j ON c.id = j.company_id
+                        GROUP BY c.id
                     """)
                     count = cur.rowcount
                     conn.commit()
