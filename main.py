@@ -136,6 +136,74 @@ logger.info("   - Discovery: Daily at 7:00 AM UTC")
 logger.info("   - Tier 1 Expansion: Weekly (Sunday 3:00 AM UTC)")
 logger.info("   - Tier 2 Expansion: Monthly (1st at 4:00 AM UTC)")
 
+@app.route('/api/admin/fix-schema', methods=['POST'])
+@limiter.exempt
+@require_admin_key
+def fix_schema():
+    try:
+        db = get_db()
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                # Check current schema
+                cur.execute("""
+                    SELECT column_name, data_type 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'companies' 
+                    ORDER BY ordinal_position
+                """)
+                current_schema = cur.fetchall()
+                logger.info(f"Current companies schema: {current_schema}")
+                
+                # Rename old table
+                cur.execute("ALTER TABLE IF EXISTS companies RENAME TO companies_old")
+                
+                # Create new clean table
+                cur.execute("""
+                    CREATE TABLE companies (
+                        id SERIAL PRIMARY KEY,
+                        company_name VARCHAR(255) NOT NULL UNIQUE,
+                        company_name_token VARCHAR(255) UNIQUE,
+                        ats_type VARCHAR(50),
+                        board_url TEXT,
+                        job_count INTEGER DEFAULT 0,
+                        last_scraped TIMESTAMP,
+                        created_at TIMESTAMP DEFAULT NOW(),
+                        metadata JSONB
+                    )
+                """)
+                
+                # Migrate data from old table
+                cur.execute("""
+                    INSERT INTO companies (company_name, company_name_token, ats_type, board_url, job_count, last_scraped, created_at, metadata)
+                    SELECT 
+                        company_name,
+                        company_name_token,
+                        ats_type,
+                        board_url,
+                        job_count,
+                        last_scraped,
+                        created_at,
+                        metadata
+                    FROM companies_old
+                    ON CONFLICT (company_name) DO NOTHING
+                """)
+                migrated = cur.rowcount
+                
+                # Drop old table
+                cur.execute("DROP TABLE companies_old")
+                
+                conn.commit()
+                logger.info(f"✅ Schema fixed! Migrated {migrated} companies")
+        
+        return jsonify({
+            'success': True, 
+            'message': f'Schema repaired, {migrated} companies migrated',
+            'old_schema': [f"{col[0]} {col[1]}" for col in current_schema]
+        }), 200
+    except Exception as e:
+        logger.error(f"Schema fix failed: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.route('/health')
 @limiter.exempt
 def health():
