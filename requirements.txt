@@ -1,37 +1,12 @@
-# Job Intelligence Platform - Production Dependencies
-
-# Core Framework
 flask==3.0.0
 waitress==2.1.2
-
-gunicorn==21.2.0
-
-# Database
 psycopg2-binary==2.9.9
-sqlalchemy==2.0.23
-
-# Scheduler
-apscheduler==3.10.4
-
-# HTTP & Scraping
-aiohttp==3.9.1
+requests==2.31.0
 beautifulsoup4==4.12.2
+aiohttp==3.9.1
 fake-useragent==1.4.0
-playwright==1.40.0
-
-# Security & Validation
-pydantic==2.5.3
-flask-limiter==3.5.0
-flask-cors==4.0.0
-
-# Monitoring (Optional)
-sentry-sdk[flask]==1.39.1
-
-# Testing
-pytest==7.4.3
-pytest-asyncio==0.21.1
-pytest-cov==4.1.0
-
-# Utilities
-python-dotenv==1.0.0
+apscheduler==3.10.4
 redis==5.0.1
+flask-limiter==3.5.0
+lxml==4.9.3
+brotli==1.1.0
