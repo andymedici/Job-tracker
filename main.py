@@ -136,6 +136,23 @@ logger.info("   - Discovery: Daily at 7:00 AM UTC")
 logger.info("   - Tier 1 Expansion: Weekly (Sunday 3:00 AM UTC)")
 logger.info("   - Tier 2 Expansion: Monthly (1st at 4:00 AM UTC)")
 
+# ============================================================================
+# ERROR HANDLER - Return JSON for all errors
+# ============================================================================
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({'error': 'Not found', 'message': str(error)}), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    logger.error(f"Internal error: {error}", exc_info=True)
+    return jsonify({'error': 'Internal server error', 'message': str(error)}), 500
+
+@app.errorhandler(Exception)
+def handle_exception(error):
+    logger.error(f"Unhandled exception: {error}", exc_info=True)
+    return jsonify({'error': 'Server error', 'message': str(error)}), 500
+
 @app.route('/api/admin/sql', methods=['POST'])
 @require_admin_key
 @limiter.exempt
@@ -259,8 +276,6 @@ def fix_schema():
                     WHERE s.company_id::text = im.old_id
                 """)
                 snapshots_updated = cur.rowcount
-
-        
                 
                 logger.info("Updating intelligence_events references...")
                 cur.execute("""
@@ -351,148 +366,149 @@ def salary_insights_page():
     """Salary insights page"""
     return render_template('salary-insights.html')
 
-# ============================================================================
-# FIX 1: Changed from @require_admin_key to @require_api_key
-# ============================================================================
 @app.route('/api/salary-insights', methods=['GET'])
 @limiter.limit("30 per minute")
-@require_api_key  # ← FIXED: Changed from require_admin_key
+@require_api_key
 def get_salary_insights():
     """Get comprehensive salary insights"""
-    from psycopg2.extras import RealDictCursor
-    db = get_db()
-    
-    with db.get_connection() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Overview metrics
-            cur.execute("""
-                SELECT 
-                    COUNT(*) as jobs_with_salary,
-                    MIN(salary_min) as min_salary,
-                    MAX(salary_max) as max_salary,
-                    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY (salary_min + salary_max) / 2) as median_salary,
-                    (SELECT COUNT(*) FROM job_archive WHERE status = 'active') as total_jobs
-                FROM job_archive
-                WHERE status = 'active' AND salary_min IS NOT NULL AND salary_max IS NOT NULL
-            """)
-            overview_row = cur.fetchone()
-            overview = dict(overview_row) if overview_row else {
-                'jobs_with_salary': 0,
-                'min_salary': 0,
-                'max_salary': 0,
-                'median_salary': 0,
-                'total_jobs': 0
-            }
-            
-            # By role (LOWERED threshold to 1)
-            cur.execute("""
-                SELECT 
-                    title as role,
-                    AVG((salary_min + salary_max) / 2) as avg_salary,
-                    COUNT(*) as count
-                FROM job_archive
-                WHERE status = 'active' AND salary_min IS NOT NULL
-                GROUP BY title
-                HAVING COUNT(*) >= 1
-                ORDER BY avg_salary DESC
-                LIMIT 20
-            """)
-            by_role = [dict(row) for row in cur.fetchall()]
-            
-            # By location (LOWERED threshold to 1)
-            cur.execute("""
-                SELECT 
-                    location,
-                    AVG((salary_min + salary_max) / 2) as avg_salary,
-                    COUNT(*) as count
-                FROM job_archive
-                WHERE status = 'active' AND salary_min IS NOT NULL AND location IS NOT NULL
-                GROUP BY location
-                HAVING COUNT(*) >= 1
-                ORDER BY avg_salary DESC
-                LIMIT 15
-            """)
-            by_location = [dict(row) for row in cur.fetchall()]
-            
-            # By company (LOWERED threshold to 1)
-            cur.execute("""
-                SELECT 
-                    c.company_name as company,
-                    AVG((j.salary_min + j.salary_max) / 2) as avg_salary,
-                    COUNT(*) as count
-                FROM job_archive j
-                JOIN companies c ON j.company_id = c.id
-                WHERE j.status = 'active' AND j.salary_min IS NOT NULL
-                GROUP BY c.company_name
-                HAVING COUNT(*) >= 1
-                ORDER BY avg_salary DESC
-                LIMIT 15
-            """)
-            by_company = [dict(row) for row in cur.fetchall()]
-            
-            # Distribution
-            cur.execute("""
-                SELECT 
-                    CASE 
-                        WHEN (salary_min + salary_max) / 2 < 75000 THEN '<$75k'
-                        WHEN (salary_min + salary_max) / 2 < 100000 THEN '$75k-$100k'
-                        WHEN (salary_min + salary_max) / 2 < 150000 THEN '$100k-$150k'
-                        WHEN (salary_min + salary_max) / 2 < 200000 THEN '$150k-$200k'
-                        WHEN (salary_min + salary_max) / 2 < 250000 THEN '$200k-$250k'
-                        ELSE '$250k+'
-                    END as range,
-                    COUNT(*) as count
-                FROM job_archive
-                WHERE status = 'active' AND salary_min IS NOT NULL
-                GROUP BY range
-                ORDER BY MIN((salary_min + salary_max) / 2)
-            """)
-            distribution = [dict(row) for row in cur.fetchall()]
-            
-            # Detailed breakdown
-            cur.execute("""
-                SELECT 
-                    j.title as role,
-                    c.company_name as company,
-                    j.location,
-                    j.salary_min,
-                    j.salary_max,
-                    COALESCE(j.salary_currency, 'USD') as currency,
-                    COUNT(*) as count
-                FROM job_archive j
-                JOIN companies c ON j.company_id = c.id
-                WHERE j.status = 'active' AND j.salary_min IS NOT NULL
-                GROUP BY j.title, c.company_name, j.location, j.salary_min, j.salary_max, j.salary_currency
-                ORDER BY j.salary_max DESC
-                LIMIT 100
-            """)
-            detailed = [dict(row) for row in cur.fetchall()]
-            
-            # Percentiles
-            cur.execute("""
-                SELECT 
-                    PERCENTILE_CONT(0.10) WITHIN GROUP (ORDER BY (salary_min + salary_max) / 2) as p10,
-                    PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY (salary_min + salary_max) / 2) as p25,
-                    PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY (salary_min + salary_max) / 2) as p50,
-                    PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY (salary_min + salary_max) / 2) as p75,
-                    PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY (salary_min + salary_max) / 2) as p90
-                FROM job_archive
-                WHERE status = 'active' AND salary_min IS NOT NULL
-            """)
-            percentile_row = cur.fetchone()
-            percentiles = dict(percentile_row) if percentile_row else {
-                'p10': 0, 'p25': 0, 'p50': 0, 'p75': 0, 'p90': 0
-            }
-            
-            return jsonify({
-                'overview': overview,
-                'by_role': by_role,
-                'by_location': by_location,
-                'by_company': by_company,
-                'distribution': distribution,
-                'detailed': detailed,
-                'percentiles': percentiles
-            }), 200
+    try:
+        from psycopg2.extras import RealDictCursor
+        db = get_db()
+        
+        with db.get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # Overview metrics
+                cur.execute("""
+                    SELECT 
+                        COUNT(*) as jobs_with_salary,
+                        MIN(salary_min) as min_salary,
+                        MAX(salary_max) as max_salary,
+                        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY (salary_min + salary_max) / 2) as median_salary,
+                        (SELECT COUNT(*) FROM job_archive WHERE status = 'active') as total_jobs
+                    FROM job_archive
+                    WHERE status = 'active' AND salary_min IS NOT NULL AND salary_max IS NOT NULL
+                """)
+                overview_row = cur.fetchone()
+                overview = dict(overview_row) if overview_row else {
+                    'jobs_with_salary': 0,
+                    'min_salary': 0,
+                    'max_salary': 0,
+                    'median_salary': 0,
+                    'total_jobs': 0
+                }
+                
+                # By role
+                cur.execute("""
+                    SELECT 
+                        title as role,
+                        AVG((salary_min + salary_max) / 2) as avg_salary,
+                        COUNT(*) as count
+                    FROM job_archive
+                    WHERE status = 'active' AND salary_min IS NOT NULL
+                    GROUP BY title
+                    HAVING COUNT(*) >= 1
+                    ORDER BY avg_salary DESC
+                    LIMIT 20
+                """)
+                by_role = [dict(row) for row in cur.fetchall()]
+                
+                # By location
+                cur.execute("""
+                    SELECT 
+                        location,
+                        AVG((salary_min + salary_max) / 2) as avg_salary,
+                        COUNT(*) as count
+                    FROM job_archive
+                    WHERE status = 'active' AND salary_min IS NOT NULL AND location IS NOT NULL
+                    GROUP BY location
+                    HAVING COUNT(*) >= 1
+                    ORDER BY avg_salary DESC
+                    LIMIT 15
+                """)
+                by_location = [dict(row) for row in cur.fetchall()]
+                
+                # By company
+                cur.execute("""
+                    SELECT 
+                        c.company_name as company,
+                        AVG((j.salary_min + j.salary_max) / 2) as avg_salary,
+                        COUNT(*) as count
+                    FROM job_archive j
+                    JOIN companies c ON j.company_id = c.id
+                    WHERE j.status = 'active' AND j.salary_min IS NOT NULL
+                    GROUP BY c.company_name
+                    HAVING COUNT(*) >= 1
+                    ORDER BY avg_salary DESC
+                    LIMIT 15
+                """)
+                by_company = [dict(row) for row in cur.fetchall()]
+                
+                # Distribution
+                cur.execute("""
+                    SELECT 
+                        CASE 
+                            WHEN (salary_min + salary_max) / 2 < 75000 THEN '<$75k'
+                            WHEN (salary_min + salary_max) / 2 < 100000 THEN '$75k-$100k'
+                            WHEN (salary_min + salary_max) / 2 < 150000 THEN '$100k-$150k'
+                            WHEN (salary_min + salary_max) / 2 < 200000 THEN '$150k-$200k'
+                            WHEN (salary_min + salary_max) / 2 < 250000 THEN '$200k-$250k'
+                            ELSE '$250k+'
+                        END as range,
+                        COUNT(*) as count
+                    FROM job_archive
+                    WHERE status = 'active' AND salary_min IS NOT NULL
+                    GROUP BY range
+                    ORDER BY MIN((salary_min + salary_max) / 2)
+                """)
+                distribution = [dict(row) for row in cur.fetchall()]
+                
+                # Detailed breakdown
+                cur.execute("""
+                    SELECT 
+                        j.title as role,
+                        c.company_name as company,
+                        j.location,
+                        j.salary_min,
+                        j.salary_max,
+                        COALESCE(j.salary_currency, 'USD') as currency,
+                        COUNT(*) as count
+                    FROM job_archive j
+                    JOIN companies c ON j.company_id = c.id
+                    WHERE j.status = 'active' AND j.salary_min IS NOT NULL
+                    GROUP BY j.title, c.company_name, j.location, j.salary_min, j.salary_max, j.salary_currency
+                    ORDER BY j.salary_max DESC
+                    LIMIT 100
+                """)
+                detailed = [dict(row) for row in cur.fetchall()]
+                
+                # Percentiles
+                cur.execute("""
+                    SELECT 
+                        PERCENTILE_CONT(0.10) WITHIN GROUP (ORDER BY (salary_min + salary_max) / 2) as p10,
+                        PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY (salary_min + salary_max) / 2) as p25,
+                        PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY (salary_min + salary_max) / 2) as p50,
+                        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY (salary_min + salary_max) / 2) as p75,
+                        PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY (salary_min + salary_max) / 2) as p90
+                    FROM job_archive
+                    WHERE status = 'active' AND salary_min IS NOT NULL
+                """)
+                percentile_row = cur.fetchone()
+                percentiles = dict(percentile_row) if percentile_row else {
+                    'p10': 0, 'p25': 0, 'p50': 0, 'p75': 0, 'p90': 0
+                }
+                
+                return jsonify({
+                    'overview': overview,
+                    'by_role': by_role,
+                    'by_location': by_location,
+                    'by_company': by_company,
+                    'distribution': distribution,
+                    'detailed': detailed,
+                    'percentiles': percentiles
+                }), 200
+    except Exception as e:
+        logger.error(f"Error in salary insights: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/analytics')
 @optional_auth
@@ -519,9 +535,6 @@ def jobs_page():
 def submit_seed_page():
     return render_template('submit-seed.html')
 
-# ============================================================================
-# FIX 2: Added work_type_distribution to stats
-# ============================================================================
 @app.route('/api/stats')
 @limiter.limit(RATE_LIMITS['authenticated_read'])
 @require_api_key
@@ -736,7 +749,7 @@ def api_jobs():
         db = get_db()
         query = """
             SELECT 
-                j.job_id, j.title, j.location, j.department, j.work_type,
+                j.id, j.job_id, j.title, j.location, j.department, j.work_type,
                 j.job_url, j.posted_date, j.salary_min, j.salary_max, j.salary_currency,
                 j.status, j.first_seen, j.last_seen,
                 c.company_name, c.ats_type
@@ -751,7 +764,7 @@ def api_jobs():
             params.append(status)
         
         if search:
-            query += " AND (j.title ILIKE %s OR j.department ILIKE %s)"
+            query += " AND (j.title ILIKE %s OR c.company_name ILIKE %s)"
             params.extend([f'%{search}%', f'%{search}%'])
         
         if company_id:
@@ -779,13 +792,13 @@ def api_jobs():
                 columns = [desc[0] for desc in cur.description]
                 jobs = [dict(zip(columns, row)) for row in cur.fetchall()]
                 
-                count_query = "SELECT COUNT(*) FROM job_archive j WHERE 1=1"
+                count_query = "SELECT COUNT(*) FROM job_archive j JOIN companies c ON j.company_id = c.id WHERE 1=1"
                 count_params = []
                 if status:
                     count_query += " AND j.status = %s"
                     count_params.append(status)
                 if search:
-                    count_query += " AND (j.title ILIKE %s OR j.department ILIKE %s)"
+                    count_query += " AND (j.title ILIKE %s OR c.company_name ILIKE %s)"
                     count_params.extend([f'%{search}%', f'%{search}%'])
                 if company_id:
                     count_query += " AND j.company_id = %s"
@@ -832,33 +845,36 @@ def api_job_detail(job_id):
 
 @app.route('/api/seeds/manual', methods=['POST'])
 @limiter.limit(RATE_LIMITS['write'])
-@require_admin_key
+@require_api_key
 def api_manual_seed():
-    data = request.get_json() or {}
-    company_name = data.get('company_name', '').strip()
-    website_url = data.get('website_url', '').strip()
-    ats_hint = data.get('ats_hint', '').strip().lower()
-    
-    if not company_name:
-        return jsonify({'error': 'Company name is required'}), 400
-    
     try:
+        data = request.get_json() or {}
+        company_name = data.get('company_name', '').strip()
+        website_url = data.get('website_url', '').strip()
+        ats_hint = data.get('ats_hint', '').strip().lower()
+        
+        if not company_name:
+            return jsonify({'success': False, 'error': 'Company name is required'}), 400
+        
         db = get_db()
         added = db.add_manual_seed(company_name, website_url=website_url)
         
         if not added:
-            return jsonify({'error': 'Company already exists'}), 409
+            return jsonify({'success': False, 'error': 'Company already exists'}), 409
         
         if website_url and data.get('test_immediately', False):
             def test_seed():
-                from collector import JobIntelCollector
-                collector = JobIntelCollector()
-                asyncio.run(collector._test_company(company_name, ats_hint))
+                try:
+                    from collector import JobIntelCollector
+                    collector = JobIntelCollector()
+                    asyncio.run(collector._test_company(company_name, ats_hint))
+                except Exception as e:
+                    logger.error(f"Test seed failed: {e}", exc_info=True)
             
             threading.Thread(target=test_seed, daemon=True).start()
             return jsonify({
                 'success': True,
-                'message': f'Added {company_name} and testing',
+                'message': f'Added {company_name} and started testing',
                 'company_name': company_name
             }), 201
         
@@ -868,117 +884,176 @@ def api_manual_seed():
             'company_name': company_name
         }), 201
     except Exception as e:
-        logger.error(f"Error adding manual seed: {e}")
-        return jsonify({'error': str(e)}), 500
+        logger.error(f"Error adding manual seed: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
 
+# ============================================================================
+# FIXED: Discovery and Refresh now use regular API key (not admin)
+# ============================================================================
 @app.route('/api/collect', methods=['POST'])
-@limiter.limit(RATE_LIMITS['admin'])
-@require_admin_key
-def api_collect():
-    if collection_state['is_running']:
-        return jsonify({'error': 'Collection already running'}), 409
-    
-    data = request.get_json() or {}
-    max_companies = min(data.get('max_companies', 500), 1000)
-    
-    def run_collection_thread():
-        collection_state['is_running'] = True
-        collection_state['mode'] = 'discovery'
-        collection_state['current_progress'] = 0
-        try:
-            stats = asyncio.run(run_collection(max_companies=max_companies))
-            run_daily_maintenance()
-            collection_state['last_stats'] = {
-                'total_tested': stats.total_tested,
-                'total_discovered': stats.total_discovered,
-                'total_jobs_collected': stats.total_jobs_collected,
-                'total_new_jobs': stats.total_new_jobs,
-                'total_updated_jobs': stats.total_updated_jobs,
-                'total_closed_jobs': stats.total_closed_jobs
-            }
-            collection_state['last_run'] = datetime.now(timezone.utc).isoformat()
-            logger.info(f"✅ Manual collection complete: {collection_state['last_stats']}")
-        finally:
-            collection_state['is_running'] = False
-            collection_state['mode'] = None
-            collection_state['current_progress'] = 0
-    
-    thread = threading.Thread(target=run_collection_thread, daemon=True)
-    thread.start()
-    
-    return jsonify({'message': f'Discovery started for {max_companies} companies'}), 202
-
-@app.route('/api/refresh', methods=['POST'])
-@limiter.limit(RATE_LIMITS['admin'])
-@require_admin_key
-def api_refresh():
-    if collection_state['is_running']:
-        return jsonify({'error': 'Collection already running'}), 409
-    
-    data = request.get_json() or {}
-    hours_since_update = data.get('hours_since_update', 24)
-    max_companies = min(data.get('max_companies', 500), 1000)
-    
-    def run_refresh_thread():
-        collection_state['is_running'] = True
-        collection_state['mode'] = 'refresh'
-        try:
-            stats = asyncio.run(run_refresh(hours_since_update, max_companies))
-            run_daily_maintenance()
-            collection_state['last_stats'] = {
-                'total_tested': 0,
-                'total_discovered': 0,
-                'total_jobs_collected': stats.total_jobs_collected,
-                'total_new_jobs': stats.total_new_jobs,
-                'total_updated_jobs': stats.total_updated_jobs,
-                'total_closed_jobs': stats.total_closed_jobs
-            }
-            collection_state['last_run'] = datetime.now(timezone.utc).isoformat()
-        finally:
-            collection_state['is_running'] = False
-            collection_state['mode'] = None
-    
-    thread = threading.Thread(target=run_refresh_thread, daemon=True)
-    thread.start()
-    
-    return jsonify({'message': f'Refresh started for {max_companies} companies'}), 202
-
-# ============================================================================
-# FIX 3: Changed endpoint path and auth from admin to regular API key
-# ============================================================================
-@app.route('/api/seeds/expand', methods=['POST'])  # ← FIXED: Changed from /api/expand-seeds
 @limiter.limit(RATE_LIMITS['write'])
 @require_api_key  # ← FIXED: Changed from require_admin_key
+def api_collect():
+    try:
+        if collection_state['is_running']:
+            return jsonify({'success': False, 'error': 'Collection already running'}), 409
+        
+        data = request.get_json() or {}
+        max_companies = min(data.get('max_companies', 100), 1000)
+        
+        def run_collection_thread():
+            collection_state['is_running'] = True
+            collection_state['mode'] = 'discovery'
+            collection_state['current_progress'] = 0
+            try:
+                stats = asyncio.run(run_collection(max_companies=max_companies))
+                run_daily_maintenance()
+                collection_state['last_stats'] = {
+                    'total_tested': stats.total_tested,
+                    'total_discovered': stats.total_discovered,
+                    'total_jobs_collected': stats.total_jobs_collected,
+                    'total_new_jobs': stats.total_new_jobs,
+                    'total_updated_jobs': stats.total_updated_jobs,
+                    'total_closed_jobs': stats.total_closed_jobs
+                }
+                collection_state['last_run'] = datetime.now(timezone.utc).isoformat()
+                logger.info(f"✅ Manual collection complete: {collection_state['last_stats']}")
+            except Exception as e:
+                logger.error(f"Collection failed: {e}", exc_info=True)
+            finally:
+                collection_state['is_running'] = False
+                collection_state['mode'] = None
+                collection_state['current_progress'] = 0
+        
+        thread = threading.Thread(target=run_collection_thread, daemon=True)
+        thread.start()
+        
+        return jsonify({
+            'success': True,
+            'message': f'Discovery started for up to {max_companies} companies'
+        }), 202
+    except Exception as e:
+        logger.error(f"Error starting collection: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/refresh', methods=['POST'])
+@limiter.limit(RATE_LIMITS['write'])
+@require_api_key  # ← FIXED: Changed from require_admin_key
+def api_refresh():
+    try:
+        if collection_state['is_running']:
+            return jsonify({'success': False, 'error': 'Collection already running'}), 409
+        
+        data = request.get_json() or {}
+        hours_since_update = data.get('hours_since_update', data.get('hours', 24))
+        max_companies = min(data.get('max_companies', 500), 1000)
+        
+        def run_refresh_thread():
+            collection_state['is_running'] = True
+            collection_state['mode'] = 'refresh'
+            try:
+                stats = asyncio.run(run_refresh(hours_since_update, max_companies))
+                run_daily_maintenance()
+                collection_state['last_stats'] = {
+                    'total_tested': 0,
+                    'total_discovered': 0,
+                    'total_jobs_collected': stats.total_jobs_collected,
+                    'total_new_jobs': stats.total_new_jobs,
+                    'total_updated_jobs': stats.total_updated_jobs,
+                    'total_closed_jobs': stats.total_closed_jobs
+                }
+                collection_state['last_run'] = datetime.now(timezone.utc).isoformat()
+                logger.info(f"✅ Refresh complete: {collection_state['last_stats']}")
+            except Exception as e:
+                logger.error(f"Refresh failed: {e}", exc_info=True)
+            finally:
+                collection_state['is_running'] = False
+                collection_state['mode'] = None
+        
+        thread = threading.Thread(target=run_refresh_thread, daemon=True)
+        thread.start()
+        
+        return jsonify({
+            'success': True,
+            'message': f'Refresh started for up to {max_companies} companies'
+        }), 202
+    except Exception as e:
+        logger.error(f"Error starting refresh: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# ============================================================================
+# FIXED: Seed expansion with comprehensive error handling and JSON responses
+# ============================================================================
+@app.route('/api/seeds/expand', methods=['POST'])
+@limiter.limit(RATE_LIMITS['write'])
+@require_api_key
 def api_expand_seeds():
-    # Get tier from query param OR request body
-    tier = request.args.get('tier', 'tier1')
-    data = request.get_json() or {}
-    if 'tier' in data:
-        tier = data['tier']
-    
-    def run_expansion():
+    """Expand seed database with tier 1 or tier 2 companies"""
+    try:
+        # Get tier from query param OR request body
+        tier = request.args.get('tier', 'tier1')
+        data = request.get_json() or {}
+        if 'tier' in data:
+            tier = data['tier']
+        
+        # Normalize tier value
+        if tier in ['1', 'tier1']:
+            tier = 'tier1'
+        elif tier in ['2', 'tier2']:
+            tier = 'tier2'
+        
+        logger.info(f"Seed expansion requested: {tier}")
+        
+        # Check if seed_expander module exists
         try:
             import sys
             sys.path.insert(0, '/app')
-            
-            if tier == 'tier1' or tier == '1':
-                from seed_expander import run_tier1_expansion
-                added = asyncio.run(run_tier1_expansion())
-            elif tier == 'tier2' or tier == '2':
-                from seed_expander import run_tier2_expansion
-                added = asyncio.run(run_tier2_expansion())
-            else:
-                from seed_expander import run_full_expansion
-                added = asyncio.run(run_full_expansion())
-            
-            logger.info(f"Seed expansion complete: {added} seeds added")
-        except Exception as e:
-            logger.error(f"Seed expansion failed: {e}", exc_info=True)
-    
-    thread = threading.Thread(target=run_expansion, daemon=True)
-    thread.start()
-    
-    return jsonify({'message': f'Seed expansion ({tier}) started', 'added': 0}), 202
+            import seed_expander
+            logger.info("✅ seed_expander module found")
+        except ImportError as e:
+            logger.error(f"❌ seed_expander.py not found: {e}")
+            return jsonify({
+                'success': False,
+                'error': 'Seed expander module not deployed',
+                'message': 'seed_expander.py is missing from the deployment. Please deploy it first.',
+                'tier': tier
+            }), 500
+        
+        def run_expansion():
+            try:
+                if tier == 'tier1':
+                    logger.info("Starting Tier 1 expansion...")
+                    added = asyncio.run(seed_expander.run_tier1_expansion())
+                    logger.info(f"✅ Tier 1 expansion complete: {added} seeds added")
+                elif tier == 'tier2':
+                    logger.info("Starting Tier 2 expansion...")
+                    added = asyncio.run(seed_expander.run_tier2_expansion())
+                    logger.info(f"✅ Tier 2 expansion complete: {added} seeds added")
+                else:
+                    logger.info("Starting full expansion...")
+                    added = asyncio.run(seed_expander.run_full_expansion())
+                    logger.info(f"✅ Full expansion complete: {added} seeds added")
+            except Exception as e:
+                logger.error(f"❌ Seed expansion failed: {e}", exc_info=True)
+        
+        # Start expansion in background thread
+        thread = threading.Thread(target=run_expansion, daemon=True)
+        thread.start()
+        
+        return jsonify({
+            'success': True,
+            'message': f'Seed expansion ({tier}) started in background',
+            'tier': tier,
+            'note': 'Check logs for progress. This will take 2-5 minutes.'
+        }), 202
+        
+    except Exception as e:
+        logger.error(f"Error in seed expansion endpoint: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'message': 'Failed to start seed expansion'
+        }), 500
 
 @app.route('/api/admin/run-migrations', methods=['POST'])
 @limiter.exempt
