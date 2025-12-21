@@ -984,17 +984,25 @@ def api_refresh():
 # ============================================================================
 # FIXED: Seed expansion with comprehensive error handling and JSON responses
 # ============================================================================
+# ============================================================================
+# FIXED: Seed expansion with NO JSON parsing errors
+# ============================================================================
 @app.route('/api/seeds/expand', methods=['POST'])
 @limiter.limit(RATE_LIMITS['write'])
 @require_api_key
 def api_expand_seeds():
     """Expand seed database with tier 1 or tier 2 companies"""
     try:
-        # Get tier from query param OR request body
+        # Get tier from query param OR request body (use silent=True to avoid errors)
         tier = request.args.get('tier', 'tier1')
-        data = request.get_json() or {}
-        if 'tier' in data:
-            tier = data['tier']
+        
+        # Try to get JSON body, but don't fail if it's empty
+        try:
+            data = request.get_json(silent=True) or {}
+            if 'tier' in data:
+                tier = data['tier']
+        except:
+            data = {}
         
         # Normalize tier value
         if tier in ['1', 'tier1']:
@@ -1002,7 +1010,7 @@ def api_expand_seeds():
         elif tier in ['2', 'tier2']:
             tier = 'tier2'
         
-        logger.info(f"Seed expansion requested: {tier}")
+        logger.info(f"🌱 Seed expansion requested: {tier}")
         
         # Check if seed_expander module exists
         try:
@@ -1054,7 +1062,6 @@ def api_expand_seeds():
             'error': str(e),
             'message': 'Failed to start seed expansion'
         }), 500
-
 @app.route('/api/admin/run-migrations', methods=['POST'])
 @limiter.exempt
 @require_admin_key
