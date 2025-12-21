@@ -892,49 +892,40 @@ def api_manual_seed():
 # ============================================================================
 @app.route('/api/collect', methods=['POST'])
 @limiter.limit(RATE_LIMITS['write'])
-@require_api_key  # ← FIXED: Changed from require_admin_key
+@require_api_key
 def api_collect():
-    try:
-        if collection_state['is_running']:
-            return jsonify({'success': False, 'error': 'Collection already running'}), 409
-        
-        data = request.get_json() or {}
-        max_companies = min(data.get('max_companies', 100), 1000)
-        
-        def run_collection_thread():
-            collection_state['is_running'] = True
-            collection_state['mode'] = 'discovery'
+    if collection_state['is_running']:
+        return jsonify({'error': 'Collection already running'}), 409
+    
+    data = request.get_json(silent=True) or {}  # ← Fixed: silent=True to avoid 400
+    max_companies = min(data.get('max_companies', 500), 1000)
+    
+    def run_collection_thread():
+        collection_state['is_running'] = True
+        collection_state['mode'] = 'discovery'
+        collection_state['current_progress'] = 0
+        try:
+            stats = asyncio.run(run_collection(max_companies=max_companies))
+            run_daily_maintenance()
+            collection_state['last_stats'] = {
+                'total_tested': stats.total_tested,
+                'total_discovered': stats.total_discovered,
+                'total_jobs_collected': stats.total_jobs_collected,
+                'total_new_jobs': stats.total_new_jobs,
+                'total_updated_jobs': stats.total_updated_jobs,
+                'total_closed_jobs': stats.total_closed_jobs
+            }
+            collection_state['last_run'] = datetime.now(timezone.utc).isoformat()
+            logger.info(f"✅ Manual collection complete: {collection_state['last_stats']}")
+        finally:
+            collection_state['is_running'] = False
+            collection_state['mode'] = None
             collection_state['current_progress'] = 0
-            try:
-                stats = asyncio.run(run_collection(max_companies=max_companies))
-                run_daily_maintenance()
-                collection_state['last_stats'] = {
-                    'total_tested': stats.total_tested,
-                    'total_discovered': stats.total_discovered,
-                    'total_jobs_collected': stats.total_jobs_collected,
-                    'total_new_jobs': stats.total_new_jobs,
-                    'total_updated_jobs': stats.total_updated_jobs,
-                    'total_closed_jobs': stats.total_closed_jobs
-                }
-                collection_state['last_run'] = datetime.now(timezone.utc).isoformat()
-                logger.info(f"✅ Manual collection complete: {collection_state['last_stats']}")
-            except Exception as e:
-                logger.error(f"Collection failed: {e}", exc_info=True)
-            finally:
-                collection_state['is_running'] = False
-                collection_state['mode'] = None
-                collection_state['current_progress'] = 0
-        
-        thread = threading.Thread(target=run_collection_thread, daemon=True)
-        thread.start()
-        
-        return jsonify({
-            'success': True,
-            'message': f'Discovery started for up to {max_companies} companies'
-        }), 202
-    except Exception as e:
-        logger.error(f"Error starting collection: {e}", exc_info=True)
-        return jsonify({'success': False, 'error': str(e)}), 500
+    
+    thread = threading.Thread(target=run_collection_thread, daemon=True)
+    thread.start()
+    
+    return jsonify({'message': f'Discovery started for {max_companies} companies'}), 202
 
 @app.route('/api/refresh', methods=['POST'])
 @limiter.limit(RATE_LIMITS['write'])
