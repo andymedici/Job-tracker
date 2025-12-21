@@ -109,7 +109,7 @@ def scheduled_tier1_expansion():
     try:
         logger.info("Starting Tier 1 seed expansion")
         from seed_expander import run_tier1_expansion
-        added = run_tier1_expansion()
+        added = asyncio.run(run_tier1_expansion())
         logger.info(f"Tier 1 expansion complete: {added} seeds added")
     finally:
         get_db().release_advisory_lock('tier1_expansion')
@@ -120,7 +120,7 @@ def scheduled_tier2_expansion():
     try:
         logger.info("Starting Tier 2 seed expansion")
         from seed_expander import run_tier2_expansion
-        added = run_tier2_expansion()
+        added = asyncio.run(run_tier2_expansion())
         logger.info(f"Tier 2 expansion complete: {added} seeds added")
     finally:
         get_db().release_advisory_lock('tier2_expansion')
@@ -137,8 +137,8 @@ logger.info("   - Tier 1 Expansion: Weekly (Sunday 3:00 AM UTC)")
 logger.info("   - Tier 2 Expansion: Monthly (1st at 4:00 AM UTC)")
 
 @app.route('/api/admin/sql', methods=['POST'])
-@require_admin_key  # Keep your existing admin decorator
-@limiter.exempt     # Optional: exempt from rate limiting
+@require_admin_key
+@limiter.exempt
 def admin_sql_query():
     """
     Quick admin endpoint to run raw SQL queries.
@@ -271,7 +271,6 @@ def fix_schema():
                 """)
                 events_updated = cur.rowcount
 
-                # === ADD THIS NEW BLOCK ===
                 logger.info("Converting company_id columns to INTEGER...")
                 try:
                     cur.execute("ALTER TABLE job_archive ALTER COLUMN company_id TYPE INTEGER USING company_id::INTEGER")
@@ -280,8 +279,7 @@ def fix_schema():
                     logger.info("✅ All company_id columns converted to INTEGER")
                 except Exception as conv_error:
                     logger.error(f"Column type conversion failed: {conv_error}")
-                    raise  # Will rollback everything safely
-                # ===========================
+                    raise
                 
                 # Step 7: Drop old table
                 cur.execute("DROP TABLE companies_old CASCADE")
@@ -353,9 +351,12 @@ def salary_insights_page():
     """Salary insights page"""
     return render_template('salary-insights.html')
 
+# ============================================================================
+# FIX 1: Changed from @require_admin_key to @require_api_key
+# ============================================================================
 @app.route('/api/salary-insights', methods=['GET'])
 @limiter.limit("30 per minute")
-@require_admin_key
+@require_api_key  # ← FIXED: Changed from require_admin_key
 def get_salary_insights():
     """Get comprehensive salary insights"""
     from psycopg2.extras import RealDictCursor
@@ -374,9 +375,16 @@ def get_salary_insights():
                 FROM job_archive
                 WHERE status = 'active' AND salary_min IS NOT NULL AND salary_max IS NOT NULL
             """)
-            overview = dict(cur.fetchone())
+            overview_row = cur.fetchone()
+            overview = dict(overview_row) if overview_row else {
+                'jobs_with_salary': 0,
+                'min_salary': 0,
+                'max_salary': 0,
+                'median_salary': 0,
+                'total_jobs': 0
+            }
             
-            # By role
+            # By role (LOWERED threshold to 1)
             cur.execute("""
                 SELECT 
                     title as role,
@@ -385,13 +393,13 @@ def get_salary_insights():
                 FROM job_archive
                 WHERE status = 'active' AND salary_min IS NOT NULL
                 GROUP BY title
-                HAVING COUNT(*) >= 3
+                HAVING COUNT(*) >= 1
                 ORDER BY avg_salary DESC
                 LIMIT 20
             """)
             by_role = [dict(row) for row in cur.fetchall()]
             
-            # By location
+            # By location (LOWERED threshold to 1)
             cur.execute("""
                 SELECT 
                     location,
@@ -400,13 +408,13 @@ def get_salary_insights():
                 FROM job_archive
                 WHERE status = 'active' AND salary_min IS NOT NULL AND location IS NOT NULL
                 GROUP BY location
-                HAVING COUNT(*) >= 3
+                HAVING COUNT(*) >= 1
                 ORDER BY avg_salary DESC
                 LIMIT 15
             """)
             by_location = [dict(row) for row in cur.fetchall()]
             
-            # By company
+            # By company (LOWERED threshold to 1)
             cur.execute("""
                 SELECT 
                     c.company_name as company,
@@ -416,7 +424,7 @@ def get_salary_insights():
                 JOIN companies c ON j.company_id = c.id
                 WHERE j.status = 'active' AND j.salary_min IS NOT NULL
                 GROUP BY c.company_name
-                HAVING COUNT(*) >= 5
+                HAVING COUNT(*) >= 1
                 ORDER BY avg_salary DESC
                 LIMIT 15
             """)
@@ -449,7 +457,7 @@ def get_salary_insights():
                     j.location,
                     j.salary_min,
                     j.salary_max,
-                    j.salary_currency as currency,
+                    COALESCE(j.salary_currency, 'USD') as currency,
                     COUNT(*) as count
                 FROM job_archive j
                 JOIN companies c ON j.company_id = c.id
@@ -471,7 +479,10 @@ def get_salary_insights():
                 FROM job_archive
                 WHERE status = 'active' AND salary_min IS NOT NULL
             """)
-            percentiles = dict(cur.fetchone())
+            percentile_row = cur.fetchone()
+            percentiles = dict(percentile_row) if percentile_row else {
+                'p10': 0, 'p25': 0, 'p50': 0, 'p75': 0, 'p90': 0
+            }
             
             return jsonify({
                 'overview': overview,
@@ -508,6 +519,9 @@ def jobs_page():
 def submit_seed_page():
     return render_template('submit-seed.html')
 
+# ============================================================================
+# FIX 2: Added work_type_distribution to stats
+# ============================================================================
 @app.route('/api/stats')
 @limiter.limit(RATE_LIMITS['authenticated_read'])
 @require_api_key
@@ -515,6 +529,43 @@ def api_stats():
     try:
         db = get_db()
         stats = db.get_stats()
+        
+        # Add work type distribution
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT 
+                        COALESCE(LOWER(work_type), 'unknown') as work_type,
+                        COUNT(*) as count
+                    FROM job_archive
+                    WHERE status = 'active'
+                    GROUP BY LOWER(work_type)
+                """)
+                work_types = {
+                    'remote': 0,
+                    'hybrid': 0,
+                    'onsite': 0,
+                    'unknown': 0
+                }
+                
+                for row in cur.fetchall():
+                    work_type = row[0] if row[0] else 'unknown'
+                    count = row[1]
+                    
+                    # Map variations to standard types
+                    if work_type == 'unknown' or work_type is None:
+                        work_types['unknown'] += count
+                    elif 'remote' in work_type:
+                        work_types['remote'] += count
+                    elif 'hybrid' in work_type:
+                        work_types['hybrid'] += count
+                    elif any(x in work_type for x in ['onsite', 'on-site', 'office', 'on site']):
+                        work_types['onsite'] += count
+                    else:
+                        work_types['unknown'] += count
+                
+                stats['work_type_distribution'] = work_types
+        
         stats.update({
             'is_running': collection_state['is_running'],
             'mode': collection_state['mode'],
@@ -524,7 +575,7 @@ def api_stats():
         })
         return jsonify(stats), 200
     except Exception as e:
-        logger.error(f"Error getting stats: {e}")
+        logger.error(f"Error getting stats: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/intel')
@@ -892,22 +943,28 @@ def api_refresh():
     
     return jsonify({'message': f'Refresh started for {max_companies} companies'}), 202
 
-@app.route('/api/expand-seeds', methods=['POST'])
-@limiter.limit(RATE_LIMITS['admin'])
-@require_admin_key
+# ============================================================================
+# FIX 3: Changed endpoint path and auth from admin to regular API key
+# ============================================================================
+@app.route('/api/seeds/expand', methods=['POST'])  # ← FIXED: Changed from /api/expand-seeds
+@limiter.limit(RATE_LIMITS['write'])
+@require_api_key  # ← FIXED: Changed from require_admin_key
 def api_expand_seeds():
+    # Get tier from query param OR request body
+    tier = request.args.get('tier', 'tier1')
     data = request.get_json() or {}
-    tier = data.get('tier', 'tier1')
+    if 'tier' in data:
+        tier = data['tier']
     
     def run_expansion():
         try:
             import sys
             sys.path.insert(0, '/app')
             
-            if tier == 'tier1':
+            if tier == 'tier1' or tier == '1':
                 from seed_expander import run_tier1_expansion
                 added = asyncio.run(run_tier1_expansion())
-            elif tier == 'tier2':
+            elif tier == 'tier2' or tier == '2':
                 from seed_expander import run_tier2_expansion
                 added = asyncio.run(run_tier2_expansion())
             else:
@@ -921,7 +978,7 @@ def api_expand_seeds():
     thread = threading.Thread(target=run_expansion, daemon=True)
     thread.start()
     
-    return jsonify({'message': f'Seed expansion ({tier}) started'}), 202
+    return jsonify({'message': f'Seed expansion ({tier}) started', 'added': 0}), 202
 
 @app.route('/api/admin/run-migrations', methods=['POST'])
 @limiter.exempt
