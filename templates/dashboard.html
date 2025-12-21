@@ -14,6 +14,17 @@
         .nav-link.active { color: #3b82f6; background-color: #eff6ff; }
         .action-btn { transition: all 0.2s ease; }
         .action-btn:hover { transform: scale(1.02); }
+        .refresh-btn {
+            animation: spin 1s linear infinite;
+            display: inline-block;
+        }
+        .refresh-btn.spinning {
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body class="bg-gray-50">
@@ -31,6 +42,15 @@
                         <a href="/salary-insights" class="nav-link px-3 py-2 rounded-md text-sm font-medium">Salaries</a>
                         <a href="/submit-seed" class="nav-link px-3 py-2 rounded-md text-sm font-medium">Add Company</a>
                     </div>
+                </div>
+                <!-- Manual Refresh Button in Nav -->
+                <div class="flex items-center">
+                    <button id="nav-refresh-btn" class="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-md transition">
+                        <svg id="nav-refresh-icon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                        </svg>
+                        <span>Refresh Stats</span>
+                    </button>
                 </div>
             </div>
         </div>
@@ -56,6 +76,10 @@
                         <div class="text-sm opacity-90">Avg Jobs/Co</div>
                     </div>
                 </div>
+                <!-- Last Updated Timestamp -->
+                <div class="mt-4 text-white text-sm opacity-75">
+                    Last updated: <span id="last-updated">Just now</span>
+                </div>
             </div>
         </div>
     </div>
@@ -65,7 +89,15 @@
 
         <!-- Platform Actions -->
         <div class="mb-8">
-            <h2 class="text-2xl font-bold text-gray-900 mb-4">⚡ Platform Actions</h2>
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-2xl font-bold text-gray-900">⚡ Platform Actions</h2>
+                <button id="inline-refresh-btn" class="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-md transition">
+                    <svg id="inline-refresh-icon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                    </svg>
+                    <span>Refresh Now</span>
+                </button>
+            </div>
             <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <!-- Expand Seeds -->
                 <div class="bg-white rounded-lg shadow p-6">
@@ -79,8 +111,11 @@
                             Tier 2 (Public)
                         </button>
                     </div>
-                    <div class="mt-3 text-xs text-gray-500">
-                        <span id="seed-count">-</span> seeds available
+                    <div class="mt-3 text-xs text-gray-500 flex items-center justify-between">
+                        <span><span id="seed-count">-</span> seeds available</span>
+                        <button id="seed-refresh-btn" class="text-blue-600 hover:text-blue-800 font-medium">
+                            ↻ Update
+                        </button>
                     </div>
                 </div>
 
@@ -181,7 +216,12 @@
 
         <!-- Work Type Distribution -->
         <div class="bg-white rounded-lg shadow p-6 mb-8">
-            <h2 class="text-lg font-semibold text-gray-900 mb-4">🏢 Work Type Distribution</h2>
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-semibold text-gray-900">🏢 Work Type Distribution</h2>
+                <button id="work-type-refresh-btn" class="text-sm text-blue-600 hover:text-blue-800 font-medium">
+                    ↻ Refresh
+                </button>
+            </div>
             <div class="grid grid-cols-3 gap-4">
                 <div class="text-center p-4 bg-blue-50 rounded-lg">
                     <div class="flex items-center justify-center mb-2">
@@ -213,6 +253,9 @@
                     <p class="text-sm text-gray-600 mt-1">On-site</p>
                     <p class="text-xs text-gray-500" id="onsite-percent">-%</p>
                 </div>
+            </div>
+            <div class="mt-4 text-xs text-center text-gray-500" id="work-type-note">
+                Work types inferred from job locations
             </div>
         </div>
 
@@ -272,6 +315,13 @@
             }, 5000);
         }
 
+        // Update last updated timestamp
+        function updateTimestamp() {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+            document.getElementById('last-updated').textContent = timeStr;
+        }
+
         // API request helper
         async function apiRequest(endpoint, options = {}) {
             try {
@@ -321,6 +371,7 @@
                 const remote = workTypes.remote || 0;
                 const hybrid = workTypes.hybrid || 0;
                 const onsite = workTypes.onsite || 0;
+                const unknown = workTypes.unknown || 0;
                 const total = remote + hybrid + onsite || 1;
 
                 document.getElementById('remote-count').textContent = remote.toLocaleString();
@@ -330,6 +381,9 @@
                 document.getElementById('remote-percent').textContent = ((remote / total) * 100).toFixed(1) + '%';
                 document.getElementById('hybrid-percent').textContent = ((hybrid / total) * 100).toFixed(1) + '%';
                 document.getElementById('onsite-percent').textContent = ((onsite / total) * 100).toFixed(1) + '%';
+
+                // Update timestamp
+                updateTimestamp();
                 
             } catch (error) {
                 console.error('Failed to load stats:', error);
@@ -338,6 +392,46 @@
                 }
             }
         }
+
+        // Manual refresh with animation
+        async function manualRefresh(buttonId, iconId) {
+            const button = document.getElementById(buttonId);
+            const icon = document.getElementById(iconId);
+            
+            // Add spinning animation
+            icon.classList.add('spinning');
+            button.disabled = true;
+            
+            try {
+                await loadStats();
+                showAlert('✅ Stats refreshed successfully!', 'success');
+            } catch (error) {
+                showAlert('❌ Failed to refresh stats', 'error');
+            } finally {
+                // Remove spinning animation
+                setTimeout(() => {
+                    icon.classList.remove('spinning');
+                    button.disabled = false;
+                }, 500);
+            }
+        }
+
+        // Refresh button event listeners
+        document.getElementById('nav-refresh-btn').addEventListener('click', () => {
+            manualRefresh('nav-refresh-btn', 'nav-refresh-icon');
+        });
+
+        document.getElementById('inline-refresh-btn').addEventListener('click', () => {
+            manualRefresh('inline-refresh-btn', 'inline-refresh-icon');
+        });
+
+        document.getElementById('seed-refresh-btn').addEventListener('click', () => {
+            manualRefresh('seed-refresh-btn', 'inline-refresh-icon');
+        });
+
+        document.getElementById('work-type-refresh-btn').addEventListener('click', () => {
+            manualRefresh('work-type-refresh-btn', 'inline-refresh-icon');
+        });
 
         // Expand Tier 1 Seeds
         document.getElementById('expand-tier1-btn').addEventListener('click', async () => {
@@ -350,8 +444,9 @@
             try {
                 showAlert('🌱 Expanding Tier 1 seeds...', 'info');
                 const result = await apiRequest('/api/seeds/expand?tier=1', { method: 'POST' });
-                showAlert(`✅ Tier 1 expansion started! Check back in 2-3 minutes.`, 'success');
-                setTimeout(() => loadStats(), 3000);
+                showAlert(`✅ Tier 1 expansion started! Refresh stats in 2-3 minutes.`, 'success');
+                // Auto-refresh after 3 minutes
+                setTimeout(() => loadStats(), 180000);
             } catch (error) {
                 showAlert(`Error: ${error.message}`, 'error');
             }
@@ -368,8 +463,9 @@
             try {
                 showAlert('📊 Expanding Tier 2 seeds...', 'info');
                 const result = await apiRequest('/api/seeds/expand?tier=2', { method: 'POST' });
-                showAlert(`✅ Tier 2 expansion started! Check back in 3-5 minutes.`, 'success');
-                setTimeout(() => loadStats(), 5000);
+                showAlert(`✅ Tier 2 expansion started! Refresh stats in 3-5 minutes.`, 'success');
+                // Auto-refresh after 5 minutes
+                setTimeout(() => loadStats(), 300000);
             } catch (error) {
                 showAlert(`Error: ${error.message}`, 'error');
             }
@@ -387,8 +483,9 @@
             try {
                 showAlert(`🔍 Starting discovery (${limit} companies)...`, 'info');
                 const result = await apiRequest(`/api/collect?max_companies=${limit}`, { method: 'POST' });
-                showAlert(`✅ Discovery started! Check back in 15-30 minutes.`, 'success');
-                setTimeout(() => loadStats(), 10000);
+                showAlert(`✅ Discovery started! Refresh stats in 15-30 minutes.`, 'success');
+                // Auto-refresh after 20 minutes
+                setTimeout(() => loadStats(), 1200000);
             } catch (error) {
                 showAlert(`Error: ${error.message}`, 'error');
             }
@@ -407,7 +504,8 @@
                 showAlert('🔄 Refreshing jobs...', 'info');
                 const result = await apiRequest(`/api/refresh?hours=${hours}`, { method: 'POST' });
                 showAlert(`✅ Refresh started! Check back in 10-15 minutes.`, 'success');
-                setTimeout(() => loadStats(), 10000);
+                // Auto-refresh after 15 minutes
+                setTimeout(() => loadStats(), 900000);
             } catch (error) {
                 showAlert(`Error: ${error.message}`, 'error');
             }
