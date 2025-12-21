@@ -749,7 +749,7 @@ def api_jobs():
         db = get_db()
         query = """
             SELECT 
-                j.id, j.job_id, j.title, j.location, j.department, j.work_type,
+                j.job_id, j.title, j.location, j.department, j.work_type,
                 j.job_url, j.posted_date, j.salary_min, j.salary_max, j.salary_currency,
                 j.status, j.first_seen, j.last_seen,
                 c.company_name, c.ats_type
