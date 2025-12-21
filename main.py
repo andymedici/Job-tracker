@@ -88,7 +88,7 @@ def scheduled_discovery():
         return
     try:
         logger.info("Starting scheduled discovery")
-        stats = asyncio.run(run_collection(max_companies=500))
+        stats = asyncio.run(run_collection(max_companies=2000))  # ← Increased from 500
         run_daily_maintenance()
         collection_state['last_stats'] = {
             'total_tested': stats.total_tested,
@@ -900,8 +900,8 @@ def api_collect():
     if collection_state['is_running']:
         return jsonify({'error': 'Collection already running'}), 409
     
-    data = request.get_json(silent=True) or {}  # ← Fixed: silent=True to avoid 400
-    max_companies = min(data.get('max_companies', 500), 1000)
+    data = request.get_json(silent=True) or {}
+    max_companies = min(data.get('max_companies', 1000), 2000)  # ← Increased default, max
     
     def run_collection_thread():
         collection_state['is_running'] = True
