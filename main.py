@@ -829,7 +829,10 @@ def api_job_detail(job_id):
         with db.get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT j.*, c.company_name, c.ats_type, c.board_url
+                    SELECT j.job_id, j.title, j.location, j.department, j.work_type,
+                           j.job_url, j.posted_date, j.salary_min, j.salary_max, j.salary_currency,
+                           j.status, j.first_seen, j.last_seen, j.metadata,
+                           c.company_name, c.ats_type, c.board_url
                     FROM job_archive j
                     JOIN companies c ON j.company_id = c.id
                     WHERE j.id = %s
