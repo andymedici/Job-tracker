@@ -1,4 +1,4 @@
-"""Database Interface for Job Intelligence Platform - Production Grade"""
+"""Database Interface for Job Intelligence Platform - Production Grade with Smart Seed Rotation"""
 
 import os
 import logging
@@ -109,6 +109,13 @@ class Database:
                         created_at TIMESTAMP DEFAULT NOW()
                     )
                 """)
+                
+                # Indexes for seed rotation performance
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_seeds_times_tested ON seed_companies(times_tested)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_seeds_success_rate ON seed_companies(success_rate)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_seeds_last_tested ON seed_companies(last_tested_at)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_seeds_blacklisted ON seed_companies(is_blacklisted)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_seeds_tier ON seed_companies(tier)")
                 
                 # Snapshots
                 cur.execute("""
@@ -444,37 +451,122 @@ class Database:
             logger.error(f"Error adding manual seed: {e}")
             return False
     
+    # ========================================================================
+    # SMART SEED ROTATION LOGIC
+    # ========================================================================
+    
     def get_seeds(self, limit: int = 100, prioritize_quality: bool = True) -> List[Dict]:
+        """
+        Get seeds for testing with intelligent rotation
+        
+        Priority order:
+        1. Never tested seeds from tier 1 (highest quality)
+        2. Never tested seeds from tier 2
+        3. Never tested seeds from any tier
+        4. Successful seeds tested 7+ days ago (re-test winners)
+        5. Successful seeds tested 14+ days ago
+        6. Low-tested seeds (1-2 times) from tier 1/2
+        7. Everything else not blacklisted
+        
+        Uses RANDOM() within each priority group to ensure variety
+        """
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
                     if prioritize_quality:
-                        cur.execute("""
-                            SELECT company_name, company_name_token, source, tier, times_tested, success_rate, website_url
-                            FROM seed_companies
-                            WHERE is_blacklisted = FALSE
-                            ORDER BY 
-                                CASE WHEN times_tested = 0 THEN 0 ELSE 1 END,
-                                success_rate DESC NULLS LAST,
-                                tier ASC,
-                                created_at DESC
+                        query = """
+                            WITH prioritized_seeds AS (
+                                SELECT 
+                                    company_name,
+                                    company_name_token,
+                                    source,
+                                    tier,
+                                    times_tested,
+                                    times_successful,
+                                    success_rate,
+                                    last_tested_at,
+                                    is_blacklisted,
+                                    CASE
+                                        -- Priority 1: Never tested tier 1 (premium sources)
+                                        WHEN times_tested = 0 AND tier = 1 THEN 1
+                                        
+                                        -- Priority 2: Never tested tier 2 (public companies)
+                                        WHEN times_tested = 0 AND tier = 2 THEN 2
+                                        
+                                        -- Priority 3: Never tested other tiers
+                                        WHEN times_tested = 0 THEN 3
+                                        
+                                        -- Priority 4: High success seeds tested a week ago
+                                        WHEN success_rate >= 50.0 AND 
+                                             last_tested_at < NOW() - INTERVAL '7 days' THEN 4
+                                        
+                                        -- Priority 5: Good success seeds tested 2 weeks ago
+                                        WHEN success_rate >= 30.0 AND 
+                                             last_tested_at < NOW() - INTERVAL '14 days' THEN 5
+                                        
+                                        -- Priority 6: Low-tested tier 1 seeds (give them another chance)
+                                        WHEN times_tested <= 2 AND tier = 1 THEN 6
+                                        
+                                        -- Priority 7: Low-tested tier 2 seeds
+                                        WHEN times_tested <= 2 AND tier = 2 THEN 7
+                                        
+                                        -- Priority 8: Everything else
+                                        ELSE 8
+                                    END as priority,
+                                    -- Randomize within each priority group
+                                    RANDOM() as random_sort
+                                FROM seed_companies
+                                WHERE is_blacklisted = false
+                            )
+                            SELECT 
+                                company_name,
+                                company_name_token,
+                                source,
+                                tier,
+                                times_tested,
+                                times_successful,
+                                success_rate,
+                                last_tested_at
+                            FROM prioritized_seeds
+                            ORDER BY priority ASC, random_sort
                             LIMIT %s
-                        """, (limit,))
+                        """
                     else:
-                        cur.execute("""
-                            SELECT company_name, company_name_token, source, tier, times_tested, success_rate, website_url
+                        # Simple random selection of non-blacklisted seeds
+                        query = """
+                            SELECT 
+                                company_name,
+                                company_name_token,
+                                source,
+                                tier,
+                                times_tested,
+                                times_successful,
+                                success_rate,
+                                last_tested_at
                             FROM seed_companies
-                            WHERE is_blacklisted = FALSE
-                            ORDER BY created_at DESC
+                            WHERE is_blacklisted = false
+                            ORDER BY RANDOM()
                             LIMIT %s
-                        """, (limit,))
+                        """
+                    
+                    cur.execute(query, (limit,))
                     columns = [desc[0] for desc in cur.description]
-                    return [dict(zip(columns, row)) for row in cur.fetchall()]
+                    seeds = [dict(zip(columns, row)) for row in cur.fetchall()]
+                    
+                    if seeds:
+                        logger.info(f"🌱 Retrieved {len(seeds)} seeds for testing")
+                        # Log rotation stats
+                        never_tested = sum(1 for s in seeds if s['times_tested'] == 0)
+                        retesting = len(seeds) - never_tested
+                        logger.info(f"   - {never_tested} never tested, {retesting} re-testing")
+                    
+                    return seeds
         except Exception as e:
             logger.error(f"Error getting seeds: {e}")
             return []
     
     def increment_seed_tested(self, company_name: str):
+        """Increment times_tested counter and update last_tested_at"""
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
@@ -484,7 +576,7 @@ class Database:
                             last_tested_at = NOW(),
                             success_rate = CASE 
                                 WHEN times_tested + 1 > 0 
-                                THEN (times_successful::DECIMAL / (times_tested + 1) * 100)
+                                THEN ROUND((times_successful::DECIMAL / (times_tested + 1) * 100), 2)
                                 ELSE 0 
                             END
                         WHERE company_name ILIKE %s
@@ -494,6 +586,7 @@ class Database:
             logger.debug(f"Error updating seed tested count: {e}")
     
     def increment_seed_success(self, company_name: str):
+        """Increment success counter and recalculate success rate"""
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
@@ -502,8 +595,8 @@ class Database:
                         SET times_successful = times_successful + 1,
                             success_rate = CASE 
                                 WHEN times_tested > 0 
-                                THEN ((times_successful + 1)::DECIMAL / times_tested * 100)
-                                ELSE 0 
+                                THEN ROUND(((times_successful + 1)::DECIMAL / times_tested * 100), 2)
+                                ELSE 100.0
                             END
                         WHERE company_name ILIKE %s
                     """, (company_name,))
@@ -512,6 +605,7 @@ class Database:
             logger.debug(f"Error updating seed success count: {e}")
     
     def blacklist_poor_seeds(self, min_tests: int = 3, max_success_rate: float = 5.0) -> int:
+        """Blacklist seeds that have been tested multiple times but never/rarely succeeded"""
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
@@ -526,11 +620,49 @@ class Database:
                     blacklisted = cur.fetchall()
                     conn.commit()
                     if blacklisted:
-                        logger.info(f"Blacklisted {len(blacklisted)} poor-performing seeds")
+                        logger.info(f"🚫 Blacklisted {len(blacklisted)} poor-performing seeds (tested {min_tests}+ times, <{max_success_rate}% success)")
                     return len(blacklisted)
         except Exception as e:
             logger.error(f"Error blacklisting seeds: {e}")
             return 0
+    
+    def get_seed_stats(self) -> Dict:
+        """Get comprehensive seed statistics for dashboard"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT 
+                            COUNT(*) as total_seeds,
+                            COUNT(*) FILTER (WHERE times_tested = 0) as never_tested,
+                            COUNT(*) FILTER (WHERE times_tested > 0 AND times_successful > 0) as successful,
+                            COUNT(*) FILTER (WHERE is_blacklisted = true) as blacklisted,
+                            COUNT(*) FILTER (WHERE tier = 1) as tier1_seeds,
+                            COUNT(*) FILTER (WHERE tier = 2) as tier2_seeds,
+                            ROUND(AVG(times_tested), 2) as avg_tests,
+                            ROUND(AVG(success_rate) FILTER (WHERE times_tested > 0), 2) as avg_success_rate
+                        FROM seed_companies
+                    """)
+                    row = cur.fetchone()
+                    if row:
+                        return {
+                            'total_seeds': row[0] or 0,
+                            'never_tested': row[1] or 0,
+                            'successful': row[2] or 0,
+                            'blacklisted': row[3] or 0,
+                            'tier1_seeds': row[4] or 0,
+                            'tier2_seeds': row[5] or 0,
+                            'avg_tests': float(row[6]) if row[6] else 0.0,
+                            'avg_success_rate': float(row[7]) if row[7] else 0.0
+                        }
+                    return {}
+        except Exception as e:
+            logger.error(f"Error getting seed stats: {e}")
+            return {}
+    
+    # ========================================================================
+    # END SMART SEED ROTATION LOGIC
+    # ========================================================================
     
     def create_company_snapshots(self) -> int:
         try:
