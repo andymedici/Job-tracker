@@ -12,6 +12,8 @@
         .nav-link { color: #6b7280; transition: all 0.2s; }
         .nav-link:hover { color: #1f2937; background-color: #f3f4f6; }
         .nav-link.active { color: #3b82f6; background-color: #eff6ff; }
+        .action-btn { transition: all 0.2s ease; }
+        .action-btn:hover { transform: scale(1.02); }
     </style>
 </head>
 <body class="bg-gray-50">
@@ -65,37 +67,59 @@
         <div class="mb-8">
             <h2 class="text-2xl font-bold text-gray-900 mb-4">⚡ Platform Actions</h2>
             <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- Expand Seeds -->
                 <div class="bg-white rounded-lg shadow p-6">
                     <h3 class="font-semibold text-gray-900 mb-4">🌱 Expand Seeds</h3>
+                    <p class="text-sm text-gray-600 mb-4">Add premium or public companies to seed pool</p>
                     <div class="space-y-2">
-                        <button id="expand-tier1-btn" class="w-full bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition text-sm">
+                        <button id="expand-tier1-btn" class="action-btn w-full bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition text-sm font-medium">
                             Tier 1 (Premium)
                         </button>
-                        <button id="expand-tier2-btn" class="w-full bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition text-sm">
+                        <button id="expand-tier2-btn" class="action-btn w-full bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition text-sm font-medium">
                             Tier 2 (Public)
                         </button>
                     </div>
+                    <div class="mt-3 text-xs text-gray-500">
+                        <span id="seed-count">-</span> seeds available
+                    </div>
                 </div>
 
+                <!-- Discovery -->
                 <div class="bg-white rounded-lg shadow p-6">
                     <h3 class="font-semibold text-gray-900 mb-4">🔍 Discovery</h3>
-                    <input type="number" id="discovery-limit" value="100" min="10" max="500" 
-                        class="w-full border-gray-300 rounded-md shadow-sm mb-2 text-sm">
-                    <button id="start-discovery-btn" class="w-full bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition text-sm">
+                    <p class="text-sm text-gray-600 mb-4">Test seeds and discover new companies</p>
+                    <div class="mb-3">
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Max Companies</label>
+                        <input type="number" id="discovery-limit" value="100" min="10" max="500" step="10"
+                            class="w-full border-gray-300 rounded-md shadow-sm text-sm">
+                    </div>
+                    <button id="start-discovery-btn" class="action-btn w-full bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition text-sm font-medium">
                         Start Discovery
                     </button>
+                    <div class="mt-3 text-xs text-gray-500">
+                        Estimated: <span id="discovery-time">~15-20 min</span>
+                    </div>
                 </div>
 
+                <!-- Refresh Jobs -->
                 <div class="bg-white rounded-lg shadow p-6">
                     <h3 class="font-semibold text-gray-900 mb-4">🔄 Refresh Jobs</h3>
-                    <select id="refresh-hours" class="w-full border-gray-300 rounded-md shadow-sm mb-2 text-sm">
-                        <option value="6">6 hours</option>
-                        <option value="12">12 hours</option>
-                        <option value="24">24 hours</option>
-                    </select>
-                    <button id="refresh-jobs-btn" class="w-full bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition text-sm">
+                    <p class="text-sm text-gray-600 mb-4">Update jobs from existing companies</p>
+                    <div class="mb-3">
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Hours Since Update</label>
+                        <select id="refresh-hours" class="w-full border-gray-300 rounded-md shadow-sm text-sm">
+                            <option value="6">6 hours</option>
+                            <option value="12">12 hours</option>
+                            <option value="24">24 hours</option>
+                            <option value="48">48 hours</option>
+                        </select>
+                    </div>
+                    <button id="refresh-jobs-btn" class="action-btn w-full bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition text-sm font-medium">
                         Refresh All
                     </button>
+                    <div class="mt-3 text-xs text-gray-500">
+                        Updates existing companies
+                    </div>
                 </div>
             </div>
         </div>
@@ -103,23 +127,54 @@
         <!-- Key Statistics -->
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
             <div class="stat-card bg-white rounded-lg shadow p-6">
-                <p class="text-sm font-medium text-gray-600">Total Jobs</p>
-                <p id="stat-total-jobs" class="text-3xl font-bold text-gray-900 mt-2">-</p>
+                <div class="flex items-center justify-between mb-2">
+                    <p class="text-sm font-medium text-gray-600">Total Jobs</p>
+                    <div class="bg-blue-100 rounded-full p-2">
+                        <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                        </svg>
+                    </div>
+                </div>
+                <p id="stat-total-jobs" class="text-3xl font-bold text-gray-900">-</p>
                 <p class="text-xs text-gray-500 mt-1">Active positions</p>
             </div>
+
             <div class="stat-card bg-white rounded-lg shadow p-6">
-                <p class="text-sm font-medium text-gray-600">Companies</p>
-                <p id="stat-companies" class="text-3xl font-bold text-gray-900 mt-2">-</p>
+                <div class="flex items-center justify-between mb-2">
+                    <p class="text-sm font-medium text-gray-600">Companies</p>
+                    <div class="bg-green-100 rounded-full p-2">
+                        <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+                        </svg>
+                    </div>
+                </div>
+                <p id="stat-companies" class="text-3xl font-bold text-gray-900">-</p>
                 <p class="text-xs text-gray-500 mt-1">Actively hiring</p>
             </div>
+
             <div class="stat-card bg-white rounded-lg shadow p-6">
-                <p class="text-sm font-medium text-gray-600">Avg Jobs/Company</p>
-                <p id="stat-avg-jobs" class="text-3xl font-bold text-gray-900 mt-2">-</p>
+                <div class="flex items-center justify-between mb-2">
+                    <p class="text-sm font-medium text-gray-600">Avg Jobs/Company</p>
+                    <div class="bg-purple-100 rounded-full p-2">
+                        <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                        </svg>
+                    </div>
+                </div>
+                <p id="stat-avg-jobs" class="text-3xl font-bold text-gray-900">-</p>
                 <p class="text-xs text-gray-500 mt-1">Platform quality</p>
             </div>
+
             <div class="stat-card bg-white rounded-lg shadow p-6">
-                <p class="text-sm font-medium text-gray-600">Seed Companies</p>
-                <p id="stat-seeds" class="text-3xl font-bold text-gray-900 mt-2">-</p>
+                <div class="flex items-center justify-between mb-2">
+                    <p class="text-sm font-medium text-gray-600">Seed Companies</p>
+                    <div class="bg-yellow-100 rounded-full p-2">
+                        <svg class="w-5 h-5 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path>
+                        </svg>
+                    </div>
+                </div>
+                <p id="stat-seeds" class="text-3xl font-bold text-gray-900">-</p>
                 <p class="text-xs text-gray-500 mt-1">Ready to discover</p>
             </div>
         </div>
@@ -129,33 +184,51 @@
             <h2 class="text-lg font-semibold text-gray-900 mb-4">🏢 Work Type Distribution</h2>
             <div class="grid grid-cols-3 gap-4">
                 <div class="text-center p-4 bg-blue-50 rounded-lg">
+                    <div class="flex items-center justify-center mb-2">
+                        <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                    </div>
                     <p class="text-2xl font-bold text-blue-900" id="remote-count">-</p>
-                    <p class="text-sm text-gray-600">Remote</p>
+                    <p class="text-sm text-gray-600 mt-1">Remote</p>
                     <p class="text-xs text-gray-500" id="remote-percent">-%</p>
                 </div>
                 <div class="text-center p-4 bg-green-50 rounded-lg">
+                    <div class="flex items-center justify-center mb-2">
+                        <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path>
+                        </svg>
+                    </div>
                     <p class="text-2xl font-bold text-green-900" id="hybrid-count">-</p>
-                    <p class="text-sm text-gray-600">Hybrid</p>
+                    <p class="text-sm text-gray-600 mt-1">Hybrid</p>
                     <p class="text-xs text-gray-500" id="hybrid-percent">-%</p>
                 </div>
                 <div class="text-center p-4 bg-purple-50 rounded-lg">
+                    <div class="flex items-center justify-center mb-2">
+                        <svg class="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+                        </svg>
+                    </div>
                     <p class="text-2xl font-bold text-purple-900" id="onsite-count">-</p>
-                    <p class="text-sm text-gray-600">On-site</p>
+                    <p class="text-sm text-gray-600 mt-1">On-site</p>
                     <p class="text-xs text-gray-500" id="onsite-percent">-%</p>
                 </div>
             </div>
         </div>
 
-        <!-- API Key -->
+        <!-- API Key Configuration -->
         <div class="bg-white rounded-lg shadow p-6">
             <h2 class="text-lg font-semibold text-gray-900 mb-4">🔐 API Configuration</h2>
             <div class="flex items-center space-x-4">
-                <input type="password" id="api-key-input" placeholder="Enter API key" 
+                <input type="password" id="api-key-input" placeholder="Enter your API key" 
                     class="flex-1 border-gray-300 rounded-md shadow-sm">
-                <button id="save-key-btn" class="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700">
+                <button id="save-key-btn" class="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 transition font-medium">
                     Save Key
                 </button>
             </div>
+            <p class="text-xs text-gray-500 mt-2">
+                Your API key is stored locally and required for all platform operations.
+            </p>
         </div>
     </div>
 
@@ -163,44 +236,67 @@
         const API_BASE = window.location.origin;
         let API_KEY = localStorage.getItem('api_key') || '';
 
-        if (API_KEY) document.getElementById('api-key-input').value = API_KEY;
+        // Load saved API key
+        if (API_KEY) {
+            document.getElementById('api-key-input').value = API_KEY;
+        }
 
+        // Save API key
         document.getElementById('save-key-btn').addEventListener('click', () => {
             const key = document.getElementById('api-key-input').value.trim();
             if (key) {
                 localStorage.setItem('api_key', key);
                 API_KEY = key;
-                showAlert('API key saved!', 'success');
+                showAlert('API key saved successfully!', 'success');
                 loadStats();
+            } else {
+                showAlert('Please enter a valid API key', 'error');
             }
         });
 
+        // Show alert
         function showAlert(message, type = 'info') {
             const alertBar = document.getElementById('alert-bar');
             const colors = {
-                success: 'bg-green-100 text-green-800',
-                error: 'bg-red-100 text-red-800',
-                info: 'bg-blue-100 text-blue-800'
+                success: 'bg-green-100 text-green-800 border border-green-200',
+                error: 'bg-red-100 text-red-800 border border-red-200',
+                info: 'bg-blue-100 text-blue-800 border border-blue-200'
             };
+            
             alertBar.className = `mb-6 rounded-lg p-4 ${colors[type]}`;
             alertBar.textContent = message;
             alertBar.classList.remove('hidden');
-            setTimeout(() => alertBar.classList.add('hidden'), 5000);
+            
+            setTimeout(() => {
+                alertBar.classList.add('hidden');
+            }, 5000);
         }
 
+        // API request helper
         async function apiRequest(endpoint, options = {}) {
-            const response = await fetch(`${API_BASE}${endpoint}`, {
-                ...options,
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-API-Key': API_KEY,
-                    ...options.headers
+            try {
+                const response = await fetch(`${API_BASE}${endpoint}`, {
+                    ...options,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': API_KEY,
+                        ...options.headers
+                    }
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || error.message || 'Request failed');
                 }
-            });
-            if (!response.ok) throw new Error('Request failed');
-            return await response.json();
+                
+                return await response.json();
+            } catch (error) {
+                console.error('API Error:', error);
+                throw error;
+            }
         }
 
+        // Load stats
         async function loadStats() {
             try {
                 const data = await apiRequest('/api/stats');
@@ -208,19 +304,23 @@
                 const totalCompanies = data.total_companies || 0;
                 const avgJobs = totalCompanies > 0 ? (totalJobs / totalCompanies).toFixed(1) : 0;
                 
+                // Update hero stats
                 document.getElementById('total-jobs-hero').textContent = totalJobs.toLocaleString();
                 document.getElementById('total-companies-hero').textContent = totalCompanies.toLocaleString();
                 document.getElementById('avg-jobs-hero').textContent = avgJobs;
                 
+                // Update main stats
                 document.getElementById('stat-total-jobs').textContent = totalJobs.toLocaleString();
                 document.getElementById('stat-companies').textContent = totalCompanies.toLocaleString();
                 document.getElementById('stat-avg-jobs').textContent = avgJobs;
                 document.getElementById('stat-seeds').textContent = (data.total_seeds || 0).toLocaleString();
+                document.getElementById('seed-count').textContent = (data.total_seeds || 0).toLocaleString();
 
                 // Work type distribution
-                const remote = data.work_type_distribution?.remote || 0;
-                const hybrid = data.work_type_distribution?.hybrid || 0;
-                const onsite = data.work_type_distribution?.onsite || 0;
+                const workTypes = data.work_type_distribution || {remote: 0, hybrid: 0, onsite: 0, unknown: 0};
+                const remote = workTypes.remote || 0;
+                const hybrid = workTypes.hybrid || 0;
+                const onsite = workTypes.onsite || 0;
                 const total = remote + hybrid + onsite || 1;
 
                 document.getElementById('remote-count').textContent = remote.toLocaleString();
@@ -230,66 +330,103 @@
                 document.getElementById('remote-percent').textContent = ((remote / total) * 100).toFixed(1) + '%';
                 document.getElementById('hybrid-percent').textContent = ((hybrid / total) * 100).toFixed(1) + '%';
                 document.getElementById('onsite-percent').textContent = ((onsite / total) * 100).toFixed(1) + '%';
+                
             } catch (error) {
                 console.error('Failed to load stats:', error);
+                if (error.message.includes('401') || error.message.includes('403')) {
+                    showAlert('Invalid API key. Please enter a valid key.', 'error');
+                }
             }
         }
 
+        // Expand Tier 1 Seeds
         document.getElementById('expand-tier1-btn').addEventListener('click', async () => {
-            if (!confirm('Expand Tier 1 seeds (premium companies)?')) return;
+            if (!API_KEY) {
+                showAlert('Please enter your API key first', 'error');
+                return;
+            }
+            if (!confirm('Expand Tier 1 seeds (premium companies)? This will add 800-1,500 companies and take 2-3 minutes.')) return;
+            
             try {
-                showAlert('🌱 Expanding...', 'info');
+                showAlert('🌱 Expanding Tier 1 seeds...', 'info');
                 const result = await apiRequest('/api/seeds/expand?tier=1', { method: 'POST' });
-                showAlert(`✅ Added ${result.added} companies!`, 'success');
-                loadStats();
+                showAlert(`✅ Tier 1 expansion started! Check back in 2-3 minutes.`, 'success');
+                setTimeout(() => loadStats(), 3000);
             } catch (error) {
-                showAlert('Error: ' + error.message, 'error');
+                showAlert(`Error: ${error.message}`, 'error');
             }
         });
 
+        // Expand Tier 2 Seeds
         document.getElementById('expand-tier2-btn').addEventListener('click', async () => {
-            if (!confirm('Expand Tier 2 seeds (public companies)?')) return;
+            if (!API_KEY) {
+                showAlert('Please enter your API key first', 'error');
+                return;
+            }
+            if (!confirm('Expand Tier 2 seeds (public companies)? This will add 2,000-3,000 companies and take 3-5 minutes.')) return;
+            
             try {
-                showAlert('📊 Expanding...', 'info');
+                showAlert('📊 Expanding Tier 2 seeds...', 'info');
                 const result = await apiRequest('/api/seeds/expand?tier=2', { method: 'POST' });
-                showAlert(`✅ Added ${result.added} companies!`, 'success');
-                loadStats();
+                showAlert(`✅ Tier 2 expansion started! Check back in 3-5 minutes.`, 'success');
+                setTimeout(() => loadStats(), 5000);
             } catch (error) {
-                showAlert('Error: ' + error.message, 'error');
+                showAlert(`Error: ${error.message}`, 'error');
             }
         });
 
+        // Start Discovery
         document.getElementById('start-discovery-btn').addEventListener('click', async () => {
+            if (!API_KEY) {
+                showAlert('Please enter your API key first', 'error');
+                return;
+            }
             const limit = document.getElementById('discovery-limit').value;
-            if (!confirm(`Discover up to ${limit} companies?`)) return;
+            if (!confirm(`Discover up to ${limit} companies? This will take 15-30 minutes.`)) return;
+            
             try {
-                showAlert('🔍 Starting discovery...', 'info');
+                showAlert(`🔍 Starting discovery (${limit} companies)...`, 'info');
                 const result = await apiRequest(`/api/collect?max_companies=${limit}`, { method: 'POST' });
-                showAlert(`✅ Found ${result.total_jobs_collected} jobs across ${result.total_discovered} companies!`, 'success');
-                loadStats();
+                showAlert(`✅ Discovery started! Check back in 15-30 minutes.`, 'success');
+                setTimeout(() => loadStats(), 10000);
             } catch (error) {
-                showAlert('Error: ' + error.message, 'error');
+                showAlert(`Error: ${error.message}`, 'error');
             }
         });
 
+        // Refresh Jobs
         document.getElementById('refresh-jobs-btn').addEventListener('click', async () => {
+            if (!API_KEY) {
+                showAlert('Please enter your API key first', 'error');
+                return;
+            }
             const hours = document.getElementById('refresh-hours').value;
             if (!confirm(`Refresh companies not updated in ${hours} hours?`)) return;
+            
             try {
-                showAlert('🔄 Refreshing...', 'info');
+                showAlert('🔄 Refreshing jobs...', 'info');
                 const result = await apiRequest(`/api/refresh?hours=${hours}`, { method: 'POST' });
-                showAlert(`✅ Refreshed ${result.total_jobs_collected} jobs!`, 'success');
-                loadStats();
+                showAlert(`✅ Refresh started! Check back in 10-15 minutes.`, 'success');
+                setTimeout(() => loadStats(), 10000);
             } catch (error) {
-                showAlert('Error: ' + error.message, 'error');
+                showAlert(`Error: ${error.message}`, 'error');
             }
         });
 
+        // Update discovery time estimate
+        document.getElementById('discovery-limit').addEventListener('input', (e) => {
+            const value = parseInt(e.target.value);
+            const minutes = Math.ceil(value * 1.5 / 10) * 5;
+            document.getElementById('discovery-time').textContent = `~${minutes}-${minutes + 10} min`;
+        });
+
+        // Initialize
         if (API_KEY) {
             loadStats();
+            // Auto-refresh stats every 60 seconds
             setInterval(loadStats, 60000);
         } else {
-            showAlert('Please enter API key to get started', 'info');
+            showAlert('Please enter your API key to get started', 'info');
         }
     </script>
 </body>
