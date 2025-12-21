@@ -1,4 +1,4 @@
-"""Job Intelligence Collector - ULTIMATE PRODUCTION v4.0"""
+"""Job Intelligence Collector - ULTIMATE PRODUCTION v5.0 - Supercharged for Thousands"""
 
 import asyncio
 import aiohttp
@@ -9,6 +9,7 @@ from datetime import datetime
 import json
 import re
 from urllib.parse import urljoin
+import random
 
 from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
@@ -59,12 +60,13 @@ class JobIntelCollector:
         self.db = db or get_db()
         self.client: Optional[aiohttp.ClientSession] = None
         self.stats = CollectionStats()
-        self._semaphore = asyncio.Semaphore(10)
+        self._semaphore = asyncio.Semaphore(50)  # Upgraded: Higher concurrency for thousands
         self.playwright: Optional[Playwright] = None
         self.browser: Optional[Browser] = None
+        self.proxies = []  # Optional: Add ['http://proxy1:port', 'http://proxy2:port'] for rotation
     
     async def initialize_playwright(self):
-        """Initialize Playwright browser"""
+        """Initialize Playwright browser with stealth"""
         if self.browser is None:
             try:
                 self.playwright = await async_playwright().start()
@@ -77,7 +79,7 @@ class JobIntelCollector:
                         '--disable-blink-features=AutomationControlled'
                     ]
                 )
-                logger.info("✅ Playwright browser initialized")
+                logger.info("✅ Playwright browser initialized with stealth")
             except Exception as e:
                 logger.error(f"Failed to start Playwright: {e}")
                 self.browser = None
@@ -98,10 +100,13 @@ class JobIntelCollector:
                 'Accept': 'text/html,application/json,*/*',
                 'Accept-Language': 'en-US,en;q=0.5',
             }
+            connector_args = {'limit': 100, 'limit_per_host': 20}
+            if self.proxies:
+                connector_args['proxy'] = random.choice(self.proxies)
             self.client = aiohttp.ClientSession(
                 headers=headers,
-                timeout=aiohttp.ClientTimeout(total=30),
-                connector=aiohttp.TCPConnector(limit=50, limit_per_host=10)
+                timeout=aiohttp.ClientTimeout(total=45),  # Upgraded timeout for stability
+                connector=aiohttp.TCPConnector(**connector_args)
             )
         return self.client
     
@@ -152,12 +157,21 @@ class JobIntelCollector:
         
         return {}
     
-    # ========================================================================
-    # ATS TESTING WITH VALIDATION
-    # ========================================================================
+    # Upgraded: Retries decorator for all test/scrape functions
+    def with_retries(func):
+        async def wrapper(self, *args, **kwargs):
+            for attempt in range(3):  # 3 retries
+                try:
+                    return await func(self, *args, **kwargs)
+                except Exception as e:
+                    logger.debug(f"Retry {attempt+1} for {func.__name__}: {e}")
+                    await asyncio.sleep(random.uniform(1, 3))
+            logger.warning(f"Failed after 3 retries: {func.__name__}")
+            return None
+        return wrapper
     
+    @with_retries
     async def _test_greenhouse(self, company_name: str) -> Optional[JobBoard]:
-        """Test Greenhouse with validation"""
         token = self.db._name_to_token(company_name)
         test_urls = [
             f"https://boards.greenhouse.io/{token}",
@@ -166,46 +180,35 @@ class JobIntelCollector:
         client = await self._get_client()
         
         for url in test_urls:
-            try:
-                async with client.get(url) as resp:
-                    if resp.status == 200:
-                        text = await resp.text()
-                        
-                        # VALIDATION: Must contain job-related content
-                        if any(keyword in text.lower() for keyword in ['greenhouse', 'job', 'position', 'career']):
-                            # Extra check: Not a 404 page
-                            if 'not found' not in text.lower() and 'no open positions' not in text.lower():
-                                logger.info(f"✅ Found Greenhouse: {company_name}")
-                                return JobBoard(company_name, 'greenhouse', url)
-            except:
-                pass
+            async with client.get(url) as resp:
+                if resp.status == 200:
+                    text = await resp.text()
+                    if any(keyword in text.lower() for keyword in ['greenhouse', 'job', 'position', 'career']):
+                        if 'not found' not in text.lower() and 'no open positions' not in text.lower():
+                            logger.info(f"✅ Found Greenhouse: {company_name}")
+                            return JobBoard(company_name, 'greenhouse', url)
             await asyncio.sleep(0.3)
         return None
     
+    @with_retries
     async def _test_lever(self, company_name: str) -> Optional[JobBoard]:
-        """Test Lever with validation"""
         token = self.db._name_to_token(company_name)
         test_urls = [f"https://jobs.lever.co/{token}"]
         client = await self._get_client()
         
         for url in test_urls:
-            try:
-                async with client.get(url) as resp:
-                    if resp.status == 200:
-                        text = await resp.text()
-                        
-                        # VALIDATION: Must contain Lever indicators
-                        if 'lever' in text.lower() and ('posting' in text.lower() or 'job' in text.lower()):
-                            if 'not found' not in text.lower():
-                                logger.info(f"✅ Found Lever: {company_name}")
-                                return JobBoard(company_name, 'lever', url)
-            except:
-                pass
+            async with client.get(url) as resp:
+                if resp.status == 200:
+                    text = await resp.text()
+                    if 'lever' in text.lower() and ('posting' in text.lower() or 'job' in text.lower()):
+                        if 'not found' not in text.lower():
+                            logger.info(f"✅ Found Lever: {company_name}")
+                            return JobBoard(company_name, 'lever', url)
             await asyncio.sleep(0.3)
         return None
     
+    @with_retries
     async def _test_workday(self, company_name: str) -> Optional[JobBoard]:
-        """Test Workday with validation"""
         token = self.db._name_to_token(company_name)
         test_patterns = [
             f"https://{token}.wd5.myworkdayjobs.com/{token}",
@@ -217,24 +220,18 @@ class JobIntelCollector:
         client = await self._get_client()
         
         for url in test_patterns:
-            try:
-                async with client.get(url, allow_redirects=True) as resp:
-                    if resp.status == 200:
-                        text = await resp.text()
-                        
-                        # VALIDATION: Must be Workday and have jobs
-                        if 'myworkdayjobs.com' in str(resp.url):
-                            if any(keyword in text.lower() for keyword in ['job', 'career', 'position']):
-                                if 'no open positions' not in text.lower():
-                                    logger.info(f"✅ Found Workday: {company_name}")
-                                    return JobBoard(company_name, 'workday', str(resp.url))
-            except:
-                pass
+            async with client.get(url, allow_redirects=True) as resp:
+                if resp.status == 200 and 'myworkdayjobs.com' in str(resp.url):
+                    text = await resp.text()
+                    if any(keyword in text.lower() for keyword in ['job', 'career', 'position']):
+                        if 'no open positions' not in text.lower():
+                            logger.info(f"✅ Found Workday: {company_name}")
+                            return JobBoard(company_name, 'workday', str(resp.url))
             await asyncio.sleep(0.3)
         return None
     
+    @with_retries
     async def _test_ashby(self, company_name: str) -> Optional[JobBoard]:
-        """Test Ashby with validation"""
         token = self.db._name_to_token(company_name)
         test_urls = [
             f"https://jobs.ashbyhq.com/{token}",
@@ -243,26 +240,94 @@ class JobIntelCollector:
         client = await self._get_client()
         
         for url in test_urls:
-            try:
-                async with client.get(url) as resp:
-                    if resp.status == 200:
-                        text = await resp.text()
-                        
-                        # VALIDATION: Must contain Ashby and jobs
-                        if 'ashby' in text.lower():
-                            # Check for actual job content
-                            if any(keyword in text.lower() for keyword in ['posting', 'position', 'opening']):
-                                # Exclude 404/empty pages
-                                if all(excluded not in text.lower() for excluded in ['not found', 'no positions', 'no openings']):
-                                    logger.info(f"✅ Found Ashby: {company_name}")
-                                    return JobBoard(company_name, 'ashby', url)
-            except:
-                pass
+            async with client.get(url) as resp:
+                if resp.status == 200:
+                    text = await resp.text()
+                    if 'ashby' in text.lower():
+                        if any(keyword in text.lower() for keyword in ['posting', 'position', 'opening']):
+                            if all(excluded not in text.lower() for excluded in ['not found', 'no positions', 'no openings']):
+                                logger.info(f"✅ Found Ashby: {company_name}")
+                                return JobBoard(company_name, 'ashby', url)
+            await asyncio.sleep(0.3)
+        return None
+
+    @with_retries
+    async def _test_bamboohr(self, company_name: str) -> Optional[JobBoard]:
+        token = self.db._name_to_token(company_name)
+        test_urls = [
+            f"https://{token}.bamboohr.com/jobs/",
+            f"https://{token}.bamboohr.com/careers",
+        ]
+        client = await self._get_client()
+        
+        for url in test_urls:
+            async with client.get(url) as resp:
+                if resp.status == 200:
+                    text = await resp.text()
+                    if 'bamboohr' in text.lower() and 'job' in text.lower():
+                        logger.info(f"✅ Found BambooHR: {company_name}")
+                        return JobBoard(company_name, 'bamboohr', url)
+            await asyncio.sleep(0.3)
+        return None
+
+    @with_retries
+    async def _test_taleo(self, company_name: str) -> Optional[JobBoard]:
+        token = self.db._name_to_token(company_name)
+        test_urls = [
+            f"https://{token}.taleo.net/careersection/external/jobsearch.ftl",
+            f"https://{token}.taleo.net/careersection",
+        ]
+        client = await self._get_client()
+        
+        for url in test_urls:
+            async with client.get(url) as resp:
+                if resp.status == 200:
+                    text = await resp.text()
+                    if 'taleo' in text.lower() and 'job' in text.lower():
+                        logger.info(f"✅ Found Taleo: {company_name}")
+                        return JobBoard(company_name, 'taleo', url)
+            await asyncio.sleep(0.3)
+        return None
+
+    @with_retries
+    async def _test_icims(self, company_name: str) -> Optional[JobBoard]:
+        token = self.db._name_to_token(company_name)
+        test_urls = [
+            f"https://careers-{token}.icims.com/jobs/search",
+            f"https://jobs-{token}.icims.com/jobs/search",
+        ]
+        client = await self._get_client()
+        
+        for url in test_urls:
+            async with client.get(url) as resp:
+                if resp.status == 200:
+                    text = await resp.text()
+                    if 'icims' in text.lower() and 'job' in text.lower():
+                        logger.info(f"✅ Found iCIMS: {company_name}")
+                        return JobBoard(company_name, 'icims', url)
+            await asyncio.sleep(0.3)
+        return None
+
+    @with_retries
+    async def _test_smartrecruiters(self, company_name: str) -> Optional[JobBoard]:
+        token = self.db._name_to_token(company_name)
+        test_urls = [
+            f"https://careers.smartrecruiters.com/{token}",
+            f"https://jobs.smartrecruiters.com/{token}",
+        ]
+        client = await self._get_client()
+        
+        for url in test_urls:
+            async with client.get(url) as resp:
+                if resp.status == 200:
+                    text = await resp.text()
+                    if 'smartrecruiters' in text.lower() and 'job' in text.lower():
+                        logger.info(f"✅ Found SmartRecruiters: {company_name}")
+                        return JobBoard(company_name, 'smartrecruiters', url)
             await asyncio.sleep(0.3)
         return None
 
     async def _test_company(self, company_name: str, board_hint: str = None) -> Optional[JobBoard]:
-        """Test company for ATS with hint support"""
         self.stats.total_tested += 1
         
         try:
@@ -270,11 +335,16 @@ class JobIntelCollector:
         except:
             pass
         
+        # Expanded test order with new ATS
         test_order = [
             ('greenhouse', self._test_greenhouse),
             ('lever', self._test_lever),
             ('workday', self._test_workday),
             ('ashby', self._test_ashby),
+            ('bamboohr', self._test_bamboohr),
+            ('taleo', self._test_taleo),
+            ('icims', self._test_icims),
+            ('smartrecruiters', self._test_smartrecruiters),
         ]
         
         # Try hint first if provided
@@ -283,10 +353,7 @@ class JobIntelCollector:
                 if ats_type == board_hint.lower():
                     board = await test_func(company_name)
                     if board:
-                        try:
-                            self.db.increment_seed_success(company_name)
-                        except:
-                            pass
+                        self.db.increment_seed_success(company_name)
                         return board
                     break
         
@@ -296,25 +363,36 @@ class JobIntelCollector:
                 continue
             board = await test_func(company_name)
             if board:
-                try:
-                    self.db.increment_seed_success(company_name)
-                except:
-                    pass
+                self.db.increment_seed_success(company_name)
                 return board
             await asyncio.sleep(0.3)
         
+        # Fallback: Probe generic URLs
+        fallback_urls = [
+            f"https://www.{company_name.lower().replace(' ', '')}.com/careers",
+            f"https://www.{company_name.lower().replace(' ', '')}.com/jobs",
+            f"https://{company_name.lower().replace(' ', '')}.com/careers",
+            f"https://{company_name.lower().replace(' ', '')}.com/jobs",
+        ]
+        client = await self._get_client()
+        for url in fallback_urls:
+            try:
+                async with client.get(url) as resp:
+                    if resp.status == 200:
+                        text = await resp.text()
+                        if 'job' in text.lower() or 'career' in text.lower():
+                            logger.info(f"✅ Found generic board: {company_name}")
+                            return JobBoard(company_name, 'generic', str(resp.url))
+            except:
+                pass
+        
         return None
-    
-    # ========================================================================
-    # GREENHOUSE SCRAPER (PERFECT)
-    # ========================================================================
-    
+
+    @with_retries
     async def _scrape_greenhouse(self, board: JobBoard) -> List[JobPosting]:
-        """Scrape Greenhouse - JSON API"""
         jobs = []
         client = await self._get_client()
         
-        # Extract token
         token = None
         if 'for=' in board.board_url:
             token = board.board_url.split('for=')[-1].split('&')[0]
@@ -326,208 +404,148 @@ class JobIntelCollector:
         if not token:
             return []
         
-        # Try JSON API endpoints
         api_urls = [
             f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs",
             f"https://boards.greenhouse.io/embed/job_board/jobs?for={token}",
         ]
         
         for api_url in api_urls:
-            try:
-                async with client.get(api_url) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        job_list = data.get('jobs', []) if isinstance(data, dict) else data
-                        
-                        for job in job_list:
-                            # Extract salary
-                            salary_info = {}
-                            if job.get('metadata'):
-                                for field in job['metadata']:
-                                    if 'salary' in field.get('name', '').lower():
-                                        salary_info = self._extract_salary(field.get('value', ''))
-                            
-                            jobs.append(JobPosting(
-                                id=str(job.get('id', '')),
-                                title=job.get('title', ''),
-                                url=job.get('absolute_url', ''),
-                                location=job.get('location', {}).get('name') if isinstance(job.get('location'), dict) else str(job.get('location', '')),
-                                department=job.get('departments', [{}])[0].get('name') if job.get('departments') else None,
-                                salary_min=salary_info.get('salary_min'),
-                                salary_max=salary_info.get('salary_max'),
-                                salary_currency=salary_info.get('salary_currency'),
-                                metadata=job
-                            ))
-                        
-                        if jobs:
-                            logger.info(f"✅ Greenhouse JSON: {len(jobs)} jobs for {board.company_name}")
-                            return jobs
-            except Exception as e:
-                logger.debug(f"Greenhouse API {api_url} failed: {e}")
-        
-        return jobs
-
-    # ========================================================================
-    # LEVER SCRAPER (PERFECT)
-    # ========================================================================
-    
-    async def _scrape_lever(self, board: JobBoard) -> List[JobPosting]:
-        """Scrape Lever - JSON API"""
-        jobs = []
-        client = await self._get_client()
-        
-        api_url = board.board_url.rstrip('/') + '/postings'
-        try:
             async with client.get(api_url) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    for job in data:
-                        # Extract salary
-                        salary_info = self._extract_salary(job.get('description', ''))
-                        
+                    job_list = data.get('jobs', []) if isinstance(data, dict) else data
+                    for job in job_list:
+                        salary_info = self._extract_salary(job.get('content', '') or job.get('description', ''))
                         jobs.append(JobPosting(
-                            id=job.get('id', ''),
-                            title=job.get('text', ''),
-                            url=job.get('hostedUrl', ''),
-                            location=job.get('categories', {}).get('location'),
-                            department=job.get('categories', {}).get('team'),
-                            work_type=job.get('categories', {}).get('commitment'),
-                            posted_date=job.get('createdAt'),
+                            id=str(job.get('id', '')),
+                            title=job.get('title', ''),
+                            url=job.get('absolute_url', ''),
+                            location=job.get('location', {}).get('name') if isinstance(job.get('location'), dict) else str(job.get('location', '')),
+                            department=job.get('departments', [{}])[0].get('name') if job.get('departments') else None,
                             salary_min=salary_info.get('salary_min'),
                             salary_max=salary_info.get('salary_max'),
                             salary_currency=salary_info.get('salary_currency'),
                             metadata=job
                         ))
-                    logger.info(f"✅ Lever JSON: {len(jobs)} jobs for {board.company_name}")
-        except Exception as e:
-            logger.error(f"Lever API failed for {board.company_name}: {e}")
-        
+                    if jobs:
+                        logger.info(f"✅ Greenhouse JSON: {len(jobs)} jobs for {board.company_name}")
+                        return jobs
         return jobs
 
-    # ========================================================================
-    # WORKDAY SCRAPER (ENHANCED WITH FALLBACK)
-    # ========================================================================
-    
+    @with_retries
+    async def _scrape_lever(self, board: JobBoard) -> List[JobPosting]:
+        jobs = []
+        client = await self._get_client()
+        
+        api_url = board.board_url.rstrip('/') + '/postings'
+        async with client.get(api_url) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                for job in data:
+                    salary_info = self._extract_salary(job.get('description', ''))
+                    jobs.append(JobPosting(
+                        id=job.get('id', ''),
+                        title=job.get('text', ''),
+                        url=job.get('hostedUrl', ''),
+                        location=job.get('categories', {}).get('location'),
+                        department=job.get('categories', {}).get('team'),
+                        work_type=job.get('categories', {}).get('commitment'),
+                        posted_date=job.get('createdAt'),
+                        salary_min=salary_info.get('salary_min'),
+                        salary_max=salary_info.get('salary_max'),
+                        salary_currency=salary_info.get('salary_currency'),
+                        metadata=job
+                    ))
+                logger.info(f"✅ Lever JSON: {len(jobs)} jobs for {board.company_name}")
+        return jobs
+
+    @with_retries
     async def _scrape_workday(self, board: JobBoard) -> List[JobPosting]:
-        """Scrape Workday - Playwright with smart fallback"""
         if not self.browser:
             logger.warning(f"Playwright not available for {board.company_name}")
             return []
 
         jobs = []
-        page = None
+        page = await self.browser.new_page()
+        page.set_default_timeout(45000)
         
-        try:
-            page = await self.browser.new_page()
-            page.set_default_timeout(45000)
-            
-            logger.info(f"🌐 Loading Workday: {board.board_url}")
-            await page.goto(board.board_url, wait_until='domcontentloaded', timeout=30000)
-            
-            # Wait for jobs to load
-            await asyncio.sleep(6)
-            
-            # Scroll to trigger lazy loading
-            await page.evaluate('window.scrollTo(0, document.body.scrollHeight)')
-            await asyncio.sleep(2)
-            
-            # Try multiple strategies
-            job_elements = []
-            
-            # Strategy 1: Data automation IDs
-            try:
-                elements = await page.query_selector_all('[data-automation-id="jobTitle"]')
-                if elements and len(elements) > 0:
-                    job_elements = elements
-                    logger.info(f"✅ Workday: Found {len(elements)} jobs (automation-id)")
-            except:
-                pass
-            
-            # Strategy 2: List items with links
-            if not job_elements:
-                try:
-                    elements = await page.query_selector_all('li[role="listitem"] a, li a[href*="/job/"]')
-                    if elements and len(elements) > 3:
-                        job_elements = elements
-                        logger.info(f"✅ Workday: Found {len(elements)} jobs (list items)")
-                except:
-                    pass
-            
-            # Strategy 3: Any link with /job/ in href
-            if not job_elements:
-                try:
-                    all_links = await page.query_selector_all('a')
-                    for link in all_links:
-                        href = await link.get_attribute('href')
-                        text = await link.text_content()
-                        if href and '/job/' in href and text and len(text.strip()) > 5:
-                            job_elements.append(link)
-                    
-                    if len(job_elements) > 0:
-                        logger.info(f"✅ Workday: Found {len(job_elements)} jobs (href filter)")
-                except:
-                    pass
-            
-            if not job_elements:
-                logger.warning(f"No jobs found for {board.company_name}")
-                return []
-            
-            # Extract job data
-            for element in job_elements[:300]:  # Limit to 300
-                try:
-                    title = (await element.text_content()).strip()
-                    href = await element.get_attribute('href')
-                    
-                    if not title or not href or len(title) < 3:
-                        continue
-                    
-                    job_url = urljoin(board.board_url, href) if not href.startswith('http') else href
-                    job_id = job_url.split('/')[-1] or title.replace(' ', '-').lower()
-                    
-                    # Try to extract location from nearby elements
-                    location = None
-                    try:
-                        parent = await element.evaluate_handle('el => el.closest("li") || el.closest("div")')
-                        if parent:
-                            parent_text = await parent.evaluate('el => el.textContent')
-                            location_match = re.search(r'(Remote|Hybrid|[A-Z][a-z]+,\s*[A-Z]{2})', parent_text)
-                            if location_match:
-                                location = location_match.group(1)
-                    except:
-                        pass
-                    
-                    jobs.append(JobPosting(
-                        id=job_id,
-                        title=title,
-                        url=job_url,
-                        location=location
-                    ))
-                except Exception as e:
-                    logger.debug(f"Error extracting Workday job: {e}")
-                    continue
-            
-            logger.info(f"✅ Workday: Scraped {len(jobs)} jobs for {board.company_name}")
-            
-        except PlaywrightTimeout:
-            logger.error(f"⏱️ Timeout loading Workday for {board.company_name}")
-        except Exception as e:
-            logger.error(f"❌ Workday scrape failed for {board.company_name}: {e}")
-        finally:
-            if page:
-                await page.close()
+        logger.info(f"🌐 Loading Workday: {board.board_url}")
+        await page.goto(board.board_url, wait_until='domcontentloaded', timeout=30000)
         
+        # Wait for jobs to load
+        await asyncio.sleep(6)
+        
+        # Scroll to trigger lazy loading
+        await page.evaluate('window.scrollTo(0, document.body.scrollHeight)')
+        await asyncio.sleep(2)
+        
+        # Try multiple strategies
+        job_elements = []
+        
+        # Strategy 1: Data automation IDs
+        elements = await page.query_selector_all('[data-automation-id="jobTitle"]')
+        if elements and len(elements) > 0:
+            job_elements = elements
+            logger.info(f"✅ Workday: Found {len(elements)} jobs (automation-id)")
+        
+        # Strategy 2: List items with links
+        if not job_elements:
+            elements = await page.query_selector_all('li[role="listitem"] a, li a[href*="/job/"]')
+            if elements and len(elements) > 3:
+                job_elements = elements
+                logger.info(f"✅ Workday: Found {len(elements)} jobs (list items)")
+        
+        # Strategy 3: Any link with /job/ in href
+        if not job_elements:
+            all_links = await page.query_selector_all('a')
+            for link in all_links:
+                href = await link.get_attribute('href')
+                text = await link.text_content()
+                if href and '/job/' in href and text and len(text.strip()) > 5:
+                    job_elements.append(link)
+            if len(job_elements) > 0:
+                logger.info(f"✅ Workday: Found {len(job_elements)} jobs (href filter)")
+        
+        if not job_elements:
+            logger.warning(f"No jobs found for {board.company_name}")
+            await page.close()
+            return []
+        
+        # Extract job data
+        for element in job_elements[:300]:  # Limit to 300
+            title = (await element.text_content()).strip()
+            href = await element.get_attribute('href')
+            
+            if not title or not href or len(title) < 3:
+                continue
+            
+            job_url = urljoin(board.board_url, href) if not href.startswith('http') else href
+            job_id = job_url.split('/')[-1] or title.replace(' ', '-').lower()
+            
+            location = None
+            parent = await element.evaluate_handle('el => el.closest("li") || el.closest("div")')
+            if parent:
+                parent_text = await parent.evaluate('el => el.textContent')
+                location_match = re.search(r'(Remote|Hybrid|[A-Z][a-z]+,\s*[A-Z]{2})', parent_text)
+                if location_match:
+                    location = location_match.group(1)
+            
+            jobs.append(JobPosting(
+                id=job_id,
+                title=title,
+                url=job_url,
+                location=location
+            ))
+        
+        logger.info(f"✅ Workday: Scraped {len(jobs)} jobs for {board.company_name}")
+        await page.close()
         return jobs
 
-    # ========================================================================
-    # ASHBY SCRAPER (API-FIRST WITH VALIDATION)
-    # ========================================================================
-    
+    @with_retries
     async def _scrape_ashby(self, board: JobBoard) -> List[JobPosting]:
-        """Scrape Ashby - API-first approach"""
         jobs = []
         client = await self._get_client()
 
-        # Try multiple API endpoints (tested on real Ashby sites)
         api_endpoints = [
             '/api/posting',  # Modern Ashby
             '/api/postings',
@@ -536,119 +554,203 @@ class JobIntelCollector:
         
         for endpoint in api_endpoints:
             api_url = board.board_url.rstrip('/') + endpoint
-            try:
-                async with client.get(api_url) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
+            async with client.get(api_url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    job_list = data if isinstance(data, list) else data.get('postings', data.get('jobs', []))
+                    
+                    for job in job_list:
+                        location_list = []
+                        if isinstance(job.get('locationNames'), list):
+                            location_list = [loc.get('name') or loc for loc in job['locationNames'] if loc]
+                        elif job.get('location'):
+                            location_list = [job['location']]
                         
-                        # Handle different response formats
-                        job_list = data if isinstance(data, list) else data.get('postings', data.get('jobs', []))
+                        location = ', '.join(location_list) if location_list else None
                         
-                        for job in job_list:
-                            location_list = []
-                            if isinstance(job.get('locationNames'), list):
-                                location_list = [loc.get('name') or loc for loc in job['locationNames'] if loc]
-                            elif job.get('location'):
-                                location_list = [job['location']]
-                            
-                            location = ', '.join(location_list) if location_list else None
-                            
-                            # Extract salary
-                            salary_info = {}
-                            if job.get('compensationTier'):
-                                salary_info = self._extract_salary(job['compensationTier'])
-                            
-                            jobs.append(JobPosting(
-                                id=job.get('id', ''),
-                                title=job.get('title', ''),
-                                url=job.get('url', board.board_url + '/' + job.get('id', '')),
-                                location=location,
-                                department=job.get('departmentName') or job.get('department'),
-                                salary_min=salary_info.get('salary_min'),
-                                salary_max=salary_info.get('salary_max'),
-                                salary_currency=salary_info.get('salary_currency'),
-                                metadata=job
-                            ))
-                        
-                        if jobs:
-                            logger.info(f"✅ Ashby API: {len(jobs)} jobs for {board.company_name}")
-                            return jobs
-            except Exception as e:
-                logger.debug(f"Ashby API {endpoint} failed: {e}")
-        
-        # Fallback to Playwright if API fails
-        if self.browser:
-            try:
-                page = await self.browser.new_page()
-                await page.goto(board.board_url, wait_until='domcontentloaded', timeout=20000)
-                await asyncio.sleep(3)
-                
-                selectors = [
-                    'a[href*="/jobs/"]',
-                    'div[class*="posting"] a',
-                    'a[class*="job"]',
-                ]
-                
-                job_links = []
-                for selector in selectors:
-                    try:
-                        job_links = await page.query_selector_all(selector)
-                        if job_links:
-                            break
-                    except:
-                        continue
-                
-                for link in job_links[:200]:
-                    try:
-                        title = (await link.text_content()).strip()
-                        href = await link.get_attribute('href')
-                        
-                        if not title or not href:
-                            continue
-                        
-                        job_url = href if href.startswith('http') else urljoin(board.board_url, href)
-                        job_id = job_url.split('/')[-1]
+                        salary_info = {}
+                        if job.get('compensationTier'):
+                            salary_info = self._extract_salary(job['compensationTier'])
                         
                         jobs.append(JobPosting(
-                            id=job_id,
-                            title=title,
-                            url=job_url
+                            id=job.get('id', ''),
+                            title=job.get('title', ''),
+                            url=job.get('url', board.board_url + '/' + job.get('id', '')),
+                            location=location,
+                            department=job.get('departmentName') or job.get('department'),
+                            salary_min=salary_info.get('salary_min'),
+                            salary_max=salary_info.get('salary_max'),
+                            salary_currency=salary_info.get('salary_currency'),
+                            metadata=job
                         ))
-                    except:
-                        continue
-                
-                if jobs:
-                    logger.info(f"✅ Ashby Playwright: {len(jobs)} jobs for {board.company_name}")
-                
-                await page.close()
-            except Exception as e:
-                logger.debug(f"Ashby Playwright fallback failed: {e}")
+                    
+                    if jobs:
+                        logger.info(f"✅ Ashby API: {len(jobs)} jobs for {board.company_name}")
+                        return jobs
+        # Fallback to Playwright if API fails
+        if self.browser:
+            page = await self.browser.new_page()
+            await page.goto(board.board_url, wait_until='domcontentloaded', timeout=20000)
+            await asyncio.sleep(3)
+            
+            selectors = [
+                'a[href*="/jobs/"]',
+                'div[class*="posting"] a',
+                'a[class*="job"]',
+            ]
+            
+            job_links = []
+            for selector in selectors:
+                try:
+                    job_links = await page.query_selector_all(selector)
+                    if job_links:
+                        break
+                except:
+                    pass
+            
+            for link in job_links[:200]:
+                title = (await link.text_content()).strip()
+                href = await link.get_attribute('href')
+                if not title or not href:
+                    continue
+                job_url = urljoin(board.board_url, href)
+                job_id = job_url.split('/')[-1]
+                jobs.append(JobPosting(id=job_id, title=title, url=job_url))
+            
+            if jobs:
+                logger.info(f"✅ Ashby Playwright: {len(jobs)} jobs for {board.company_name}")
+            
+            await page.close()
         
         return jobs
 
-    # ========================================================================
-    # MAIN SCRAPING LOGIC
-    # ========================================================================
+    @with_retries
+    async def _scrape_bamboohr(self, board: JobBoard) -> List[JobPosting]:
+        jobs = []
+        client = await self._get_client()
+        async with client.get(board.board_url) as resp:
+            if resp.status == 200:
+                soup = BeautifulSoup(await resp.text(), 'html.parser')
+                job_cards = soup.find_all('div', class_='bamboo-job-card')
+                for card in job_cards:
+                    title_tag = card.find('a')
+                    title = title_tag.text.strip() if title_tag else ''
+                    url = urljoin(board.board_url, title_tag['href']) if title_tag else ''
+                    location = card.find('div', class_='bamboo-job-location').text.strip() if card.find('div', class_='bamboo-job-location') else None
+                    department = card.find('div', class_='bamboo-job-department').text.strip() if card.find('div', class_='bamboo-job-department') else None
+                    job_id = url.split('/')[-1] or title.replace(' ', '-')
+                    jobs.append(JobPosting(id=job_id, title=title, url=url, location=location, department=department))
+        logger.info(f"✅ BambooHR: {len(jobs)} jobs for {board.company_name}")
+        return jobs
+
+    @with_retries
+    async def _scrape_taleo(self, board: JobBoard) -> List[JobPosting]:
+        jobs = []
+        if self.browser:
+            page = await self.browser.new_page()
+            await page.goto(board.board_url, wait_until='domcontentloaded', timeout=20000)
+            await asyncio.sleep(3)
+            elements = await page.query_selector_all('a[href*="/jobdetail.ftl"]')  # Typical Taleo selector
+            for elem in elements:
+                title = (await elem.text_content()).strip()
+                href = await elem.get_attribute('href')
+                url = urljoin(board.board_url, href)
+                job_id = url.split('job=')[-1]
+                jobs.append(JobPosting(id=job_id, title=title, url=url))
+            await page.close()
+        logger.info(f"✅ Taleo: {len(jobs)} jobs for {board.company_name}")
+        return jobs
+
+    @with_retries
+    async def _scrape_icims(self, board: JobBoard) -> List[JobPosting]:
+        jobs = []
+        if self.browser:
+            page = await self.browser.new_page()
+            await page.goto(board.board_url, wait_until='domcontentloaded', timeout=20000)
+            await asyncio.sleep(3)
+            elements = await page.query_selector_all('div.iCIMS_JobHeader a')
+            for elem in elements:
+                title = (await elem.text_content()).strip()
+                href = await elem.get_attribute('href')
+                url = urljoin(board.board_url, href)
+                job_id = url.split('/')[-1]
+                jobs.append(JobPosting(id=job_id, title=title, url=url))
+            await page.close()
+        logger.info(f"✅ iCIMS: {len(jobs)} jobs for {board.company_name}")
+        return jobs
+
+    @with_retries
+    async def _scrape_smartrecruiters(self, board: JobBoard) -> List[JobPosting]:
+        jobs = []
+        client = await self._get_client()
+        api_url = board.board_url.rstrip('/') + '/postings'
+        async with client.get(api_url) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                for job in data:
+                    salary_info = self._extract_salary(job.get('description', ''))
+                    jobs.append(JobPosting(
+                        id=job.get('id', ''),
+                        title=job.get('name', ''),
+                        url=job.get('url', ''),
+                        location=job.get('location', {}).get('text'),
+                        department=job.get('department', {}).get('label'),
+                        work_type=job.get('typeOfEmployment', {}).get('label'),
+                        posted_date=job.get('releasedDate'),
+                        salary_min=salary_info.get('salary_min'),
+                        salary_max=salary_info.get('salary_max'),
+                        salary_currency=salary_info.get('salary_currency'),
+                        metadata=job
+                    ))
+        logger.info(f"✅ SmartRecruiters: {len(jobs)} jobs for {board.company_name}")
+        return jobs
+
+    @with_retries
+    async def _scrape_generic(self, board: JobBoard) -> List[JobPosting]:
+        jobs = []
+        if self.browser:
+            page = await self.browser.new_page()
+            await page.goto(board.board_url, wait_until='domcontentloaded', timeout=20000)
+            await asyncio.sleep(3)
+            elements = await page.query_selector_all('a[href*="/job/"]')
+            for elem in elements:
+                title = (await elem.text_content()).strip()
+                href = await elem.get_attribute('href')
+                if not title or not href:
+                    continue
+                job_url = urljoin(board.board_url, href)
+                job_id = job_url.split('/')[-1]
+                jobs.append(JobPosting(id=job_id, title=title, url=job_url))
+            await page.close()
+        logger.info(f"✅ Generic: {len(jobs)} jobs for {board.company_name}")
+        return jobs
 
     async def scrape_board(self, board: JobBoard) -> JobBoard:
-        """Scrape jobs from board"""
         logger.info(f"🔍 Scraping {board.ats_type} for {board.company_name}")
         
-        if board.ats_type == 'greenhouse':
-            board.jobs = await self._scrape_greenhouse(board)
-        elif board.ats_type == 'lever':
-            board.jobs = await self._scrape_lever(board)
-        elif board.ats_type == 'workday':
-            board.jobs = await self._scrape_workday(board)
-        elif board.ats_type == 'ashby':
-            board.jobs = await self._scrape_ashby(board)
+        scraper_map = {
+            'greenhouse': self._scrape_greenhouse,
+            'lever': self._scrape_lever,
+            'workday': self._scrape_workday,
+            'ashby': self._scrape_ashby,
+            'bamboohr': self._scrape_bamboohr,
+            'taleo': self._scrape_taleo,
+            'icims': self._scrape_icims,
+            'smartrecruiters': self._scrape_smartrecruiters,
+            'generic': self._scrape_generic,
+        }
+        
+        scraper = scraper_map.get(board.ats_type)
+        if scraper:
+            board.jobs = await scraper(board)
+        else:
+            logger.warning(f"No scraper for {board.ats_type}")
         
         logger.info(f"✅ Scraped {len(board.jobs)} jobs from {board.company_name}")
         self.stats.total_jobs_collected += len(board.jobs)
         return board
     
     async def _discover_and_scrape(self, company_name: str):
-        """Discover and scrape a single company - SKIP IF NO JOBS"""
         async with self._semaphore:
             try:
                 board = await self._test_company(company_name)
@@ -656,13 +758,11 @@ class JobIntelCollector:
                     self.stats.total_discovered += 1
                     board = await self.scrape_board(board)
                     
-                    # ✨ CRITICAL: Skip companies with 0 jobs
                     if len(board.jobs) == 0:
                         logger.warning(f"⚠️ Skipping {company_name} - no jobs found")
                         self.stats.companies_skipped_no_jobs += 1
                         return
                     
-                    # Only save companies that actually have jobs
                     company_id = self.db.add_company(
                         company_name=board.company_name,
                         ats_type=board.ats_type,
@@ -693,20 +793,45 @@ class JobIntelCollector:
             except Exception as e:
                 logger.error(f"Error processing {company_name}: {e}")
 
-    async def run_discovery(self, max_companies: int = 500) -> CollectionStats:
-        """Run discovery on seed companies"""
+    async def add_external_seeds(self):
+        sources = [
+            'https://en.wikipedia.org/wiki/List_of_largest_technology_companies_by_revenue',
+            'https://en.wikipedia.org/wiki/List_of_largest_companies_in_the_United_States_by_revenue',
+            'https://www.forbes.com/lists/global2000/?sh=5f1c32f85ac0',
+            'https://www.ycombinator.com/companies',  # YC
+            'https://www.crunchbase.com/hub/top-startups',  # Crunchbase (if public)
+            # Add more
+        ]
+        client = await self._get_client()
+        for url in sources:
+            try:
+                async with client.get(url) as resp:
+                    if resp.status == 200:
+                        soup = BeautifulSoup(await resp.text(), 'html.parser')
+                        companies = []
+                        for tag in soup.find_all(['td', 'li', 'a']):
+                            name = tag.text.strip()
+                            if name and len(name) > 3 and not re.match(r'^\d+$', name):
+                                companies.append(name)
+                        unique = list(set(companies))[:1000]
+                        seeds = [(name, self.db._name_to_token(name), 'external', 2) for name in unique]
+                        inserted = self.db.insert_seeds(seeds)
+                        logger.info(f"✅ Added {inserted} seeds from {url}")
+            except Exception as e:
+                logger.debug(f"External seed source failed: {e}")
+
+    async def run_discovery(self, max_companies: int = 2000) -> CollectionStats:
         await self.initialize_playwright()
         logger.info(f"🔍 Starting discovery on {max_companies} seeds")
+        
+        await self.add_external_seeds()  # Fetch new seeds first
         
         seeds = self.db.get_seeds(limit=max_companies, prioritize_quality=True)
         logger.info(f"📋 Testing {len(seeds)} seeds")
         
-        tasks = []
-        for seed in seeds:
-            task = self._discover_and_scrape(seed['company_name'])
-            tasks.append(task)
+        tasks = [self._discover_and_scrape(seed['company_name']) for seed in seeds]
         
-        batch_size = 20
+        batch_size = 50
         for i in range(0, len(tasks), batch_size):
             batch = tasks[i:i + batch_size]
             await asyncio.gather(*batch, return_exceptions=True)
@@ -731,15 +856,29 @@ class JobIntelCollector:
         
         return self.stats
 
-    async def run_refresh(self, hours_since_update: int = 6, max_companies: int = 500) -> CollectionStats:
-        """Refresh existing companies"""
+    async def run_refresh(self, hours_since_update: int = 6, max_companies: int = 1000) -> CollectionStats:
         await self.initialize_playwright()
         stats = CollectionStats()
         
         companies = self.db.get_companies_for_refresh(hours_since_update, max_companies)
         logger.info(f"🔄 Refreshing {len(companies)} companies")
         
+        tasks = []
         for company in companies:
+            tasks.append(self._refresh_company(company))
+        
+        batch_size = 50
+        for i in range(0, len(tasks), batch_size):
+            batch = tasks[i:i + batch_size]
+            await asyncio.gather(*batch, return_exceptions=True)
+            await asyncio.sleep(2)
+        
+        stats.end_time = datetime.now()
+        logger.info(f"✅ Refresh complete: {stats.total_jobs_collected} jobs")
+        return stats
+    
+    async def _refresh_company(self, company: Dict):
+        async with self._semaphore:
             try:
                 board = JobBoard(company['company_name'], company['ats_type'], company['board_url'])
                 board = await self.scrape_board(board)
@@ -758,34 +897,25 @@ class JobIntelCollector:
                         'salary_max': job.salary_max,
                         'salary_currency': job.salary_currency,
                         'metadata': job.metadata
-                    }
-                    for job in board.jobs
+                    } for job in board.jobs
                 ])
                 
-                stats.total_jobs_collected += len(board.jobs)
-                stats.total_new_jobs += new
-                stats.total_updated_jobs += updated
-                stats.total_closed_jobs += closed
-                
+                self.stats.total_jobs_collected += len(board.jobs)
+                self.stats.total_new_jobs += new
+                self.stats.total_updated_jobs += updated
+                self.stats.total_closed_jobs += closed
             except Exception as e:
                 logger.error(f"Error refreshing {company['company_name']}: {e}")
-            
-            await asyncio.sleep(1)
-        
-        stats.end_time = datetime.now()
-        logger.info(f"✅ Refresh complete: {stats.total_jobs_collected} jobs")
-        return stats
-
 
 # Entry points
-async def run_collection(max_companies: int = 500) -> CollectionStats:
+async def run_collection(max_companies: int = 2000) -> CollectionStats:
     collector = JobIntelCollector()
     try:
         return await collector.run_discovery(max_companies=max_companies)
     finally:
         await collector.close()
 
-async def run_refresh(hours_since_update: int = 6, max_companies: int = 500) -> CollectionStats:
+async def run_refresh(hours_since_update: int = 6, max_companies: int = 1000) -> CollectionStats:
     collector = JobIntelCollector()
     try:
         return await collector.run_refresh(hours_since_update, max_companies)
