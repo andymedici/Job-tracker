@@ -1,4 +1,4 @@
-"""Database Interface for Job Intelligence Platform - Production Grade with Smart Seed Rotation"""
+"""Database Interface for Job Intelligence Platform - Production Grade with Smart Seed Rotation + Cleanup"""
 
 import os
 import logging
@@ -624,6 +624,97 @@ class Database:
                     return len(blacklisted)
         except Exception as e:
             logger.error(f"Error blacklisting seeds: {e}")
+            return 0
+    
+    def cleanup_garbage_seeds(self) -> int:
+        """Remove obviously bad seeds from database"""
+        logger.info("🗑️ Starting garbage seed cleanup...")
+        
+        garbage_patterns = [
+            '%log out%', '%logout%', '%login%', '%sign in%', '%sign out%', '%signin%',
+            '%staff locations%', '%remote%jobs%', '%work from%', '%careers%page%',
+            '%track awesome%', '%!%', '%[%', '%]%', '%{%', '%}%',
+            'awsgoogle%', '%&%&%', '%|%|%', '%menu%', '%navigation%',
+            '%apply%now%', '%search%', '%filter%', '%view%all%',
+            '%table%contents%', '%external%links%', '%see%also%',
+            '%references%', '%jump%to%', '%back%to%', '%click%here%',
+            '%readme%', '%contributing%', '%license%', '%changelog%',
+            '%skip%to%', '%scroll%to%', '%page%', '%previous%', '%next%',
+            '%load%more%', '%show%all%', '%edit%', '%delete%', '%remove%',
+        ]
+        
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    total_deleted = 0
+                    
+                    # Delete by pattern matching
+                    for pattern in garbage_patterns:
+                        cur.execute("""
+                            DELETE FROM seed_companies
+                            WHERE company_name ILIKE %s
+                        """, (pattern,))
+                        deleted = cur.rowcount
+                        if deleted > 0:
+                            logger.info(f"   Deleted {deleted} seeds matching pattern: {pattern}")
+                        total_deleted += deleted
+                    
+                    # Delete seeds with < 3 letters
+                    cur.execute("""
+                        DELETE FROM seed_companies
+                        WHERE LENGTH(REGEXP_REPLACE(company_name, '[^a-zA-Z]', '', 'g')) < 3
+                    """)
+                    deleted = cur.rowcount
+                    if deleted > 0:
+                        logger.info(f"   Deleted {deleted} seeds with < 3 letters")
+                    total_deleted += deleted
+                    
+                    # Delete seeds with 10+ words (likely concatenated garbage)
+                    cur.execute("""
+                        DELETE FROM seed_companies
+                        WHERE array_length(string_to_array(company_name, ' '), 1) > 10
+                    """)
+                    deleted = cur.rowcount
+                    if deleted > 0:
+                        logger.info(f"   Deleted {deleted} seeds with 10+ words")
+                    total_deleted += deleted
+                    
+                    # Delete seeds with excessive special characters (>30%)
+                    cur.execute("""
+                        DELETE FROM seed_companies
+                        WHERE LENGTH(REGEXP_REPLACE(company_name, '[^a-zA-Z0-9 ]', '', 'g'))::DECIMAL / 
+                              GREATEST(LENGTH(company_name), 1) < 0.7
+                    """)
+                    deleted = cur.rowcount
+                    if deleted > 0:
+                        logger.info(f"   Deleted {deleted} seeds with excessive special characters")
+                    total_deleted += deleted
+                    
+                    # Delete seeds that are just numbers
+                    cur.execute("""
+                        DELETE FROM seed_companies
+                        WHERE company_name ~ '^[0-9\s\-_.]+$'
+                    """)
+                    deleted = cur.rowcount
+                    if deleted > 0:
+                        logger.info(f"   Deleted {deleted} numeric-only seeds")
+                    total_deleted += deleted
+                    
+                    # Delete seeds starting with special characters
+                    cur.execute("""
+                        DELETE FROM seed_companies
+                        WHERE company_name ~ '^[^a-zA-Z0-9]'
+                    """)
+                    deleted = cur.rowcount
+                    if deleted > 0:
+                        logger.info(f"   Deleted {deleted} seeds starting with special chars")
+                    total_deleted += deleted
+                    
+                    conn.commit()
+                    logger.info(f"✅ Cleanup complete: Deleted {total_deleted} garbage seeds")
+                    return total_deleted
+        except Exception as e:
+            logger.error(f"Error cleaning garbage seeds: {e}")
             return 0
     
     def get_seed_stats(self) -> Dict:
