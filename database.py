@@ -892,72 +892,89 @@ class Database:
             logger.error(f"Error tracking location expansion: {e}")
     
     def get_time_to_fill_metrics(self) -> Dict:
-        """Get comprehensive time-to-fill metrics"""
-        try:
-            with self.get_connection() as conn:
-                with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                    # Overall metrics
-                    cur.execute("""
-                        SELECT 
-                            COUNT(*) as sample_size,
-                            AVG(EXTRACT(EPOCH FROM (closed_at - first_seen)) / 86400) as avg_ttf_days,
-                            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (closed_at - first_seen)) / 86400) as median_ttf_days,
-                            MIN(EXTRACT(EPOCH FROM (closed_at - first_seen)) / 86400) as min_ttf_days,
-                            MAX(EXTRACT(EPOCH FROM (closed_at - first_seen)) / 86400) as max_ttf_days
-                        FROM job_archive
-                        WHERE status = 'closed'
-                          AND closed_at IS NOT NULL
-                          AND closed_at > first_seen
-                          AND closed_at > NOW() - INTERVAL '90 days'
-                    """)
-                    overall = cur.fetchone()
-                    
-                    # By work type
-                    cur.execute("""
-                        SELECT 
-                            work_type,
-                            AVG(EXTRACT(EPOCH FROM (closed_at - first_seen)) / 86400) as avg_days
-                        FROM job_archive
-                        WHERE status = 'closed'
-                          AND closed_at IS NOT NULL
-                          AND closed_at > first_seen
-                          AND work_type IS NOT NULL
-                          AND closed_at > NOW() - INTERVAL '90 days'
-                        GROUP BY work_type
-                    """)
-                    by_work_type = {row['work_type']: round(row['avg_days'], 1) for row in cur.fetchall()}
-                    
-                    # By department
-                    cur.execute("""
-                        SELECT 
-                            department,
-                            AVG(EXTRACT(EPOCH FROM (closed_at - first_seen)) / 86400) as avg_days
-                        FROM job_archive
-                        WHERE status = 'closed'
-                          AND closed_at IS NOT NULL
-                          AND closed_at > first_seen
-                          AND department IS NOT NULL
-                          AND closed_at > NOW() - INTERVAL '90 days'
-                        GROUP BY department
-                        ORDER BY avg_days DESC
-                        LIMIT 10
-                    """)
-                    by_department = {row['department']: round(row['avg_days'], 1) for row in cur.fetchall()}
-                    
-                    if overall and overall['sample_size'] > 0:
-                        return {
-                            'sample_size': overall['sample_size'],
-                            'overall_avg_ttf_days': round(overall['avg_ttf_days'], 1) if overall['avg_ttf_days'] else None,
-                            'median_ttf_days': round(overall['median_ttf_days'], 1) if overall['median_ttf_days'] else None,
-                            'min_ttf_days': round(overall['min_ttf_days'], 1) if overall['min_ttf_days'] else None,
-                            'max_ttf_days': round(overall['max_ttf_days'], 1) if overall['max_ttf_days'] else None,
-                            'by_work_type': by_work_type,
-                            'by_department': by_department
-                        }
-                    return {}
-        except Exception as e:
-            logger.error(f"Error calculating TTF metrics: {e}")
-            return {}
+    """Get comprehensive time-to-fill metrics"""
+    try:
+        with self.get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # Overall metrics
+                cur.execute("""
+                    SELECT 
+                        COUNT(*) as sample_size,
+                        AVG(EXTRACT(EPOCH FROM (closed_at - first_seen)) / 86400) as avg_ttf_days,
+                        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (closed_at - first_seen)) / 86400) as median_ttf_days,
+                        MIN(EXTRACT(EPOCH FROM (closed_at - first_seen)) / 86400) as min_ttf_days,
+                        MAX(EXTRACT(EPOCH FROM (closed_at - first_seen)) / 86400) as max_ttf_days
+                    FROM job_archive
+                    WHERE status = 'closed'
+                      AND closed_at IS NOT NULL
+                      AND closed_at > first_seen
+                      AND closed_at > NOW() - INTERVAL '90 days'
+                """)
+                overall = cur.fetchone()
+                
+                # By work type
+                cur.execute("""
+                    SELECT 
+                        work_type,
+                        AVG(EXTRACT(EPOCH FROM (closed_at - first_seen)) / 86400) as avg_days
+                    FROM job_archive
+                    WHERE status = 'closed'
+                      AND closed_at IS NOT NULL
+                      AND closed_at > first_seen
+                      AND work_type IS NOT NULL
+                      AND closed_at > NOW() - INTERVAL '90 days'
+                    GROUP BY work_type
+                """)
+                by_work_type = {row['work_type']: round(row['avg_days'], 1) for row in cur.fetchall()}
+                
+                # By department
+                cur.execute("""
+                    SELECT 
+                        department,
+                        AVG(EXTRACT(EPOCH FROM (closed_at - first_seen)) / 86400) as avg_days
+                    FROM job_archive
+                    WHERE status = 'closed'
+                      AND closed_at IS NOT NULL
+                      AND closed_at > first_seen
+                      AND department IS NOT NULL
+                      AND closed_at > NOW() - INTERVAL '90 days'
+                    GROUP BY department
+                    ORDER BY avg_days DESC
+                    LIMIT 10
+                """)
+                by_department = {row['department']: round(row['avg_days'], 1) for row in cur.fetchall()}
+                
+                if overall and overall['sample_size'] > 0:
+                    return {
+                        'sample_size': overall['sample_size'],
+                        'overall_avg_ttf_days': round(overall['avg_ttf_days'], 1) if overall['avg_ttf_days'] else 0,  # ← Changed None to 0
+                        'median_ttf_days': round(overall['median_ttf_days'], 1) if overall['median_ttf_days'] else 0,  # ← Changed None to 0
+                        'min_ttf_days': round(overall['min_ttf_days'], 1) if overall['min_ttf_days'] else 0,  # ← Changed None to 0
+                        'max_ttf_days': round(overall['max_ttf_days'], 1) if overall['max_ttf_days'] else 0,  # ← Changed None to 0
+                        'by_work_type': by_work_type,
+                        'by_department': by_department
+                    }
+                # If no data, return zeros instead of empty dict
+                return {
+                    'sample_size': 0,
+                    'overall_avg_ttf_days': 0,
+                    'median_ttf_days': 0,
+                    'min_ttf_days': 0,
+                    'max_ttf_days': 0,
+                    'by_work_type': {},
+                    'by_department': {}
+                }
+    except Exception as e:
+        logger.error(f"Error calculating TTF metrics: {e}")
+        return {
+            'sample_size': 0,
+            'overall_avg_ttf_days': 0,
+            'median_ttf_days': 0,
+            'min_ttf_days': 0,
+            'max_ttf_days': 0,
+            'by_work_type': {},
+            'by_department': {}
+        }
     
     def get_stats(self) -> Dict[str, Any]:
         try:
