@@ -511,7 +511,6 @@ def get_salary_insights():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/seeds/add', methods=['POST'])
-@require_api_key
 def add_seed():
     """Add a company seed manually"""
     try:
