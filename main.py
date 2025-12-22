@@ -510,6 +510,53 @@ def get_salary_insights():
         logger.error(f"Error in salary insights: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/seeds/add', methods=['POST'])
+@require_api_key
+def add_seed():
+    """Add a company seed manually"""
+    try:
+        data = request.get_json()
+        company_name = data.get('company_name', '').strip()
+        website_url = data.get('website_url', '').strip()
+        
+        if not company_name:
+            return jsonify({'error': 'Company name is required'}), 400
+        
+        if not website_url:
+            return jsonify({'error': 'Careers page URL is required'}), 400
+        
+        # Validate URL format
+        if not website_url.startswith(('http://', 'https://')):
+            return jsonify({'error': 'Invalid URL format. Must start with http:// or https://'}), 400
+        
+        logger.info(f"Adding manual seed: {company_name} - {website_url}")
+        
+        # Add to seeds database
+        success = db.add_manual_seed(company_name, website_url)
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': f'{company_name} added successfully. It will be tested in the next discovery run.',
+                'company_name': company_name,
+                'website_url': website_url
+            }), 200
+        else:
+            # Check if it already exists
+            existing = db.get_company_id(company_name)
+            if existing:
+                return jsonify({
+                    'error': f'{company_name} is already being tracked in the system.'
+                }), 409
+            else:
+                return jsonify({
+                    'error': f'{company_name} seed already exists in the queue.'
+                }), 409
+    
+    except Exception as e:
+        logger.error(f"Error adding seed: {e}")
+        return jsonify({'error': 'Internal server error. Please try again.'}), 500
+
 @app.route('/analytics')
 @optional_auth
 def analytics():
