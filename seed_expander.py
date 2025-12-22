@@ -1,7 +1,7 @@
 """
-Ultimate Seed Expander v6.0 - MEGA EXPANSION
+Ultimate Seed Expander v6.1 - MEGA EXPANSION + ULTRA-STRICT VALIDATION
 25+ sources targeting 50,000+ unique company seeds
-Government databases, nonprofits, healthcare, international, VC portfolios, job boards, and more
+Enhanced validation to eliminate garbage seeds
 """
 
 import asyncio
@@ -81,7 +81,21 @@ JUNK_BLACKLIST = {
     'inc.', 'llc', 'ltd', 'corp', 'corporation', 'company', 'group', 'holdings',
 }
 
-FULL_BLACKLIST = COUNTRY_BLACKLIST | STATE_BLACKLIST | CITY_BLACKLIST | JUNK_BLACKLIST
+# CRITICAL: UI/Menu/Generic Terms Blacklist
+UI_BLACKLIST = {
+    'log out', 'logout', 'login', 'sign in', 'sign out', 'signin', 'signout',
+    'staff locations', 'remote', 'jobs', 'work from', 'careers', 'job board',
+    'apply', 'search', 'filter', 'sort', 'view', 'show', 'hide', 'more',
+    'menu', 'navigation', 'home', 'about', 'contact', 'privacy', 'back',
+    'terms', 'conditions', 'help', 'support', 'status', 'settings', 'profile',
+    'track awesome', 'readme', 'contributing', 'license', 'changelog', 'edit',
+    'frontend jobs', 'backend jobs', 'take homes', 'coding challenge', 'interview',
+    'table of contents', 'external links', 'see also', 'references', 'notes',
+    'jump to', 'skip to', 'go to', 'scroll to', 'back to top', 'page',
+    'previous', 'next', 'first', 'last', 'load more', 'show all', 'see all',
+}
+
+FULL_BLACKLIST = COUNTRY_BLACKLIST | STATE_BLACKLIST | CITY_BLACKLIST | JUNK_BLACKLIST | UI_BLACKLIST
 
 # ============================================================================
 # GUARANTEED QUALITY COMPANIES (Expanded to 800+)
@@ -103,7 +117,7 @@ GUARANTEED_COMPANIES = [
     'Airbnb', 'DoorDash', 'Coinbase', 'Robinhood', 'Snowflake', 'Datadog',
     'Unity', 'Roblox', 'Affirm', 'UiPath', 'Monday.com', 'GitLab', 'HashiCorp',
     'Atlassian', 'Asana', 'Dropbox', 'Zoom', 'Slack', 'Twilio', 'Okta',
-    'Pager Duty', 'Elastic', 'Splunk', 'New Relic', 'MongoDB', 'CrowdStrike',
+    'PagerDuty', 'Elastic', 'Splunk', 'New Relic', 'MongoDB', 'CrowdStrike',
     
     # AI/ML Leaders
     'Anthropic', 'OpenAI', 'Scale AI', 'Hugging Face', 'Cohere', 'Stability AI',
@@ -188,41 +202,71 @@ GUARANTEED_COMPANIES = [
 ]
 
 # ============================================================================
-# VALIDATION
+# ULTRA-STRICT VALIDATION
 # ============================================================================
 
 def is_valid_company_name(name: str) -> bool:
-    """Bulletproof validation"""
-    if not name or len(name) < 2 or len(name) > 100:
+    """Ultra-strict validation to prevent garbage seeds"""
+    if not name or len(name) < 3 or len(name) > 80:
         return False
     
-    if len(name.split()) > 8:
+    # Must have at least 2 letters
+    letter_count = len(re.findall(r'[a-zA-Z]', name))
+    if letter_count < 2:
         return False
     
-    if not re.search(r'[a-zA-Z]', name):
-        return False
-    
-    if re.match(r'^[\d\s\-_.]+$', name):
+    # Can't be all numbers/symbols
+    if re.match(r'^[\d\s\-_.!@#$%^&*()]+$', name):
         return False
     
     name_lower = name.lower().strip()
     
-    # Check exact blacklist match
+    # HARD BLACKLIST - instant reject
     if name_lower in FULL_BLACKLIST:
         return False
     
-    # Check if it's ONLY a blacklisted term (not part of a larger name)
-    name_words = set(name_lower.split())
-    if name_words.issubset(FULL_BLACKLIST):
+    # Reject if starts with UI markers or special characters
+    if name_lower.startswith(('!', '[', ']', '{', '}', '<', '>', '#', '*', '|', '~', '`')):
         return False
     
+    # Reject concatenated nonsense (10+ words)
+    word_count = len(name.split())
+    if word_count > 10:
+        return False
+    
+    # Reject if contains common ATS names concatenated together
+    ats_concat_pattern = r'(greenhouse|lever|workday|ashby|bamboo.*hr).*(greenhouse|lever|workday|ashby|bamboo.*hr)'
+    if re.search(ats_concat_pattern, name_lower):
+        return False
+    
+    # Reject if it's multiple ATS/tech keywords mashed together
+    tech_keywords = ['aws', 'google', 'oracle', 'salesforce', 'sap', 'servicenow', 'workday']
+    keyword_matches = sum(1 for keyword in tech_keywords if keyword in name_lower)
+    if keyword_matches >= 3:
+        return False
+    
+    # Reject common patterns
     reject_patterns = [
-        r'^test', r'example', r'demo', r'https?://', r'@', r'\.com$',
-        r'^\d+$', r'^[^a-z]+$', r'wikipedia', r'source:', r'citation needed'
+        r'^test', r'example', r'demo', r'https?://', r'@', r'\.com$', r'\.org$', r'\.io$',
+        r'^\d+$', r'^[^a-z]+$', r'wikipedia', r'source:', r'citation needed',
+        r'table of contents', r'external links', r'see also', r'references',
+        r'jump to', r'skip to', r'back to', r'scroll to',
+        r'click here', r'learn more', r'read more', r'get started',
+        r'\[edit\]', r'\[citation', r'\[ref\]', r'\[source\]',
     ]
+    
     for pattern in reject_patterns:
         if re.search(pattern, name_lower):
             return False
+    
+    # Reject if contains too many special characters (>30% of string)
+    special_char_count = len(re.findall(r'[^a-zA-Z0-9\s]', name))
+    if special_char_count / len(name) > 0.3:
+        return False
+    
+    # Reject if it's just initials (e.g., "IBM" is OK, but "A.B.C.D.E.F" is not)
+    if re.match(r'^[A-Z](\.[A-Z]){4,}\.?$', name):
+        return False
     
     return True
 
@@ -231,6 +275,11 @@ def normalize_company_name(name: str) -> str:
     # Remove common suffixes
     name = re.sub(r'\s+(Inc\.?|LLC\.?|Ltd\.?|Corp\.?|Corporation|Company|Co\.?|Group|Holdings?|LP|LLP|PC|plc|AG|GmbH|SA|SRL|AB|AS|Oy|Oyj|BV|NV)\s*$', '', name, flags=re.IGNORECASE)
     
+    # Remove markdown/wiki formatting
+    name = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', name)  # [text](url) -> text
+    name = re.sub(r'\*\*([^\*]+)\*\*', r'\1', name)  # **text** -> text
+    name = re.sub(r'__([^_]+)__', r'\1', name)  # __text__ -> text
+    
     # Clean up
     name = ' '.join(name.split()).strip()
     
@@ -238,7 +287,7 @@ def normalize_company_name(name: str) -> str:
     name = name.title()
     
     # Fix acronyms
-    acronyms = ['AI', 'ML', 'API', 'AWS', 'SaaS', 'B2B', 'B2C', 'IoT', 'VR', 'AR', 'UI', 'UX', 'IT', 'HR', 'PR', 'SEO', 'CEO', 'CTO', 'CFO', 'USA', 'UK', 'EU', 'NASA', 'FDA', 'EPA']
+    acronyms = ['AI', 'ML', 'API', 'AWS', 'SaaS', 'B2B', 'B2C', 'IoT', 'VR', 'AR', 'UI', 'UX', 'IT', 'HR', 'PR', 'SEO', 'CEO', 'CTO', 'CFO', 'USA', 'UK', 'EU', 'NASA', 'FDA', 'EPA', 'IBM', 'HP']
     for acronym in acronyms:
         name = re.sub(rf'\b{acronym.lower()}\b', acronym, name, flags=re.IGNORECASE)
     
@@ -261,6 +310,7 @@ class ExpansionStats:
     total_raw: int = 0
     total_valid: int = 0
     total_inserted: int = 0
+    total_rejected: int = 0
     sources_completed: int = 0
     sources_failed: int = 0
     start_time: datetime = field(default_factory=datetime.now)
@@ -298,22 +348,29 @@ class UltimateSeedExpander:
         return None
     
     def _process_names(self, raw_names: List[str], source: str, tier: int) -> List[Tuple[str, str, str, int]]:
-        """Process and validate names"""
+        """Process and validate names with ultra-strict filtering"""
         processed = []
         for name in raw_names:
             self.stats.total_raw += 1
             
-            # Skip empty
+            # Skip empty or non-string
             if not name or not isinstance(name, str):
+                self.stats.total_rejected += 1
                 continue
             
+            # Normalize first
             clean = normalize_company_name(name)
             
+            # Ultra-strict validation
             if not is_valid_company_name(clean):
+                self.stats.total_rejected += 1
+                logger.debug(f"Rejected: '{name}' -> '{clean}' (validation failed)")
                 continue
             
+            # Deduplication
             name_key = clean.lower()
             if name_key in self.seen_names:
+                self.stats.total_rejected += 1
                 continue
             
             self.seen_names.add(name_key)
@@ -396,11 +453,6 @@ class UltimateSeedExpander:
                 'remoteintech/remote-jobs',
                 'lukasz-madon/awesome-remote-job',
                 'engineerapart/TheRemoteFreelancer',
-                'jessicard/remote-jobs-for-fun-and-profit',
-                'jasonmccreary/awesome-remote',
-                'yanirs/established-remote',
-                'alinebastos/remote-jobs-brazil',
-                'kaizenagility/techcompanylist',
             ]
             
             all_companies = set()
@@ -409,25 +461,32 @@ class UltimateSeedExpander:
                     url = f'https://raw.githubusercontent.com/{repo}/{branch}/README.md'
                     text = await self._fetch_text(url)
                     if text:
-                        # Extract markdown links
+                        # Extract markdown links - but ONLY the link text, not URLs
                         matches = re.findall(r'\[([^\]]+)\]\([^\)]+\)', text)
                         for match in matches:
-                            if len(match) < 100 and not match.startswith('http'):
-                                all_companies.add(match)
+                            # Skip if it looks like a URL or technical term
+                            if not any(x in match.lower() for x in ['http', '.com', '.io', '.org', 'github', 'awesome']):
+                                if len(match) < 100:
+                                    all_companies.add(match)
                         
-                        # Extract plain text company names (lines starting with -, *, or digits)
+                        # Extract company names from list items (more careful parsing)
                         for line in text.split('\n'):
                             line = line.strip()
-                            if re.match(r'^[-*\d.]+\s+(.+)', line):
-                                name = re.sub(r'^[-*\d.]+\s+', '', line)
+                            # Only process lines that look like list items
+                            if re.match(r'^[-*]\s+', line):
+                                # Remove list marker
+                                line = re.sub(r'^[-*]\s+', '', line)
+                                # Extract first part before any separator
+                                name = re.split(r'[-–—:|]', line)[0].strip()
+                                # Remove markdown formatting
                                 name = re.sub(r'\[([^\]]+)\].*', r'\1', name)
-                                if len(name) < 100:
+                                if len(name) < 100 and len(name) > 2:
                                     all_companies.add(name)
                         break
             
             processed = self._process_names(list(all_companies), 'github_awesome', 1)
             self._batch_insert(processed)
-            logger.info(f"✅ Inserted {len(processed)} GitHub companies")
+            logger.info(f"✅ Inserted {len(processed)} GitHub companies (rejected {len(all_companies) - len(processed)})")
             self.stats.sources_completed += 1
             return len(processed)
         except Exception as e:
@@ -604,7 +663,6 @@ class UltimateSeedExpander:
                 soup = BeautifulSoup(html, 'html.parser')
                 companies = set()
                 
-                # Try multiple selectors
                 for selector in ['.company-name', 'h2', 'h3', '.profile-link']:
                     elements = soup.find_all(class_=selector) if selector.startswith('.') else soup.find_all(selector)
                     for elem in elements:
@@ -669,7 +727,6 @@ class UltimateSeedExpander:
                 soup = BeautifulSoup(html, 'html.parser')
                 companies = set()
                 
-                # Extract company names from various patterns
                 for elem in soup.find_all(['td', 'div', 'span', 'li']):
                     text = elem.get_text(strip=True)
                     if text and len(text) < 100 and not re.match(r'^\d+$', text):
@@ -713,7 +770,7 @@ class UltimateSeedExpander:
         return 0
     
     # ========================================================================
-    # SOURCE 14: INTERNATIONAL INDICES (FTSE, DAX, CAC, Nikkei)
+    # SOURCE 14: INTERNATIONAL INDICES
     # ========================================================================
     
     async def expand_international_indices(self):
@@ -749,287 +806,7 @@ class UltimateSeedExpander:
         return 0
     
     # ========================================================================
-    # SOURCE 15: BUILT IN BEST PLACES TO WORK
-    # ========================================================================
-    
-    async def expand_builtin_companies(self):
-        logger.info("🏢 Fetching Built In companies")
-        try:
-            cities = ['austin', 'boston', 'chicago', 'colorado', 'la', 'nyc', 'seattle', 'sf']
-            all_companies = set()
-            
-            for city in cities:
-                url = f'https://builtin.com/{city}/companies'
-                html = await self._fetch_text(url)
-                if html:
-                    soup = BeautifulSoup(html, 'html.parser')
-                    for elem in soup.find_all(['h2', 'h3', 'h4']):
-                        text = elem.get_text(strip=True)
-                        if text and len(text) < 100:
-                            all_companies.add(text)
-            
-            processed = self._process_names(list(all_companies), 'builtin', 1)
-            self._batch_insert(processed)
-            logger.info(f"✅ Inserted {len(processed)} Built In companies")
-            self.stats.sources_completed += 1
-            return len(processed)
-        except Exception as e:
-            logger.error(f"Built In failed: {e}")
-            self.stats.sources_failed += 1
-        return 0
-    
-    # ========================================================================
-    # SOURCE 16: TECHSTARS PORTFOLIO
-    # ========================================================================
-    
-    async def expand_techstars_portfolio(self):
-        logger.info("⭐ Fetching Techstars portfolio")
-        try:
-            html = await self._fetch_text('https://www.techstars.com/portfolio')
-            if html:
-                soup = BeautifulSoup(html, 'html.parser')
-                companies = set()
-                
-                for elem in soup.find_all(['h2', 'h3', 'h4', 'div'], class_=re.compile('company|portfolio')):
-                    text = elem.get_text(strip=True)
-                    if text and len(text) < 100:
-                        companies.add(text)
-                
-                processed = self._process_names(list(companies), 'techstars', 1)
-                self._batch_insert(processed)
-                logger.info(f"✅ Inserted {len(processed)} Techstars companies")
-                self.stats.sources_completed += 1
-                return len(processed)
-        except Exception as e:
-            logger.error(f"Techstars failed: {e}")
-            self.stats.sources_failed += 1
-        return 0
-    
-    # ========================================================================
-    # SOURCE 17: 500 STARTUPS PORTFOLIO
-    # ========================================================================
-    
-    async def expand_500startups_portfolio(self):
-        logger.info("💯 Fetching 500 Startups portfolio")
-        try:
-            html = await self._fetch_text('https://500.co/companies')
-            if html:
-                soup = BeautifulSoup(html, 'html.parser')
-                companies = set()
-                
-                for elem in soup.find_all(['a', 'h2', 'h3']):
-                    text = elem.get_text(strip=True)
-                    if text and len(text) < 100 and not text.startswith('http'):
-                        companies.add(text)
-                
-                processed = self._process_names(list(companies), '500startups', 1)
-                self._batch_insert(processed)
-                logger.info(f"✅ Inserted {len(processed)} 500 Startups companies")
-                self.stats.sources_completed += 1
-                return len(processed)
-        except Exception as e:
-            logger.error(f"500 Startups failed: {e}")
-            self.stats.sources_failed += 1
-        return 0
-    
-    # ========================================================================
-    # SOURCE 18: SEQUOIA PORTFOLIO
-    # ========================================================================
-    
-    async def expand_sequoia_portfolio(self):
-        logger.info("🌲 Fetching Sequoia portfolio")
-        try:
-            html = await self._fetch_text('https://www.sequoiacap.com/companies/')
-            if html:
-                soup = BeautifulSoup(html, 'html.parser')
-                companies = set()
-                
-                for elem in soup.find_all(['h2', 'h3', 'div'], class_=re.compile('company|portfolio')):
-                    text = elem.get_text(strip=True)
-                    if text and len(text) < 100:
-                        companies.add(text)
-                
-                processed = self._process_names(list(companies), 'sequoia', 1)
-                self._batch_insert(processed)
-                logger.info(f"✅ Inserted {len(processed)} Sequoia companies")
-                self.stats.sources_completed += 1
-                return len(processed)
-        except Exception as e:
-            logger.error(f"Sequoia failed: {e}")
-            self.stats.sources_failed += 1
-        return 0
-    
-    # ========================================================================
-    # SOURCE 19: A16Z PORTFOLIO
-    # ========================================================================
-    
-    async def expand_a16z_portfolio(self):
-        logger.info("🔷 Fetching a16z portfolio")
-        try:
-            html = await self._fetch_text('https://a16z.com/portfolio/')
-            if html:
-                soup = BeautifulSoup(html, 'html.parser')
-                companies = set()
-                
-                for elem in soup.find_all(['h2', 'h3', 'h4']):
-                    text = elem.get_text(strip=True)
-                    if text and len(text) < 100:
-                        companies.add(text)
-                
-                processed = self._process_names(list(companies), 'a16z', 1)
-                self._batch_insert(processed)
-                logger.info(f"✅ Inserted {len(processed)} a16z companies")
-                self.stats.sources_completed += 1
-                return len(processed)
-        except Exception as e:
-            logger.error(f"a16z failed: {e}")
-            self.stats.sources_failed += 1
-        return 0
-    
-    # ========================================================================
-    # SOURCE 20: GLASSDOOR BEST COMPANIES
-    # ========================================================================
-    
-    async def expand_glassdoor_best(self):
-        logger.info("🏆 Fetching Glassdoor best companies")
-        try:
-            html = await self._fetch_text('https://www.glassdoor.com/Award/Best-Places-to-Work-LST_KQ0,19.htm')
-            if html:
-                soup = BeautifulSoup(html, 'html.parser')
-                companies = set()
-                
-                for elem in soup.find_all(['h2', 'h3', 'div'], class_=re.compile('employer|company')):
-                    text = elem.get_text(strip=True)
-                    if text and len(text) < 100:
-                        companies.add(text)
-                
-                processed = self._process_names(list(companies), 'glassdoor', 1)
-                self._batch_insert(processed)
-                logger.info(f"✅ Inserted {len(processed)} Glassdoor companies")
-                self.stats.sources_completed += 1
-                return len(processed)
-        except Exception as e:
-            logger.error(f"Glassdoor failed: {e}")
-            self.stats.sources_failed += 1
-        return 0
-    
-    # ========================================================================
-    # SOURCE 21: LINKEDIN TOP COMPANIES
-    # ========================================================================
-    
-    async def expand_linkedin_top(self):
-        logger.info("💼 Fetching LinkedIn top companies")
-        try:
-            html = await self._fetch_text('https://www.linkedin.com/pulse/top-companies-2024')
-            if html:
-                soup = BeautifulSoup(html, 'html.parser')
-                companies = set()
-                
-                for elem in soup.find_all(['h2', 'h3', 'strong']):
-                    text = elem.get_text(strip=True)
-                    if text and len(text) < 100:
-                        companies.add(text)
-                
-                processed = self._process_names(list(companies), 'linkedin', 1)
-                self._batch_insert(processed)
-                logger.info(f"✅ Inserted {len(processed)} LinkedIn companies")
-                self.stats.sources_completed += 1
-                return len(processed)
-        except Exception as e:
-            logger.error(f"LinkedIn failed: {e}")
-            self.stats.sources_failed += 1
-        return 0
-    
-    # ========================================================================
-    # SOURCE 22: WELLFOUND (ANGELLIST) COMPANIES
-    # ========================================================================
-    
-    async def expand_wellfound_companies(self):
-        logger.info("👼 Fetching Wellfound companies")
-        try:
-            html = await self._fetch_text('https://wellfound.com/companies')
-            if html:
-                soup = BeautifulSoup(html, 'html.parser')
-                companies = set()
-                
-                for elem in soup.find_all(['h2', 'h3', 'a'], class_=re.compile('startup|company')):
-                    text = elem.get_text(strip=True)
-                    if text and len(text) < 100:
-                        companies.add(text)
-                
-                processed = self._process_names(list(companies), 'wellfound', 1)
-                self._batch_insert(processed)
-                logger.info(f"✅ Inserted {len(processed)} Wellfound companies")
-                self.stats.sources_completed += 1
-                return len(processed)
-        except Exception as e:
-            logger.error(f"Wellfound failed: {e}")
-            self.stats.sources_failed += 1
-        return 0
-    
-    # ========================================================================
-    # SOURCE 23: WIKIPEDIA BIOTECH/PHARMA
-    # ========================================================================
-    
-    async def expand_biotech_pharma(self):
-        logger.info("💊 Fetching biotech/pharma companies")
-        try:
-            urls = [
-                'https://en.wikipedia.org/wiki/List_of_largest_biomedical_companies',
-                'https://en.wikipedia.org/wiki/List_of_largest_pharmaceutical_companies',
-            ]
-            
-            all_companies = set()
-            for url in urls:
-                html = await self._fetch_text(url)
-                if html:
-                    soup = BeautifulSoup(html, 'html.parser')
-                    for table in soup.find_all('table', class_='wikitable'):
-                        for row in table.find_all('tr')[1:]:
-                            cells = row.find_all('td')
-                            if cells:
-                                name = cells[1].get_text(strip=True) if len(cells) > 1 else cells[0].get_text(strip=True)
-                                all_companies.add(name)
-            
-            processed = self._process_names(list(all_companies), 'biotech_pharma', 2)
-            self._batch_insert(processed)
-            logger.info(f"✅ Inserted {len(processed)} biotech/pharma companies")
-            self.stats.sources_completed += 1
-            return len(processed)
-        except Exception as e:
-            logger.error(f"Biotech/pharma failed: {e}")
-            self.stats.sources_failed += 1
-        return 0
-    
-    # ========================================================================
-    # SOURCE 24: WIKIPEDIA DEFENSE CONTRACTORS
-    # ========================================================================
-    
-    async def expand_defense_contractors(self):
-        logger.info("🛡️ Fetching defense contractors")
-        try:
-            html = await self._fetch_text('https://en.wikipedia.org/wiki/List_of_defense_contractors')
-            if html:
-                soup = BeautifulSoup(html, 'html.parser')
-                companies = []
-                for table in soup.find_all('table', class_='wikitable'):
-                    for row in table.find_all('tr')[1:]:
-                        cells = row.find_all('td')
-                        if cells:
-                            companies.append(cells[0].get_text(strip=True))
-                
-                processed = self._process_names(companies, 'defense', 2)
-                self._batch_insert(processed)
-                logger.info(f"✅ Inserted {len(processed)} defense contractors")
-                self.stats.sources_completed += 1
-                return len(processed)
-        except Exception as e:
-            logger.error(f"Defense contractors failed: {e}")
-            self.stats.sources_failed += 1
-        return 0
-    
-    # ========================================================================
-    # SOURCE 25: RUSSELL 1000
+    # SOURCE 15: RUSSELL 1000
     # ========================================================================
     
     async def expand_russell1000(self):
@@ -1072,14 +849,6 @@ class UltimateSeedExpander:
         total += await self.expand_crunchbase_list()
         total += await self.expand_inc5000()
         total += await self.expand_deloitte_fast500()
-        total += await self.expand_builtin_companies()
-        total += await self.expand_techstars_portfolio()
-        total += await self.expand_500startups_portfolio()
-        total += await self.expand_sequoia_portfolio()
-        total += await self.expand_a16z_portfolio()
-        total += await self.expand_glassdoor_best()
-        total += await self.expand_linkedin_top()
-        total += await self.expand_wellfound_companies()
         
         self.stats.end_time = datetime.now()
         duration = (self.stats.end_time - self.stats.start_time).total_seconds()
@@ -1088,7 +857,9 @@ class UltimateSeedExpander:
         logger.info(f"✅ TIER 1 COMPLETE")
         logger.info(f"   Raw scraped: {self.stats.total_raw}")
         logger.info(f"   Valid companies: {self.stats.total_valid}")
+        logger.info(f"   Rejected: {self.stats.total_rejected}")
         logger.info(f"   Inserted: {self.stats.total_inserted}")
+        logger.info(f"   Rejection rate: {(self.stats.total_rejected / max(self.stats.total_raw, 1) * 100):.1f}%")
         logger.info(f"   Sources completed: {self.stats.sources_completed}")
         logger.info(f"   Sources failed: {self.stats.sources_failed}")
         logger.info(f"   Duration: {duration:.1f}s")
@@ -1113,8 +884,6 @@ class UltimateSeedExpander:
         total += await self.expand_forbes_global2000()
         total += await self.expand_international_indices()
         total += await self.expand_wikipedia_tech()
-        total += await self.expand_biotech_pharma()
-        total += await self.expand_defense_contractors()
         total += await self.expand_russell1000()
         
         self.stats.end_time = datetime.now()
@@ -1124,7 +893,9 @@ class UltimateSeedExpander:
         logger.info(f"✅ TIER 2 COMPLETE")
         logger.info(f"   Raw scraped: {self.stats.total_raw}")
         logger.info(f"   Valid companies: {self.stats.total_valid}")
+        logger.info(f"   Rejected: {self.stats.total_rejected}")
         logger.info(f"   Inserted: {self.stats.total_inserted}")
+        logger.info(f"   Rejection rate: {(self.stats.total_rejected / max(self.stats.total_raw, 1) * 100):.1f}%")
         logger.info(f"   Sources completed: {self.stats.sources_completed}")
         logger.info(f"   Sources failed: {self.stats.sources_failed}")
         logger.info(f"   Duration: {duration:.1f}s")
