@@ -19,7 +19,7 @@
         }
 
         .container {
-            max-width: 600px;
+            max-width: 700px;
             margin: 0 auto;
         }
 
@@ -80,9 +80,8 @@
             font-size: 0.95rem;
         }
 
-        .label-optional {
-            font-weight: 400;
-            color: #666;
+        .label-required {
+            color: #e74c3c;
             font-size: 0.85rem;
         }
 
@@ -108,6 +107,46 @@
             font-size: 0.85rem;
             color: #666;
             margin-top: 6px;
+            line-height: 1.5;
+        }
+
+        .input-hint strong {
+            color: #333;
+        }
+
+        .ats-examples {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 12px 15px;
+            margin-top: 10px;
+            font-size: 0.85rem;
+            border-left: 3px solid #667eea;
+        }
+
+        .ats-examples-title {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 8px;
+        }
+
+        .ats-examples ul {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+
+        .ats-examples li {
+            padding: 4px 0;
+            color: #666;
+        }
+
+        .ats-examples code {
+            background: #e9ecef;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 0.8rem;
+            color: #667eea;
+            font-family: 'Courier New', monospace;
         }
 
         .button-group {
@@ -140,6 +179,12 @@
 
         .btn-primary:active {
             transform: translateY(0);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
         }
 
         .btn-secondary {
@@ -187,29 +232,30 @@
             }
         }
 
-        .examples {
-            background: #f8f9fa;
-            border-radius: 10px;
+        .info-box {
+            background: #e7f3ff;
+            border-left: 4px solid #2196F3;
+            border-radius: 8px;
             padding: 15px 20px;
             margin-top: 30px;
         }
 
-        .examples h3 {
-            font-size: 0.95rem;
+        .info-box h3 {
+            font-size: 1rem;
             margin-bottom: 10px;
-            color: #333;
+            color: #1976D2;
         }
 
-        .examples ul {
+        .info-box ul {
             list-style: none;
             font-size: 0.9rem;
-            color: #666;
+            color: #555;
             line-height: 1.8;
         }
 
-        .examples li::before {
+        .info-box li::before {
             content: '✓';
-            color: #667eea;
+            color: #2196F3;
             font-weight: bold;
             margin-right: 8px;
         }
@@ -234,6 +280,25 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+
+        .detected-ats {
+            display: none;
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            border-radius: 8px;
+            padding: 12px 15px;
+            margin-top: 10px;
+            font-size: 0.9rem;
+            color: #155724;
+        }
+
+        .detected-ats.show {
+            display: block;
+        }
+
+        .detected-ats strong {
+            font-weight: 600;
+        }
     </style>
 </head>
 <body>
@@ -242,7 +307,7 @@
         
         <div class="header">
             <h1>🏢 Add Company</h1>
-            <p>Submit a company for job tracking</p>
+            <p>Track jobs from any company with a careers page</p>
         </div>
 
         <div class="card">
@@ -250,13 +315,13 @@
             
             <div id="loading" class="loading">
                 <div class="spinner"></div>
-                <p>Adding company...</p>
+                <p>Testing careers page and adding company...</p>
             </div>
 
             <form id="seedForm">
                 <div class="form-group">
                     <label for="company_name">
-                        Company Name
+                        Company Name <span class="label-required">*</span>
                     </label>
                     <input 
                         type="text" 
@@ -265,39 +330,55 @@
                         placeholder="e.g., Stripe, Anthropic, SpaceX"
                         required
                     >
-                    <div class="input-hint">
-                        Enter the official company name as it appears on their website
-                    </div>
                 </div>
 
                 <div class="form-group">
-                    <label for="website_url">
-                        Website URL <span class="label-optional">(optional)</span>
+                    <label for="careers_url">
+                        Careers Page URL <span class="label-required">*</span>
                     </label>
                     <input 
                         type="url" 
-                        id="website_url" 
-                        name="website_url" 
-                        placeholder="e.g., https://stripe.com"
+                        id="careers_url" 
+                        name="careers_url" 
+                        placeholder="e.g., https://boards.greenhouse.io/stripe"
+                        required
                     >
                     <div class="input-hint">
-                        Providing a website helps us find their careers page faster
+                        <strong>Paste the direct link to their jobs/careers page.</strong> This skips detection and starts tracking immediately.
+                    </div>
+                    
+                    <div id="detected-ats" class="detected-ats">
+                        ✅ <strong>Detected:</strong> <span id="ats-type"></span>
+                    </div>
+
+                    <div class="ats-examples">
+                        <div class="ats-examples-title">🎯 Supported Career Page URLs:</div>
+                        <ul>
+                            <li><strong>Greenhouse:</strong> <code>boards.greenhouse.io/[company]</code></li>
+                            <li><strong>Lever:</strong> <code>jobs.lever.co/[company]</code></li>
+                            <li><strong>Workday:</strong> <code>[company].wd5.myworkdayjobs.com</code></li>
+                            <li><strong>Ashby:</strong> <code>jobs.ashbyhq.com/[company]</code></li>
+                            <li><strong>BambooHR:</strong> <code>[company].bamboohr.com/jobs</code></li>
+                            <li><strong>SmartRecruiters:</strong> <code>careers.smartrecruiters.com/[company]</code></li>
+                            <li><strong>Custom:</strong> Any company careers page (we'll try to scrape it)</li>
+                        </ul>
                     </div>
                 </div>
 
                 <div class="button-group">
-                    <button type="submit" class="btn-primary">Add Company</button>
+                    <button type="submit" class="btn-primary" id="submitBtn">Add Company</button>
                     <button type="button" class="btn-secondary" onclick="window.location.href='/'">Cancel</button>
                 </div>
             </form>
 
-            <div class="examples">
+            <div class="info-box">
                 <h3>💡 What happens next?</h3>
                 <ul>
-                    <li>We'll test the company for supported ATS platforms (Greenhouse, Lever, Workday, Ashby, etc.)</li>
-                    <li>If jobs are found, we'll start tracking them automatically</li>
-                    <li>The company will appear in your dashboard within 24 hours</li>
-                    <li>You'll see job updates every 6 hours</li>
+                    <li>We'll immediately test the careers page URL you provided</li>
+                    <li>If jobs are found, we start tracking them right away</li>
+                    <li>The company appears in your dashboard within minutes</li>
+                    <li>Jobs are refreshed every 6 hours automatically</li>
+                    <li>You'll see new postings, closures, and hiring trends</li>
                 </ul>
             </div>
         </div>
@@ -307,6 +388,10 @@
         const form = document.getElementById('seedForm');
         const alert = document.getElementById('alert');
         const loading = document.getElementById('loading');
+        const careersUrlInput = document.getElementById('careers_url');
+        const detectedAtsDiv = document.getElementById('detected-ats');
+        const atsTypeSpan = document.getElementById('ats-type');
+        const submitBtn = document.getElementById('submitBtn');
 
         function showAlert(message, type) {
             alert.textContent = message;
@@ -316,30 +401,72 @@
             }, 5000);
         }
 
+        // Auto-detect ATS type from URL
+        careersUrlInput.addEventListener('input', (e) => {
+            const url = e.target.value.toLowerCase();
+            let atsType = null;
+
+            if (url.includes('greenhouse')) {
+                atsType = 'Greenhouse';
+            } else if (url.includes('lever')) {
+                atsType = 'Lever';
+            } else if (url.includes('workday') || url.includes('myworkdayjobs')) {
+                atsType = 'Workday';
+            } else if (url.includes('ashby')) {
+                atsType = 'Ashby';
+            } else if (url.includes('bamboohr')) {
+                atsType = 'BambooHR';
+            } else if (url.includes('smartrecruiters')) {
+                atsType = 'SmartRecruiters';
+            } else if (url.includes('taleo')) {
+                atsType = 'Taleo';
+            } else if (url.includes('icims')) {
+                atsType = 'iCIMS';
+            } else if (url.includes('careers') || url.includes('jobs')) {
+                atsType = 'Custom/Generic';
+            }
+
+            if (atsType && url.length > 10) {
+                atsTypeSpan.textContent = atsType;
+                detectedAtsDiv.classList.add('show');
+            } else {
+                detectedAtsDiv.classList.remove('show');
+            }
+        });
+
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
             
             const companyName = document.getElementById('company_name').value.trim();
-            const websiteUrl = document.getElementById('website_url').value.trim();
+            const careersUrl = document.getElementById('careers_url').value.trim();
 
-            if (!companyName) {
-                showAlert('Please enter a company name', 'error');
+            if (!companyName || !careersUrl) {
+                showAlert('Please fill in both company name and careers page URL', 'error');
+                return;
+            }
+
+            // Basic URL validation
+            try {
+                new URL(careersUrl);
+            } catch {
+                showAlert('Please enter a valid URL (must start with http:// or https://)', 'error');
                 return;
             }
 
             // Show loading
             form.style.display = 'none';
             loading.style.display = 'block';
+            submitBtn.disabled = true;
 
             try {
-                const response = await fetch('/api/seeds/add', {
+                const response = await fetch('/api/companies/add-direct', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
                         company_name: companyName,
-                        website_url: websiteUrl || null
+                        careers_url: careersUrl
                     })
                 });
 
@@ -348,21 +475,32 @@
                 // Hide loading
                 loading.style.display = 'none';
                 form.style.display = 'block';
+                submitBtn.disabled = false;
 
                 if (response.ok) {
-                    showAlert(`✅ ${companyName} has been added! We'll test it in the next discovery run.`, 'success');
-                    form.reset();
+                    const jobCount = data.job_count || 0;
+                    const atsType = data.ats_type || 'Unknown';
                     
-                    // Redirect after 2 seconds
+                    if (jobCount > 0) {
+                        showAlert(`✅ Success! Found ${jobCount} jobs at ${companyName} (${atsType}). Redirecting to dashboard...`, 'success');
+                    } else {
+                        showAlert(`⚠️ ${companyName} was added but no jobs were found. We'll keep checking.`, 'success');
+                    }
+                    
+                    form.reset();
+                    detectedAtsDiv.classList.remove('show');
+                    
+                    // Redirect after 2.5 seconds
                     setTimeout(() => {
                         window.location.href = '/';
-                    }, 2000);
+                    }, 2500);
                 } else {
-                    showAlert(data.error || 'Failed to add company. Please try again.', 'error');
+                    showAlert(data.error || 'Failed to add company. Please check the URL and try again.', 'error');
                 }
             } catch (error) {
                 loading.style.display = 'none';
                 form.style.display = 'block';
+                submitBtn.disabled = false;
                 showAlert('Network error. Please check your connection and try again.', 'error');
                 console.error('Error:', error);
             }
