@@ -14,6 +14,41 @@ from psycopg2.pool import ThreadedConnectionPool
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def infer_work_type(title: str, location: str, description: str = None) -> Optional[str]:
+    """Infer work type from job title, location, and description"""
+    text = f"{title} {location} {description or ''}".lower()
+    
+    # Check for remote indicators
+    remote_keywords = ['remote', 'work from home', 'wfh', 'distributed', 'anywhere', 'virtual', 'telecommute']
+    hybrid_keywords = ['hybrid', 'flexible', 'remote-friendly', 'office/remote', 'remote or office']
+    onsite_keywords = ['onsite', 'on-site', 'in-office', 'office-based', 'on site', 'in office']
+    
+    remote_score = sum(1 for kw in remote_keywords if kw in text)
+    hybrid_score = sum(1 for kw in hybrid_keywords if kw in text)
+    onsite_score = sum(1 for kw in onsite_keywords if kw in text)
+    
+    # Location-based inference
+    if location:
+        location_lower = location.lower()
+        if 'remote' in location_lower or 'anywhere' in location_lower or 'worldwide' in location_lower:
+            remote_score += 2
+        elif 'hybrid' in location_lower:
+            hybrid_score += 2
+        elif any(city in location_lower for city in ['new york', 'san francisco', 'seattle', 'boston', 'austin', 'chicago', 'denver', 'atlanta', 'dallas']):
+            # If specific city mentioned without remote, likely onsite
+            if remote_score == 0 and hybrid_score == 0:
+                onsite_score += 1
+    
+    # Determine work type
+    if remote_score > hybrid_score and remote_score > onsite_score:
+        return 'Remote'
+    elif hybrid_score > remote_score and hybrid_score > onsite_score:
+        return 'Hybrid'
+    elif onsite_score > 0 or (remote_score == 0 and hybrid_score == 0):
+        return 'Onsite'
+    
+    return None
+
 class Database:
     def __init__(self, database_url: str = None):
         self.database_url = database_url or os.getenv('DATABASE_URL')
@@ -91,6 +126,7 @@ class Database:
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_job_archive_company_status ON job_archive(company_id, status)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_job_archive_title ON job_archive(title)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_job_archive_location ON job_archive(location)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_job_archive_work_type ON job_archive(work_type)")
                 
                 # Seeds
                 cur.execute("""
@@ -370,7 +406,17 @@ class Database:
                     if closed_ids:
                         cur.execute("UPDATE job_archive SET status = 'closed', closed_at = NOW() WHERE company_id = %s AND job_id = ANY(%s) AND status = 'active'", (company_id, list(closed_ids)))
                         closed_count = cur.rowcount
+                    
                     for job in jobs:
+                        # Infer work_type if not provided
+                        work_type = job.get('work_type')
+                        if not work_type or work_type.strip() == '':
+                            work_type = infer_work_type(
+                                job.get('title', ''),
+                                job.get('location', ''),
+                                job.get('metadata', {}).get('description', '') if isinstance(job.get('metadata'), dict) else None
+                            )
+                        
                         cur.execute("""
                             INSERT INTO job_archive 
                             (company_id, job_id, title, location, department, work_type, job_url, posted_date, salary_min, salary_max, salary_currency, status, metadata)
@@ -392,7 +438,7 @@ class Database:
                             RETURNING (xmax = 0) AS inserted
                         """, (
                             company_id, job['id'], job.get('title'), job.get('location'),
-                            job.get('department'), job.get('work_type'), job.get('url'),
+                            job.get('department'), work_type, job.get('url'),
                             job.get('posted_date'), job.get('salary_min'), job.get('salary_max'),
                             job.get('salary_currency'), json.dumps(job.get('metadata', {}))
                         ))
@@ -401,12 +447,53 @@ class Database:
                             new_count += 1
                         else:
                             updated_count += 1
+                    
                     conn.commit()
                     logger.info(f"Job archive: +{new_count} new, ~{updated_count} updated, -{closed_count} closed")
                     return new_count, updated_count, closed_count
         except Exception as e:
             logger.error(f"Error archiving jobs: {e}")
             return 0, 0, 0
+    
+    def backfill_work_types(self) -> int:
+        """Backfill work_type for existing jobs that don't have it set"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Get jobs without work_type
+                    cur.execute("""
+                        SELECT id, title, location, metadata
+                        FROM job_archive
+                        WHERE status = 'active'
+                        AND (work_type IS NULL OR work_type = '')
+                        LIMIT 10000
+                    """)
+                    jobs = cur.fetchall()
+                    
+                    updated = 0
+                    for job_id, title, location, metadata in jobs:
+                        # Extract description from metadata if available
+                        description = None
+                        if metadata and isinstance(metadata, dict):
+                            description = metadata.get('description', '')
+                        
+                        # Infer work type
+                        work_type = infer_work_type(title or '', location or '', description)
+                        
+                        if work_type:
+                            cur.execute("""
+                                UPDATE job_archive
+                                SET work_type = %s
+                                WHERE id = %s
+                            """, (work_type, job_id))
+                            updated += 1
+                    
+                    conn.commit()
+                    logger.info(f"Backfilled work_type for {updated} jobs")
+                    return updated
+        except Exception as e:
+            logger.error(f"Error backfilling work types: {e}")
+            return 0
     
     def insert_seeds(self, seeds: List[Tuple[str, str, str, int]]) -> int:
         if not seeds:
@@ -1080,29 +1167,29 @@ class Database:
                     ats_distribution = [dict(row) for row in cur.fetchall()]
                     
                     # Work type distribution - FIXED VERSION
-                cur.execute("""
-                    SELECT 
-                        COUNT(*) FILTER (WHERE LOWER(work_type) LIKE '%remote%') as remote,
-                        COUNT(*) FILTER (WHERE LOWER(work_type) LIKE '%hybrid%') as hybrid,
-                        COUNT(*) FILTER (WHERE LOWER(work_type) LIKE '%onsite%' OR LOWER(work_type) LIKE '%on-site%' OR LOWER(work_type) LIKE '%office%') as onsite,
-                        COUNT(*) as total
-                    FROM job_archive
-                    WHERE status = 'active'
-                """)
-                work_type_row = cur.fetchone()
-                
-                # Calculate percentages
-                total = work_type_row['total'] if work_type_row and work_type_row['total'] > 0 else 1
-                work_type_distribution = {
-                    'remote': int(work_type_row['remote']) if work_type_row else 0,
-                    'hybrid': int(work_type_row['hybrid']) if work_type_row else 0,
-                    'onsite': int(work_type_row['onsite']) if work_type_row else 0,
-                    'remote_percent': round((work_type_row['remote'] or 0) / total * 100, 1) if work_type_row else 0,
-                    'hybrid_percent': round((work_type_row['hybrid'] or 0) / total * 100, 1) if work_type_row else 0,
-                    'onsite_percent': round((work_type_row['onsite'] or 0) / total * 100, 1) if work_type_row else 0,
-                }
-                
-                logger.info(f"Work type distribution: {work_type_distribution}")
+                    cur.execute("""
+                        SELECT 
+                            COUNT(*) FILTER (WHERE LOWER(work_type) LIKE '%remote%') as remote,
+                            COUNT(*) FILTER (WHERE LOWER(work_type) LIKE '%hybrid%') as hybrid,
+                            COUNT(*) FILTER (WHERE LOWER(work_type) LIKE '%onsite%' OR LOWER(work_type) LIKE '%on-site%' OR LOWER(work_type) LIKE '%office%') as onsite,
+                            COUNT(*) as total
+                        FROM job_archive
+                        WHERE status = 'active'
+                    """)
+                    work_type_row = cur.fetchone()
+                    
+                    # Calculate percentages
+                    total = work_type_row['total'] if work_type_row and work_type_row['total'] > 0 else 1
+                    work_type_distribution = {
+                        'remote': int(work_type_row['remote']) if work_type_row else 0,
+                        'hybrid': int(work_type_row['hybrid']) if work_type_row else 0,
+                        'onsite': int(work_type_row['onsite']) if work_type_row else 0,
+                        'remote_percent': round((work_type_row['remote'] or 0) / total * 100, 1) if work_type_row else 0,
+                        'hybrid_percent': round((work_type_row['hybrid'] or 0) / total * 100, 1) if work_type_row else 0,
+                        'onsite_percent': round((work_type_row['onsite'] or 0) / total * 100, 1) if work_type_row else 0,
+                    }
+                    
+                    logger.info(f"Work type distribution: {work_type_distribution}")
                     
                     # Salary insights
                     cur.execute("""
