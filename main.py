@@ -196,6 +196,78 @@ def admin_sql_query():
         logging.error(f"Admin SQL error: {e}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/api/analytics/advanced')
+@app.route('/api/advanced-analytics')  # Support both URLs
+def get_advanced_analytics():
+    """Get comprehensive advanced analytics"""
+    try:
+        analytics = db.get_advanced_analytics()
+        
+        # Log what we're returning for debugging
+        logger.info(f"Analytics data keys: {analytics.keys() if analytics else 'None'}")
+        
+        if not analytics:
+            return jsonify({
+                'top_skills': {},
+                'top_hiring_regions': {},
+                'department_distribution': {},
+                'work_type_distribution': {
+                    'remote': 0,
+                    'hybrid': 0,
+                    'onsite': 0,
+                    'remote_percent': 0,
+                    'hybrid_percent': 0,
+                    'onsite_percent': 0
+                },
+                'time_to_fill': {
+                    'sample_size': 0,
+                    'overall_avg_ttf_days': 0,
+                    'median_ttf_days': 0,
+                    'min_ttf_days': 0,
+                    'max_ttf_days': 0,
+                    'by_work_type': {},
+                    'by_department': {}
+                },
+                'fastest_growing': [],
+                'ats_distribution': [],
+                'salary_insights': {},
+                'top_companies': [],
+                'recent_events': []
+            }), 200
+        
+        return jsonify(analytics), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting advanced analytics: {e}", exc_info=True)
+        return jsonify({
+            'error': str(e),
+            'top_skills': {},
+            'top_hiring_regions': {},
+            'department_distribution': {},
+            'work_type_distribution': {
+                'remote': 0,
+                'hybrid': 0,
+                'onsite': 0,
+                'remote_percent': 0,
+                'hybrid_percent': 0,
+                'onsite_percent': 0
+            },
+            'time_to_fill': {
+                'sample_size': 0,
+                'overall_avg_ttf_days': 0,
+                'median_ttf_days': 0,
+                'min_ttf_days': 0,
+                'max_ttf_days': 0,
+                'by_work_type': {},
+                'by_department': {}
+            },
+            'fastest_growing': [],
+            'ats_distribution': [],
+            'salary_insights': {},
+            'top_companies': [],
+            'recent_events': []
+        }), 200  # Return 200 even on error so frontend doesn't break
+
 
 @app.route('/api/admin/fix-schema', methods=['POST'])
 @limiter.exempt
