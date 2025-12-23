@@ -637,6 +637,121 @@ def api_stats():
         logger.error(f"Error getting stats: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
+@app.route('/seed-admin')
+def seed_admin_page():
+    """Seed management admin page"""
+    return render_template('seed-admin.html')
+
+@app.route('/api/seeds/stats')
+def get_seed_stats():
+    """Get seed statistics"""
+    try:
+        stats = db.get_seed_stats()
+        return jsonify(stats), 200
+    except Exception as e:
+        logger.error(f"Error getting seed stats: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/seeds/reset', methods=['POST'])
+def reset_seeds():
+    """Reset test counters for low-test seeds"""
+    try:
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE seed_companies 
+                    SET times_tested = 0, 
+                        last_tested_at = NULL,
+                        success_rate = 0
+                    WHERE times_tested > 0 
+                    AND times_tested <= 2
+                    AND is_blacklisted = false
+                """)
+                reset_count = cur.rowcount
+                conn.commit()
+                logger.info(f"Reset {reset_count} seeds")
+                return jsonify({'success': True, 'reset_count': reset_count}), 200
+    except Exception as e:
+        logger.error(f"Error resetting seeds: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/seeds/unblacklist-premium', methods=['POST'])
+def unblacklist_premium():
+    """Unblacklist Tier 1 and 2 seeds"""
+    try:
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE seed_companies 
+                    SET is_blacklisted = false,
+                        times_tested = 0,
+                        times_successful = 0,
+                        success_rate = 0
+                    WHERE is_blacklisted = true
+                    AND tier IN (1, 2)
+                """)
+                unblacklisted_count = cur.rowcount
+                conn.commit()
+                logger.info(f"Unblacklisted {unblacklisted_count} premium seeds")
+                return jsonify({'success': True, 'unblacklisted_count': unblacklisted_count}), 200
+    except Exception as e:
+        logger.error(f"Error unblacklisting seeds: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/seeds/clean-garbage', methods=['POST'])
+def clean_garbage_seeds():
+    """Clean garbage seeds from database"""
+    try:
+        deleted_count = db.cleanup_garbage_seeds()
+        return jsonify({'success': True, 'deleted_count': deleted_count}), 200
+    except Exception as e:
+        logger.error(f"Error cleaning garbage seeds: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/seeds/expand-tier1', methods=['POST'])
+def expand_tier1_seeds():
+    """Expand Tier 1 seeds"""
+    try:
+        from seed_expander import run_tier1_expansion
+        added_count = asyncio.run(run_tier1_expansion())
+        return jsonify({'success': True, 'added_count': added_count}), 200
+    except Exception as e:
+        logger.error(f"Error expanding Tier 1: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/seeds/expand-tier2', methods=['POST'])
+def expand_tier2_seeds():
+    """Expand Tier 2 seeds"""
+    try:
+        from seed_expander import run_tier2_expansion
+        added_count = asyncio.run(run_tier2_expansion())
+        return jsonify({'success': True, 'added_count': added_count}), 200
+    except Exception as e:
+        logger.error(f"Error expanding Tier 2: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/seeds/nuclear-reset', methods=['POST'])
+def nuclear_reset_seeds():
+    """Nuclear option: reset ALL seeds"""
+    try:
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE seed_companies 
+                    SET times_tested = 0,
+                        times_successful = 0,
+                        last_tested_at = NULL,
+                        success_rate = 0,
+                        is_blacklisted = false
+                """)
+                reset_count = cur.rowcount
+                conn.commit()
+                logger.info(f"Nuclear reset: {reset_count} seeds")
+                return jsonify({'success': True, 'reset_count': reset_count}), 200
+    except Exception as e:
+        logger.error(f"Error in nuclear reset: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/intel')
 @limiter.limit(RATE_LIMITS['authenticated_read'])
 @require_api_key
