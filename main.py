@@ -629,8 +629,8 @@ def add_seed():
         return jsonify({'error': 'Internal server error. Please try again.'}), 500
 
 @app.route('/analytics')
-@optional_auth
-def analytics():
+def analytics_page():
+    """Advanced analytics page"""
     return render_template('analytics.html')
 
 @app.route('/companies')
