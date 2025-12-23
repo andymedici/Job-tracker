@@ -426,6 +426,7 @@ def index():
             'api_jobs': '/api/jobs'
         }
     }), 200
+    
 
 @app.route('/dashboard')
 @optional_auth
@@ -580,6 +581,20 @@ def get_salary_insights():
                 }), 200
     except Exception as e:
         logger.error(f"Error in salary insights: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/admin/backfill-worktypes', methods=['POST'])
+def backfill_worktypes():
+    """Backfill work types for existing jobs"""
+    try:
+        updated = db.backfill_work_types()
+        return jsonify({
+            'success': True,
+            'updated_count': updated,
+            'message': f'Successfully backfilled work_type for {updated} jobs'
+        }), 200
+    except Exception as e:
+        logger.error(f"Error in backfill: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/seeds/add', methods=['POST'])
