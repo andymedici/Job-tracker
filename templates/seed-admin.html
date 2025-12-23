@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Seed Management - Job Intelligence Platform</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            color: white;
+            text-decoration: none;
+            margin-bottom: 20px;
+            font-size: 0.95rem;
+            opacity: 0.9;
+            transition: opacity 0.2s;
+        }
+
+        .back-link:hover {
+            opacity: 1;
+        }
+
+        .back-link::before {
+            content: '←';
+            margin-right: 8px;
+            font-size: 1.2rem;
+        }
+
+        .header {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            margin-bottom: 30px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            color: #666;
+            font-size: 1.1rem;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            color: #666;
+            margin-bottom: 8px;
+        }
+
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: #667eea;
+        }
+
+        .actions-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .action-card {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .action-card h3 {
+            font-size: 1.3rem;
+            color: #333;
+            margin-bottom: 15px;
+        }
+
+        .action-card p {
+            color: #666;
+            margin-bottom: 20px;
+            line-height: 1.5;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 14px 24px;
+            border: none;
+            border-radius: 10px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: inherit;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-warning {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+        }
+
+        .btn-warning:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(245, 87, 108, 0.4);
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(250, 112, 154, 0.4);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        .alert {
+            padding: 15px 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            font-size: 0.95rem;
+            display: none;
+        }
+
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .alert-info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+
+        .alert-warning {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .alert.show {
+            display: block;
+            animation: slideDown 0.3s ease;
+        }
+
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .loading-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .loading-overlay.show {
+            display: flex;
+        }
+
+        .loading-content {
+            background: white;
+            padding: 40px;
+            border-radius: 20px;
+            text-align: center;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .log-box {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            margin-top: 30px;
+        }
+
+        .log-box h3 {
+            font-size: 1.3rem;
+            color: #333;
+            margin-bottom: 15px;
+        }
+
+        .log-content {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            line-height: 1.6;
+            color: #333;
+        }
+
+        .log-entry {
+            margin-bottom: 5px;
+        }
+
+        .log-entry.success {
+            color: #28a745;
+        }
+
+        .log-entry.error {
+            color: #dc3545;
+        }
+
+        .log-entry.info {
+            color: #17a2b8;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="back-link">Back to Dashboard</a>
+
+        <div class="header">
+            <h1>🌱 Seed Management</h1>
+            <p>Manage your company seed database</p>
+        </div>
+
+        <div id="alert" class="alert"></div>
+
+        <div class="stats-grid" id="stats-grid">
+            <div class="stat-card">
+                <div class="stat-label">Total Seeds</div>
+                <div class="stat-value" id="total-seeds">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Never Tested</div>
+                <div class="stat-value" id="never-tested">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Blacklisted</div>
+                <div class="stat-value" id="blacklisted">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Success Rate</div>
+                <div class="stat-value" id="success-rate">-</div>
+            </div>
+        </div>
+
+        <div class="actions-grid">
+            <div class="action-card">
+                <h3>🔄 Reset Seeds</h3>
+                <p>Reset test counters for seeds tested 1-2 times. Gives them fresh chances without deleting data.</p>
+                <button class="btn btn-primary" onclick="resetSeeds()">Reset Low-Test Seeds</button>
+            </div>
+
+            <div class="action-card">
+                <h3>♻️ Unblacklist Premium</h3>
+                <p>Unblacklist all Tier 1 and Tier 2 seeds, giving high-quality sources another chance.</p>
+                <button class="btn btn-primary" onclick="unblacklistPremium()">Unblacklist Tier 1 & 2</button>
+            </div>
+
+            <div class="action-card">
+                <h3>🗑️ Clean Garbage</h3>
+                <p>Remove obviously bad seeds (UI elements, special characters, etc.). Run this first!</p>
+                <button class="btn btn-warning" onclick="cleanGarbage()">Clean Garbage Seeds</button>
+            </div>
+
+            <div class="action-card">
+                <h3>🚀 Expand Tier 1</h3>
+                <p>Add 15,000-20,000 premium seeds from YC, GitHub, unicorns, and high-growth startups.</p>
+                <button class="btn btn-primary" onclick="expandTier1()">Expand Tier 1 Seeds</button>
+            </div>
+
+            <div class="action-card">
+                <h3>📊 Expand Tier 2</h3>
+                <p>Add 25,000-35,000 public company seeds from SEC, S&P 500, NASDAQ, Fortune 500, etc.</p>
+                <button class="btn btn-primary" onclick="expandTier2()">Expand Tier 2 Seeds</button>
+            </div>
+
+            <div class="action-card">
+                <h3>🔥 Nuclear Reset</h3>
+                <p><strong>⚠️ Warning:</strong> Resets ALL seeds to untested status. Use only if completely stuck.</p>
+                <button class="btn btn-danger" onclick="nuclearReset()">Nuclear Reset (All Seeds)</button>
+            </div>
+        </div>
+
+        <div class="log-box">
+            <h3>📋 Action Log</h3>
+            <div class="log-content" id="log-content">
+                <div class="log-entry info">Ready. Click any action above to begin.</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="loading-overlay" id="loading-overlay">
+        <div class="loading-content">
+            <div class="spinner"></div>
+            <p id="loading-text">Processing...</p>
+        </div>
+    </div>
+
+    <script>
+        function showAlert(message, type) {
+            const alert = document.getElementById('alert');
+            alert.textContent = message;
+            alert.className = `alert alert-${type} show`;
+            setTimeout(() => {
+                alert.classList.remove('show');
+            }, 5000);
+        }
+
+        function addLog(message, type = 'info') {
+            const logContent = document.getElementById('log-content');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logContent.appendChild(entry);
+            logContent.scrollTop = logContent.scrollHeight;
+        }
+
+        function showLoading(text) {
+            document.getElementById('loading-text').textContent = text;
+            document.getElementById('loading-overlay').classList.add('show');
+        }
+
+        function hideLoading() {
+            document.getElementById('loading-overlay').classList.remove('show');
+        }
+
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/seeds/stats');
+                const data = await response.json();
+                
+                document.getElementById('total-seeds').textContent = data.total_seeds.toLocaleString();
+                document.getElementById('never-tested').textContent = data.never_tested.toLocaleString();
+                document.getElementById('blacklisted').textContent = data.blacklisted.toLocaleString();
+                document.getElementById('success-rate').textContent = data.avg_success_rate.toFixed(1) + '%';
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+
+        async function resetSeeds() {
+            if (!confirm('Reset test counters for seeds tested 1-2 times?')) return;
+            
+            showLoading('Resetting seeds...');
+            addLog('Starting seed reset...', 'info');
+            
+            try {
+                const response = await fetch('/api/seeds/reset', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                
+                const data = await response.json();
+                hideLoading();
+                
+                if (response.ok) {
+                    showAlert(`✅ Reset ${data.reset_count} seeds`, 'success');
+                    addLog(`Success: Reset ${data.reset_count} seeds`, 'success');
+                    loadStats();
+                } else {
+                    showAlert(data.error || 'Failed to reset seeds', 'error');
+                    addLog(`Error: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                hideLoading();
+                showAlert('Network error. Please try again.', 'error');
+                addLog(`Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function unblacklistPremium() {
+            if (!confirm('Unblacklist all Tier 1 and Tier 2 seeds?')) return;
+            
+            showLoading('Unblacklisting premium seeds...');
+            addLog('Starting unblacklist...', 'info');
+            
+            try {
+                const response = await fetch('/api/seeds/unblacklist-premium', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                
+                const data = await response.json();
+                hideLoading();
+                
+                if (response.ok) {
+                    showAlert(`✅ Unblacklisted ${data.unblacklisted_count} premium seeds`, 'success');
+                    addLog(`Success: Unblacklisted ${data.unblacklisted_count} seeds`, 'success');
+                    loadStats();
+                } else {
+                    showAlert(data.error || 'Failed to unblacklist seeds', 'error');
+                    addLog(`Error: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                hideLoading();
+                showAlert('Network error. Please try again.', 'error');
+                addLog(`Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function cleanGarbage() {
+            if (!confirm('Remove garbage seeds (UI elements, special characters, etc.)?')) return;
+            
+            showLoading('Cleaning garbage seeds...');
+            addLog('Starting garbage cleanup...', 'info');
+            
+            try {
+                const response = await fetch('/api/seeds/clean-garbage', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                
+                const data = await response.json();
+                hideLoading();
+                
+                if (response.ok) {
+                    showAlert(`✅ Deleted ${data.deleted_count} garbage seeds`, 'success');
+                    addLog(`Success: Deleted ${data.deleted_count} garbage seeds`, 'success');
+                    loadStats();
+                } else {
+                    showAlert(data.error || 'Failed to clean seeds', 'error');
+                    addLog(`Error: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                hideLoading();
+                showAlert('Network error. Please try again.', 'error');
+                addLog(`Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function expandTier1() {
+            if (!confirm('Add 15,000-20,000 Tier 1 seeds? This may take 2-3 minutes.')) return;
+            
+            showLoading('Expanding Tier 1 seeds... (this may take 2-3 minutes)');
+            addLog('Starting Tier 1 expansion...', 'info');
+            
+            try {
+                const response = await fetch('/api/seeds/expand-tier1', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                
+                const data = await response.json();
+                hideLoading();
+                
+                if (response.ok) {
+                    showAlert(`✅ Added ${data.added_count} Tier 1 seeds`, 'success');
+                    addLog(`Success: Added ${data.added_count} Tier 1 seeds`, 'success');
+                    loadStats();
+                } else {
+                    showAlert(data.error || 'Failed to expand Tier 1', 'error');
+                    addLog(`Error: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                hideLoading();
+                showAlert('Network error. Please try again.', 'error');
+                addLog(`Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function expandTier2() {
+            if (!confirm('Add 25,000-35,000 Tier 2 seeds? This may take 3-5 minutes.')) return;
+            
+            showLoading('Expanding Tier 2 seeds... (this may take 3-5 minutes)');
+            addLog('Starting Tier 2 expansion...', 'info');
+            
+            try {
+                const response = await fetch('/api/seeds/expand-tier2', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                
+                const data = await response.json();
+                hideLoading();
+                
+                if (response.ok) {
+                    showAlert(`✅ Added ${data.added_count} Tier 2 seeds`, 'success');
+                    addLog(`Success: Added ${data.added_count} Tier 2 seeds`, 'success');
+                    loadStats();
+                } else {
+                    showAlert(data.error || 'Failed to expand Tier 2', 'error');
+                    addLog(`Error: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                hideLoading();
+                showAlert('Network error. Please try again.', 'error');
+                addLog(`Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function nuclearReset() {
+            const confirmed = confirm('⚠️ WARNING: This will reset ALL seeds to untested status. Are you absolutely sure?');
+            if (!confirmed) return;
+            
+            const doubleConfirm = confirm('This is irreversible. Reset ALL seeds?');
+            if (!doubleConfirm) return;
+            
+            showLoading('Nuclear reset in progress...');
+            addLog('Starting nuclear reset...', 'info');
+            
+            try {
+                const response = await fetch('/api/seeds/nuclear-reset', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                
+                const data = await response.json();
+                hideLoading();
+                
+                if (response.ok) {
+                    showAlert(`✅ Reset ${data.reset_count} seeds`, 'success');
+                    addLog(`Success: Nuclear reset completed on ${data.reset_count} seeds`, 'success');
+                    loadStats();
+                } else {
+                    showAlert(data.error || 'Failed to reset seeds', 'error');
+                    addLog(`Error: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                hideLoading();
+                showAlert('Network error. Please try again.', 'error');
+                addLog(`Error: ${error.message}`, 'error');
+            }
+        }
+
+        // Load stats on page load
+        loadStats();
+        
+        // Refresh stats every 30 seconds
+        setInterval(loadStats, 30000);
+    </script>
+</body>
+</html>
