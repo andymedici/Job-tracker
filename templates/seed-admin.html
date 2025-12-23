@@ -157,6 +157,16 @@
             box-shadow: 0 10px 25px rgba(250, 112, 154, 0.4);
         }
 
+        .btn-success {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            color: white;
+        }
+
+        .btn-success:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(56, 239, 125, 0.4);
+        }
+
         .btn:disabled {
             opacity: 0.6;
             cursor: not-allowed;
@@ -299,7 +309,7 @@
 
         <div class="header">
             <h1>🌱 Seed Management</h1>
-            <p>Manage your company seed database</p>
+            <p>Manage your company seed database and job data</p>
         </div>
 
         <div id="alert" class="alert"></div>
@@ -340,6 +350,12 @@
                 <h3>🗑️ Clean Garbage</h3>
                 <p>Remove obviously bad seeds (UI elements, special characters, etc.). Run this first!</p>
                 <button class="btn btn-warning" onclick="cleanGarbage()">Clean Garbage Seeds</button>
+            </div>
+
+            <div class="action-card">
+                <h3>🔧 Backfill Work Types</h3>
+                <p>Analyze existing jobs and infer Remote/Hybrid/Onsite from titles and locations. Fixes analytics!</p>
+                <button class="btn btn-success" onclick="backfillWorkTypes()">Backfill Work Types</button>
             </div>
 
             <div class="action-card">
@@ -499,6 +515,36 @@
                     loadStats();
                 } else {
                     showAlert(data.error || 'Failed to clean seeds', 'error');
+                    addLog(`Error: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                hideLoading();
+                showAlert('Network error. Please try again.', 'error');
+                addLog(`Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function backfillWorkTypes() {
+            if (!confirm('Analyze existing jobs and backfill Remote/Hybrid/Onsite work types? This may take a few minutes.')) return;
+            
+            showLoading('Backfilling work types... (analyzing up to 10,000 jobs)');
+            addLog('Starting work type backfill...', 'info');
+            
+            try {
+                const response = await fetch('/api/admin/backfill-worktypes', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                
+                const data = await response.json();
+                hideLoading();
+                
+                if (response.ok) {
+                    showAlert(`✅ Backfilled ${data.updated_count} jobs with work types`, 'success');
+                    addLog(`Success: Updated ${data.updated_count} jobs`, 'success');
+                    addLog('Work type distribution should now appear in analytics!', 'info');
+                } else {
+                    showAlert(data.error || 'Failed to backfill work types', 'error');
                     addLog(`Error: ${data.error}`, 'error');
                 }
             } catch (error) {
