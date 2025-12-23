@@ -515,573 +515,530 @@
     </div>
 
     <script>
-        // Configuration
-        const API_BASE = window.location.origin;
-        let API_KEY = localStorage.getItem('api_key') || '';
-        
-        // Chart instances
-        let charts = {};
-        
-        // Current tab
-        let currentTab = 'overview';
-        
-        // Utility: API Request
-        async function apiRequest(endpoint, options = {}) {
-            const headers = {
-                'Content-Type': 'application/json',
-                'X-API-Key': API_KEY,
-                ...options.headers
-            };
+    // Configuration
+    const API_BASE = window.location.origin;
+    
+    // Chart instances
+    let charts = {};
+    
+    // Current tab
+    let currentTab = 'overview';
+    
+    // Utility: API Request
+    async function apiRequest(endpoint, options = {}) {
+        try {
+            console.log(`Fetching: ${API_BASE}${endpoint}`);
+            const response = await fetch(`${API_BASE}${endpoint}`, options);
             
-            try {
-                const response = await fetch(`${API_BASE}${endpoint}`, {
-                    ...options,
-                    headers
-                });
-                
-                if (response.status === 401) {
-                    window.location.href = '/dashboard';
-                    throw new Error('Authentication required');
-                }
-                
-                if (!response.ok) {
-                    const error = await response.json();
-                    throw new Error(error.message || 'API request failed');
-                }
-                
-                return await response.json();
-            } catch (error) {
-                console.error('API Error:', error);
-                throw error;
+            if (!response.ok) {
+                console.error(`API Error: ${response.status} ${response.statusText}`);
+                const text = await response.text();
+                console.error('Response:', text);
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
-        }
-        
-        // Show Alert
-        function showAlert(message, type = 'info') {
-            const alertBar = document.getElementById('alert-bar');
-            const colors = {
-                success: 'bg-green-100 text-green-800 border-green-200',
-                error: 'bg-red-100 text-red-800 border-red-200',
-                warning: 'bg-yellow-100 text-yellow-800 border-yellow-200',
-                info: 'bg-blue-100 text-blue-800 border-blue-200'
-            };
             
-            alertBar.className = `mb-6 rounded-lg p-4 border ${colors[type]}`;
-            alertBar.textContent = message;
-            alertBar.classList.remove('hidden');
-            
-            setTimeout(() => {
-                alertBar.classList.add('hidden');
-            }, 5000);
+            const data = await response.json();
+            console.log(`Data received from ${endpoint}:`, data);
+            return data;
+        } catch (error) {
+            console.error('API Error:', error);
+            throw error;
         }
+    }
+    
+    // Show Alert
+    function showAlert(message, type = 'info') {
+        const alertBar = document.getElementById('alert-bar');
+        const colors = {
+            success: 'bg-green-100 text-green-800 border-green-200',
+            error: 'bg-red-100 text-red-800 border-red-200',
+            warning: 'bg-yellow-100 text-yellow-800 border-yellow-200',
+            info: 'bg-blue-100 text-blue-800 border-blue-200'
+        };
         
-        // Tab Switching
-        document.querySelectorAll('.tab-button').forEach(button => {
-            button.addEventListener('click', () => {
-                const tab = button.dataset.tab;
-                
-                // Update button states
-                document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
-                button.classList.add('active');
-                
-                // Update content
-                document.querySelectorAll('.tab-content').forEach(content => {
-                    content.classList.add('hidden');
-                });
-                document.getElementById(`tab-${tab}`).classList.remove('hidden');
-                
-                currentTab = tab;
-                
-                // Load tab-specific data
-                loadTabData(tab);
+        alertBar.className = `mb-6 rounded-lg p-4 border ${colors[type]}`;
+        alertBar.textContent = message;
+        alertBar.classList.remove('hidden');
+        
+        setTimeout(() => {
+            alertBar.classList.add('hidden');
+        }, 5000);
+    }
+    
+    // Tab Switching
+    document.querySelectorAll('.tab-button').forEach(button => {
+        button.addEventListener('click', () => {
+            const tab = button.dataset.tab;
+            
+            // Update button states
+            document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
+            button.classList.add('active');
+            
+            // Update content
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.add('hidden');
             });
+            document.getElementById(`tab-${tab}`).classList.remove('hidden');
+            
+            currentTab = tab;
+            
+            // Load tab-specific data
+            loadTabData(tab);
+        });
+    });
+    
+    // Load Analytics Data
+    async function loadAnalytics() {
+        try {
+            console.log('Loading analytics data...');
+            
+            // First check debug endpoint
+            const debug = await apiRequest('/api/debug/analytics');
+            console.log('Debug info:', debug);
+            
+            if (!debug.has_data) {
+                showAlert('No job data available yet. Run discovery first!', 'warning');
+                return;
+            }
+            
+            // Load full analytics
+            const data = await apiRequest('/api/advanced-analytics');
+            console.log('Full analytics data:', data);
+            
+            if (!data) {
+                showAlert('No analytics data available', 'warning');
+                return;
+            }
+            
+            // Update Overview Tab
+            updateOverviewMetrics(data);
+            updateOverviewCharts(data);
+            
+            // Store for other tabs
+            window.analyticsData = data;
+            
+            showAlert('Analytics loaded successfully!', 'success');
+            
+        } catch (error) {
+            console.error('Analytics load error:', error);
+            showAlert(`Failed to load analytics: ${error.message}`, 'error');
+        }
+    }
+    
+    // Update Overview Metrics
+    function updateOverviewMetrics(data) {
+        console.log('Updating metrics with:', data);
+        const ttf = data.time_to_fill || {};
+        
+        document.getElementById('metric-avg-ttf').textContent = 
+            ttf.overall_avg_ttf_days ? ttf.overall_avg_ttf_days.toFixed(1) : '0';
+        
+        document.getElementById('metric-median-ttf').textContent = 
+            ttf.median_ttf_days ? ttf.median_ttf_days.toFixed(1) : '0';
+        
+        document.getElementById('metric-closed-jobs').textContent = 
+            (ttf.sample_size || 0).toLocaleString();
+        
+        const topRegions = data.top_hiring_regions || {};
+        const regions = Object.entries(topRegions).sort((a, b) => b[1] - a[1]);
+        if (regions.length > 0) {
+            document.getElementById('metric-top-region').textContent = regions[0][0];
+            document.getElementById('metric-top-region-jobs').textContent = `${regions[0][1].toLocaleString()} jobs`;
+        } else {
+            document.getElementById('metric-top-region').textContent = 'N/A';
+            document.getElementById('metric-top-region-jobs').textContent = '0 jobs';
+        }
+    }
+    
+    // Update Overview Charts
+    function updateOverviewCharts(data) {
+        console.log('Updating charts with:', data);
+        
+        // Top Skills Chart
+        const skillsCtx = document.getElementById('top-skills-chart').getContext('2d');
+        if (charts.topSkills) charts.topSkills.destroy();
+        
+        const skillsData = data.top_skills || {};
+        const skills = Object.entries(skillsData).slice(0, 10);
+        
+        if (skills.length === 0) {
+            console.warn('No skills data available');
+        }
+        
+        charts.topSkills = new Chart(skillsCtx, {
+            type: 'bar',
+            data: {
+                labels: skills.length > 0 ? skills.map(s => s[0]) : ['No Data'],
+                datasets: [{
+                    label: 'Demand',
+                    data: skills.length > 0 ? skills.map(s => s[1]) : [0],
+                    backgroundColor: '#3b82f6'
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                }
+            }
         });
         
-        // Load Analytics Data
-        async function loadAnalytics() {
-            try {
-                const data = await apiRequest('/api/advanced-analytics');
-                
-                // Update Overview Tab
-                updateOverviewMetrics(data);
-                updateOverviewCharts(data);
-                
-                // Store for other tabs
-                window.analyticsData = data;
-                
-            } catch (error) {
-                showAlert(`Failed to load analytics: ${error.message}`, 'error');
+        // Department Chart
+        const deptCtx = document.getElementById('department-chart').getContext('2d');
+        if (charts.department) charts.department.destroy();
+        
+        const deptsData = data.department_distribution || {};
+        const depts = Object.entries(deptsData).slice(0, 8);
+        
+        charts.department = new Chart(deptCtx, {
+            type: 'doughnut',
+            data: {
+                labels: depts.length > 0 ? depts.map(d => d[0]) : ['No Data'],
+                datasets: [{
+                    data: depts.length > 0 ? depts.map(d => d[1]) : [1],
+                    backgroundColor: [
+                        '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6',
+                        '#ef4444', '#06b6d4', '#f97316', '#6b7280'
+                    ]
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'right' }
+                }
             }
-        }
+        });
         
-        // Update Overview Metrics
-        function updateOverviewMetrics(data) {
-            const ttf = data.time_to_fill || {};
-            
-            document.getElementById('metric-avg-ttf').textContent = 
-                ttf.overall_avg_ttf_days ? ttf.overall_avg_ttf_days.toFixed(1) : '-';
-            
-            document.getElementById('metric-median-ttf').textContent = 
-                ttf.median_ttf_days ? ttf.median_ttf_days.toFixed(1) : '-';
-            
-            document.getElementById('metric-closed-jobs').textContent = 
-                (ttf.sample_size || 0).toLocaleString();
-            
-            const topRegions = data.top_hiring_regions || {};
-            const regions = Object.entries(topRegions).sort((a, b) => b[1] - a[1]);
-            if (regions.length > 0) {
-                document.getElementById('metric-top-region').textContent = regions[0][0];
-                document.getElementById('metric-top-region-jobs').textContent = `${regions[0][1].toLocaleString()} jobs`;
+        // Regions Chart
+        const regionsCtx = document.getElementById('regions-chart').getContext('2d');
+        if (charts.regions) charts.regions.destroy();
+        
+        const regionsData = data.top_hiring_regions || {};
+        const regions = Object.entries(regionsData).slice(0, 10);
+        
+        charts.regions = new Chart(regionsCtx, {
+            type: 'bar',
+            data: {
+                labels: regions.length > 0 ? regions.map(r => r[0]) : ['No Data'],
+                datasets: [{
+                    label: 'Jobs',
+                    data: regions.length > 0 ? regions.map(r => r[1]) : [0],
+                    backgroundColor: '#10b981'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                }
             }
-        }
+        });
         
-        // Update Overview Charts
-        function updateOverviewCharts(data) {
-            // Top Skills Chart
-            const skillsCtx = document.getElementById('top-skills-chart').getContext('2d');
-            if (charts.topSkills) charts.topSkills.destroy();
-            
-            const skills = Object.entries(data.top_skills || {}).slice(0, 10);
-            charts.topSkills = new Chart(skillsCtx, {
-                type: 'bar',
-                data: {
-                    labels: skills.map(s => s[0]),
-                    datasets: [{
-                        label: 'Demand',
-                        data: skills.map(s => s[1]),
-                        backgroundColor: '#3b82f6'
-                    }]
-                },
-                options: {
-                    indexAxis: 'y',
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: { display: false }
-                    }
+        // Work Type Chart
+        const worktypeCtx = document.getElementById('worktype-detail-chart').getContext('2d');
+        if (charts.worktype) charts.worktype.destroy();
+        
+        const worktype = data.work_type_distribution || {};
+        charts.worktype = new Chart(worktypeCtx, {
+            type: 'pie',
+            data: {
+                labels: ['Remote', 'Hybrid', 'Onsite'],
+                datasets: [{
+                    data: [
+                        worktype.remote || 0,
+                        worktype.hybrid || 0,
+                        worktype.onsite || 0
+                    ],
+                    backgroundColor: ['#8b5cf6', '#3b82f6', '#6b7280']
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom' }
                 }
-            });
-            
-            // Department Chart
-            const deptCtx = document.getElementById('department-chart').getContext('2d');
-            if (charts.department) charts.department.destroy();
-            
-            const depts = Object.entries(data.department_distribution || {}).slice(0, 8);
-            charts.department = new Chart(deptCtx, {
-                type: 'doughnut',
-                data: {
-                    labels: depts.map(d => d[0]),
-                    datasets: [{
-                        data: depts.map(d => d[1]),
-                        backgroundColor: [
-                            '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6',
-                            '#ef4444', '#06b6d4', '#f97316', '#6b7280'
-                        ]
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: { position: 'right' }
-                    }
-                }
-            });
-            
-            // Regions Chart
-            const regionsCtx = document.getElementById('regions-chart').getContext('2d');
-            if (charts.regions) charts.regions.destroy();
-            
-            const regions = Object.entries(data.top_hiring_regions || {}).slice(0, 10);
-            charts.regions = new Chart(regionsCtx, {
-                type: 'bar',
-                data: {
-                    labels: regions.map(r => r[0]),
-                    datasets: [{
-                        label: 'Jobs',
-                        data: regions.map(r => r[1]),
-                        backgroundColor: '#10b981'
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: { display: false }
-                    }
-                }
-            });
-            
-            // Work Type Chart
-            const worktypeCtx = document.getElementById('worktype-detail-chart').getContext('2d');
-            if (charts.worktype) charts.worktype.destroy();
-            
-            const worktype = data.work_type_distribution || {};
-            charts.worktype = new Chart(worktypeCtx, {
-                type: 'pie',
-                data: {
-                    labels: ['Remote', 'Hybrid', 'Onsite'],
-                    datasets: [{
-                        data: [
-                            worktype.remote || 0,
-                            worktype.hybrid || 0,
-                            worktype.onsite || 0
-                        ],
-                        backgroundColor: ['#8b5cf6', '#3b82f6', '#6b7280']
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: { position: 'bottom' }
-                    }
-                }
-            });
-            
-            // Update percentages
-            document.getElementById('remote-percent').textContent = `${worktype.remote_percent || 0}%`;
-            document.getElementById('hybrid-percent').textContent = `${worktype.hybrid_percent || 0}%`;
-            document.getElementById('onsite-percent').textContent = `${worktype.onsite_percent || 0}%`;
-            
-            // Fastest Growing Table
-            const growingTable = document.getElementById('fastest-growing-table');
-            const growing = data.fastest_growing || [];
-            
-            if (growing.length > 0) {
-                growingTable.innerHTML = `
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>Company</th>
-                                <th>ATS</th>
-                                <th>Growth</th>
-                                <th>Current Jobs</th>
-                                <th>Jobs/Day</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${growing.map(c => `
-                                <tr>
-                                    <td class="font-medium">${c.company_name}</td>
-                                    <td><span class="text-xs px-2 py-1 bg-gray-100 rounded">${c.ats_type}</span></td>
-                                    <td class="text-green-600 font-semibold">+${c.job_change}</td>
-                                    <td>${c.current_jobs}</td>
-                                    <td>${c.jobs_per_day}</td>
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                `;
-            } else {
-                growingTable.innerHTML = '<p class="text-center text-gray-500 py-4">No data available</p>';
             }
-        }
+        });
         
-        // Load Tab Data
-        function loadTabData(tab) {
-            switch(tab) {
-                case 'time-to-fill':
-                    loadTimeToFillData();
-                    break;
-                case 'skills':
-                    loadSkillsData();
-                    break;
-                case 'regions':
-                    loadRegionalData();
-                    break;
-                case 'growth':
-                    // Growth loaded on search
-                    break;
-                case 'historical':
-                    loadHistoricalEvents();
-                    break;
-            }
-        }
+        // Update percentages
+        document.getElementById('remote-percent').textContent = `${worktype.remote_percent || 0}%`;
+        document.getElementById('hybrid-percent').textContent = `${worktype.hybrid_percent || 0}%`;
+        document.getElementById('onsite-percent').textContent = `${worktype.onsite_percent || 0}%`;
         
-        // Load Time to Fill Data
-        function loadTimeToFillData() {
-            const data = window.analyticsData;
-            if (!data) return;
-            
-            const ttf = data.time_to_fill || {};
-            
-            document.getElementById('ttf-overall').textContent = 
-                ttf.overall_avg_ttf_days ? ttf.overall_avg_ttf_days.toFixed(1) : '-';
-            document.getElementById('ttf-min').textContent = 
-                ttf.min_ttf_days ? ttf.min_ttf_days.toFixed(1) : '-';
-            document.getElementById('ttf-max').textContent = 
-                ttf.max_ttf_days ? ttf.max_ttf_days.toFixed(1) : '-';
-            
-            // TTF by Work Type
-            const worktypeCtx = document.getElementById('ttf-worktype-chart').getContext('2d');
-            if (charts.ttfWorktype) charts.ttfWorktype.destroy();
-            
-            const byWorkType = Object.entries(ttf.by_work_type || {});
-            charts.ttfWorktype = new Chart(worktypeCtx, {
-                type: 'bar',
-                data: {
-                    labels: byWorkType.map(w => w[0]),
-                    datasets: [{
-                        label: 'Avg Days',
-                        data: byWorkType.map(w => w[1]),
-                        backgroundColor: '#3b82f6'
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: { display: false }
-                    }
-                }
-            });
-            
-            // TTF by Department
-            const deptCtx = document.getElementById('ttf-department-chart').getContext('2d');
-            if (charts.ttfDepartment) charts.ttfDepartment.destroy();
-            
-            const byDept = Object.entries(ttf.by_department || {}).slice(0, 10);
-            charts.ttfDepartment = new Chart(deptCtx, {
-                type: 'bar',
-                data: {
-                    labels: byDept.map(d => d[0]),
-                    datasets: [{
-                        label: 'Avg Days',
-                        data: byDept.map(d => d[1]),
-                        backgroundColor: '#10b981'
-                    }]
-                },
-                options: {
-                    indexAxis: 'y',
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: { display: false }
-                    }
-                }
-            });
-        }
+        // Fastest Growing Table
+        const growingTable = document.getElementById('fastest-growing-table');
+        const growing = data.fastest_growing || [];
         
-        // Load Skills Data
-        function loadSkillsData() {
-            const data = window.analyticsData;
-            if (!data) return;
-            
-            const skills = data.top_skills || {};
-            const skillEntries = Object.entries(skills).sort((a, b) => b[1] - a[1]);
-            
-            // Top Skills List
-            const skillsList = document.getElementById('top-skills-list');
-            skillsList.innerHTML = skillEntries.map(([skill, count]) => {
-                const percentage = Math.min(100, (count / skillEntries[0][1]) * 100);
-                return `
-                    <div class="mb-3">
-                        <div class="flex justify-between text-sm mb-1">
-                            <span class="font-medium text-gray-900">${skill}</span>
-                            <span class="text-gray-600">${count.toLocaleString()} mentions</span>
-                        </div>
-                        <div class="w-full bg-gray-200 rounded-full h-2">
-                            <div class="bg-blue-600 h-2 rounded-full" style="width: ${percentage}%"></div>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-            
-            // Categorize skills
-            const categories = {
-                frontend: ['javascript', 'react', 'vue', 'angular', 'typescript', 'frontend'],
-                backend: ['python', 'java', 'go', 'rust', 'backend', 'api'],
-                cloud: ['cloud', 'aws', 'azure', 'gcp', 'devops', 'kubernetes', 'docker'],
-                data: ['data', 'ai_ml', 'database', 'spark', 'sql']
-            };
-            
-            for (const [category, keywords] of Object.entries(categories)) {
-                const categorySkills = skillEntries.filter(([skill]) => 
-                    keywords.some(kw => skill.toLowerCase().includes(kw.toLowerCase()))
-                );
-                
-                const container = document.getElementById(`${category}-skills`);
-                container.innerHTML = categorySkills.length > 0
-                    ? categorySkills.map(([skill, count]) => `
-                        <div class="flex justify-between items-center p-2 bg-gray-50 rounded">
-                            <span class="font-medium">${skill}</span>
-                            <span class="text-sm text-gray-600">${count}</span>
-                        </div>
-                    `).join('')
-                    : '<p class="text-sm text-gray-500">No data</p>';
-            }
-        }
-        
-        // Load Regional Data
-        function loadRegionalData() {
-            const data = window.analyticsData;
-            if (!data) return;
-            
-            const regions = data.top_hiring_regions || {};
-            const regionEntries = Object.entries(regions).sort((a, b) => b[1] - a[1]);
-            
-            // Country Chart (already loaded in overview, skip)
-            
-            // Regional Table
-            const table = document.getElementById('regional-table');
-            table.innerHTML = `
+        if (growing.length > 0) {
+            growingTable.innerHTML = `
                 <table class="data-table">
                     <thead>
                         <tr>
-                            <th>Country/Region</th>
-                            <th>Total Jobs</th>
-                            <th>Percentage</th>
+                            <th>Company</th>
+                            <th>ATS</th>
+                            <th>Growth</th>
+                            <th>Current Jobs</th>
+                            <th>Jobs/Day</th>
                         </tr>
                     </thead>
                     <tbody>
-                        ${regionEntries.map(([region, count]) => {
-                            const total = regionEntries.reduce((sum, [, c]) => sum + c, 0);
-                            const percent = ((count / total) * 100).toFixed(1);
-                            return `
-                                <tr>
-                                    <td class="font-medium">${region}</td>
-                                    <td>${count.toLocaleString()}</td>
-                                    <td>
-                                        <div class="flex items-center">
-                                            <span class="mr-2">${percent}%</span>
-                                            <div class="flex-1 bg-gray-200 rounded-full h-2 max-w-xs">
-                                                <div class="bg-blue-600 h-2 rounded-full" style="width: ${percent}%"></div>
-                                            </div>
-                                        </div>
-                                    </td>
-                                </tr>
-                            `;
-                        }).join('')}
+                        ${growing.map(c => `
+                            <tr>
+                                <td class="font-medium">${c.company_name}</td>
+                                <td><span class="text-xs px-2 py-1 bg-gray-100 rounded">${c.ats_type}</span></td>
+                                <td class="text-green-600 font-semibold">+${c.job_change}</td>
+                                <td>${c.current_jobs}</td>
+                                <td>${c.jobs_per_day}</td>
+                            </tr>
+                        `).join('')}
                     </tbody>
                 </table>
             `;
-        }
-        
-        // Load Historical Events
-        async function loadHistoricalEvents() {
-            try {
-                const data = window.analyticsData;
-                if (!data) return;
-                
-                const events = data.recent_events || [];
-                const timeline = document.getElementById('events-timeline');
-                
-                if (events.length > 0) {
-                    timeline.innerHTML = events.map(event => `
-                        <div class="flex items-start space-x-3 p-4 bg-gray-50 rounded-lg">
-                            <div class="flex-shrink-0 mt-1">
-                                ${event.event_type === 'hiring_surge' ? '📈' : 
-                                  event.event_type === 'hiring_freeze' ? '📉' : 
-                                  event.event_type === 'location_expansion' ? '🌍' : '📊'}
-                            </div>
-                            <div class="flex-1">
-                                <h4 class="font-medium text-gray-900">${event.event_type.replace('_', ' ').toUpperCase()}</h4>
-                                <p class="text-sm text-gray-600 mt-1">${event.event_count} events detected</p>
-                                <p class="text-xs text-gray-500 mt-1">Last: ${new Date(event.last_detected).toLocaleString()}</p>
-                            </div>
-                        </div>
-                    `).join('');
-                } else {
-                    timeline.innerHTML = '<p class="text-center text-gray-500 py-4">No recent events</p>';
-                }
-            } catch (error) {
-                console.error('Failed to load events:', error);
-            }
-        }
-        
-        // Export Modal
-        document.getElementById('export-data-btn').addEventListener('click', () => {
-            document.getElementById('export-modal').classList.remove('hidden');
-        });
-        
-        document.getElementById('close-export-modal').addEventListener('click', () => {
-            document.getElementById('export-modal').classList.add('hidden');
-        });
-        
-        // Quick Export Buttons
-        document.querySelectorAll('[data-export]').forEach(button => {
-            button.addEventListener('click', async () => {
-                const type = button.dataset.export;
-                await performExport(type);
-            });
-        });
-        
-        // Perform Export
-        async function performExport(type) {
-            try {
-                let data, filename;
-                
-                switch(type) {
-                    case 'stats':
-                        data = await apiRequest('/api/stats');
-                        filename = 'job-intel-stats.json';
-                        downloadJSON(data, filename);
-                        break;
-                    case 'trends':
-                        data = await apiRequest('/api/trends?days=90');
-                        filename = 'job-intel-trends.csv';
-                        downloadCSV(data.granular, filename);
-                        break;
-                    case 'intelligence':
-                        data = await apiRequest('/api/intel?days=30');
-                        filename = 'job-intel-events.json';
-                        downloadJSON(data, filename);
-                        break;
-                }
-                
-                showAlert('Export completed successfully!', 'success');
-                document.getElementById('export-modal').classList.add('hidden');
-                
-            } catch (error) {
-                showAlert(`Export failed: ${error.message}`, 'error');
-            }
-        }
-        
-        // Download JSON
-        function downloadJSON(data, filename) {
-            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = filename;
-            a.click();
-            URL.revokeObjectURL(url);
-        }
-        
-        // Download CSV
-        function downloadCSV(data, filename) {
-            if (!data || data.length === 0) return;
-            
-            const headers = Object.keys(data[0]);
-            const csv = [
-                headers.join(','),
-                ...data.map(row => headers.map(h => JSON.stringify(row[h] || '')).join(','))
-            ].join('\n');
-            
-            const blob = new Blob([csv], { type: 'text/csv' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = filename;
-            a.click();
-            URL.revokeObjectURL(url);
-        }
-        
-        // Set default dates for export
-        const today = new Date();
-        const thirtyDaysAgo = new Date(today);
-        thirtyDaysAgo.setDate(today.getDate() - 30);
-        
-        document.getElementById('export-end-date').valueAsDate = today;
-        document.getElementById('export-start-date').valueAsDate = thirtyDaysAgo;
-        
-        // Initialize
-        if (!API_KEY) {
-            window.location.href = '/dashboard';
         } else {
-            loadAnalytics();
+            growingTable.innerHTML = '<p class="text-center text-gray-500 py-4">No growth data available yet. Data requires 14+ days of tracking.</p>';
         }
-    </script>
+    }
+    
+    // Load Tab Data
+    function loadTabData(tab) {
+        console.log(`Loading tab: ${tab}`);
+        switch(tab) {
+            case 'time-to-fill':
+                loadTimeToFillData();
+                break;
+            case 'skills':
+                loadSkillsData();
+                break;
+            case 'regions':
+                loadRegionalData();
+                break;
+            case 'growth':
+                // Growth loaded on search
+                break;
+            case 'historical':
+                loadHistoricalEvents();
+                break;
+        }
+    }
+    
+    // Load Time to Fill Data
+    function loadTimeToFillData() {
+        const data = window.analyticsData;
+        if (!data) {
+            showAlert('Please wait for analytics to load', 'info');
+            return;
+        }
+        
+        const ttf = data.time_to_fill || {};
+        
+        document.getElementById('ttf-overall').textContent = 
+            ttf.overall_avg_ttf_days ? ttf.overall_avg_ttf_days.toFixed(1) : '0';
+        document.getElementById('ttf-min').textContent = 
+            ttf.min_ttf_days ? ttf.min_ttf_days.toFixed(1) : '0';
+        document.getElementById('ttf-max').textContent = 
+            ttf.max_ttf_days ? ttf.max_ttf_days.toFixed(1) : '0';
+        
+        // TTF by Work Type
+        const worktypeCtx = document.getElementById('ttf-worktype-chart').getContext('2d');
+        if (charts.ttfWorktype) charts.ttfWorktype.destroy();
+        
+        const byWorkType = Object.entries(ttf.by_work_type || {});
+        charts.ttfWorktype = new Chart(worktypeCtx, {
+            type: 'bar',
+            data: {
+                labels: byWorkType.length > 0 ? byWorkType.map(w => w[0]) : ['No Data'],
+                datasets: [{
+                    label: 'Avg Days',
+                    data: byWorkType.length > 0 ? byWorkType.map(w => w[1]) : [0],
+                    backgroundColor: '#3b82f6'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                }
+            }
+        });
+        
+        // TTF by Department
+        const deptCtx = document.getElementById('ttf-department-chart').getContext('2d');
+        if (charts.ttfDepartment) charts.ttfDepartment.destroy();
+        
+        const byDept = Object.entries(ttf.by_department || {}).slice(0, 10);
+        charts.ttfDepartment = new Chart(deptCtx, {
+            type: 'bar',
+            data: {
+                labels: byDept.length > 0 ? byDept.map(d => d[0]) : ['No Data'],
+                datasets: [{
+                    label: 'Avg Days',
+                    data: byDept.length > 0 ? byDept.map(d => d[1]) : [0],
+                    backgroundColor: '#10b981'
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                }
+            }
+        });
+    }
+    
+    // Load Skills Data
+    function loadSkillsData() {
+        const data = window.analyticsData;
+        if (!data) {
+            showAlert('Please wait for analytics to load', 'info');
+            return;
+        }
+        
+        const skills = data.top_skills || {};
+        const skillEntries = Object.entries(skills).sort((a, b) => b[1] - a[1]);
+        
+        if (skillEntries.length === 0) {
+            document.getElementById('top-skills-list').innerHTML = '<p class="text-center text-gray-500 py-4">No skills data available. Skills are extracted from job titles.</p>';
+            return;
+        }
+        
+        // Top Skills List
+        const skillsList = document.getElementById('top-skills-list');
+        skillsList.innerHTML = skillEntries.map(([skill, count]) => {
+            const percentage = Math.min(100, (count / skillEntries[0][1]) * 100);
+            return `
+                <div class="mb-3">
+                    <div class="flex justify-between text-sm mb-1">
+                        <span class="font-medium text-gray-900">${skill}</span>
+                        <span class="text-gray-600">${count.toLocaleString()} mentions</span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-2">
+                        <div class="bg-blue-600 h-2 rounded-full" style="width: ${percentage}%"></div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+        
+        // Categorize skills
+        const categories = {
+            frontend: ['javascript', 'react', 'vue', 'angular', 'typescript', 'frontend', 'html', 'css'],
+            backend: ['python', 'java', 'go', 'rust', 'backend', 'api', 'node', 'django'],
+            cloud: ['cloud', 'aws', 'azure', 'gcp', 'devops', 'kubernetes', 'docker', 'terraform'],
+            data: ['data', 'machine learning', 'ai', 'database', 'spark', 'sql', 'pytorch', 'tensorflow']
+        };
+        
+        for (const [category, keywords] of Object.entries(categories)) {
+            const categorySkills = skillEntries.filter(([skill]) => 
+                keywords.some(kw => skill.toLowerCase().includes(kw.toLowerCase()))
+            );
+            
+            const container = document.getElementById(`${category}-skills`);
+            container.innerHTML = categorySkills.length > 0
+                ? categorySkills.slice(0, 10).map(([skill, count]) => `
+                    <div class="flex justify-between items-center p-2 bg-gray-50 rounded">
+                        <span class="font-medium">${skill}</span>
+                        <span class="text-sm text-gray-600">${count}</span>
+                    </div>
+                `).join('')
+                : '<p class="text-sm text-gray-500">No data in this category</p>';
+        }
+    }
+    
+    // Load Regional Data
+    function loadRegionalData() {
+        const data = window.analyticsData;
+        if (!data) {
+            showAlert('Please wait for analytics to load', 'info');
+            return;
+        }
+        
+        const regions = data.top_hiring_regions || {};
+        const regionEntries = Object.entries(regions).sort((a, b) => b[1] - a[1]);
+        
+        if (regionEntries.length === 0) {
+            document.getElementById('regional-table').innerHTML = '<p class="text-center text-gray-500 py-4">No location data available</p>';
+            return;
+        }
+        
+        // Regional Table
+        const table = document.getElementById('regional-table');
+        const total = regionEntries.reduce((sum, [, c]) => sum + c, 0);
+        
+        table.innerHTML = `
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Location</th>
+                        <th>Total Jobs</th>
+                        <th>Percentage</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${regionEntries.map(([region, count]) => {
+                        const percent = ((count / total) * 100).toFixed(1);
+                        return `
+                            <tr>
+                                <td class="font-medium">${region}</td>
+                                <td>${count.toLocaleString()}</td>
+                                <td>
+                                    <div class="flex items-center">
+                                        <span class="mr-2">${percent}%</span>
+                                        <div class="flex-1 bg-gray-200 rounded-full h-2 max-w-xs">
+                                            <div class="bg-blue-600 h-2 rounded-full" style="width: ${percent}%"></div>
+                                        </div>
+                                    </div>
+                                </td>
+                            </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+        `;
+    }
+    
+    // Load Historical Events
+    async function loadHistoricalEvents() {
+        try {
+            const data = window.analyticsData;
+            if (!data) return;
+            
+            const events = data.recent_events || [];
+            const timeline = document.getElementById('events-timeline');
+            
+            if (events.length > 0) {
+                timeline.innerHTML = events.map(event => `
+                    <div class="flex items-start space-x-3 p-4 bg-gray-50 rounded-lg">
+                        <div class="flex-shrink-0 mt-1">
+                            ${event.event_type === 'hiring_surge' ? '📈' : 
+                              event.event_type === 'hiring_freeze' ? '📉' : 
+                              event.event_type === 'location_expansion' ? '🌍' : '📊'}
+                        </div>
+                        <div class="flex-1">
+                            <h4 class="font-medium text-gray-900">${event.event_type.replace('_', ' ').toUpperCase()}</h4>
+                            <p class="text-sm text-gray-600 mt-1">${event.event_count} events detected</p>
+                            <p class="text-xs text-gray-500 mt-1">Last: ${new Date(event.last_detected).toLocaleString()}</p>
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                timeline.innerHTML = '<p class="text-center text-gray-500 py-4">No recent events</p>';
+            }
+        } catch (error) {
+            console.error('Failed to load events:', error);
+        }
+    }
+    
+    // Initialize
+    console.log('Initializing analytics page...');
+    loadAnalytics();
+</script>
 </body>
 </html>
