@@ -779,91 +779,44 @@ def api_company_detail(company_id):
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/jobs')
-@limiter.limit(RATE_LIMITS['authenticated_read'])
-@require_api_key
-def api_jobs():
+def get_jobs_api():
+    """Get all jobs with filters"""
     try:
-        page = request.args.get('page', 1, type=int)
-        per_page = min(request.args.get('per_page', 50, type=int), 100)
-        search = request.args.get('search', '').strip()
-        company_id = request.args.get('company_id', type=int)
-        department = request.args.get('department', '').strip()
-        work_type = request.args.get('work_type', '').strip()
-        location = request.args.get('location', '').strip()
-        status = request.args.get('status', 'active').strip()
-        
-        db = get_db()
-        query = """
-            SELECT 
-                j.job_id, j.title, j.location, j.department, j.work_type,
-                j.job_url, j.posted_date, j.salary_min, j.salary_max, j.salary_currency,
-                j.status, j.first_seen, j.last_seen,
-                c.company_name, c.ats_type
-            FROM job_archive j
-            JOIN companies c ON j.company_id = c.id
-            WHERE 1=1
-        """
-        params = []
-        
-        if status:
-            query += " AND j.status = %s"
-            params.append(status)
-        
-        if search:
-            query += " AND (j.title ILIKE %s OR c.company_name ILIKE %s)"
-            params.extend([f'%{search}%', f'%{search}%'])
-        
-        if company_id:
-            query += " AND j.company_id = %s"
-            params.append(company_id)
-        
-        if department:
-            query += " AND j.department ILIKE %s"
-            params.append(f'%{department}%')
-        
-        if work_type:
-            query += " AND j.work_type ILIKE %s"
-            params.append(f'%{work_type}%')
-        
-        if location:
-            query += " AND j.location ILIKE %s"
-            params.append(f'%{location}%')
-        
-        query += " ORDER BY j.first_seen DESC LIMIT %s OFFSET %s"
-        params.extend([per_page, (page - 1) * per_page])
+        limit = int(request.args.get('limit', 5000))
         
         with db.get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(query, params)
+                cur.execute("""
+                    SELECT 
+                        j.title,
+                        j.location,
+                        j.department,
+                        j.work_type,
+                        j.job_url,
+                        j.first_seen,
+                        j.last_seen,
+                        c.company_name,
+                        c.ats_type
+                    FROM job_archive j
+                    JOIN companies c ON j.company_id = c.id
+                    WHERE j.status = 'active'
+                    ORDER BY j.last_seen DESC
+                    LIMIT %s
+                """, (limit,))
+                
                 columns = [desc[0] for desc in cur.description]
                 jobs = [dict(zip(columns, row)) for row in cur.fetchall()]
                 
-                count_query = "SELECT COUNT(*) FROM job_archive j JOIN companies c ON j.company_id = c.id WHERE 1=1"
-                count_params = []
-                if status:
-                    count_query += " AND j.status = %s"
-                    count_params.append(status)
-                if search:
-                    count_query += " AND (j.title ILIKE %s OR c.company_name ILIKE %s)"
-                    count_params.extend([f'%{search}%', f'%{search}%'])
-                if company_id:
-                    count_query += " AND j.company_id = %s"
-                    count_params.append(company_id)
+                cur.execute("SELECT COUNT(DISTINCT company_id) FROM job_archive WHERE status = 'active'")
+                total_companies = cur.fetchone()[0]
                 
-                cur.execute(count_query, count_params)
-                total = cur.fetchone()[0]
-        
-        return jsonify({
-            'jobs': jobs,
-            'pagination': {
-                'page': page,
-                'per_page': per_page,
-                'total': total,
-                'pages': (total + per_page - 1) // per_page if total > 0 else 1
-            }
-        }), 200
+                return jsonify({
+                    'jobs': jobs,
+                    'total_jobs': len(jobs),
+                    'total_companies': total_companies
+                }), 200
     except Exception as e:
-        logger.error(f"Error getting jobs: {e}", exc_info=True)
+        logger.error(f"Error getting jobs: {e}")
         return jsonify({'error': str(e)}), 500
         
 @app.route('/api/jobs/<int:job_id>')
