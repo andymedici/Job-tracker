@@ -1079,25 +1079,30 @@ class Database:
                     """)
                     ats_distribution = [dict(row) for row in cur.fetchall()]
                     
-                    # Work type distribution
-                    cur.execute("""
-                        SELECT 
-                            COUNT(CASE WHEN LOWER(work_type) LIKE '%remote%' THEN 1 END) as remote,
-                            COUNT(CASE WHEN LOWER(work_type) LIKE '%hybrid%' THEN 1 END) as hybrid,
-                            COUNT(CASE WHEN LOWER(work_type) LIKE '%onsite%' OR LOWER(work_type) LIKE '%on-site%' THEN 1 END) as onsite,
-                            COUNT(*) as total
-                        FROM job_archive
-                        WHERE status = 'active'
-                    """)
-                    work_type_row = cur.fetchone()
-                    work_type_distribution = {
-                        'remote': work_type_row['remote'] or 0,
-                        'hybrid': work_type_row['hybrid'] or 0,
-                        'onsite': work_type_row['onsite'] or 0,
-                        'remote_percent': round((work_type_row['remote'] or 0) / max(work_type_row['total'], 1) * 100, 1),
-                        'hybrid_percent': round((work_type_row['hybrid'] or 0) / max(work_type_row['total'], 1) * 100, 1),
-                        'onsite_percent': round((work_type_row['onsite'] or 0) / max(work_type_row['total'], 1) * 100, 1),
-                    }
+                    # Work type distribution - FIXED VERSION
+                cur.execute("""
+                    SELECT 
+                        COUNT(*) FILTER (WHERE LOWER(work_type) LIKE '%remote%') as remote,
+                        COUNT(*) FILTER (WHERE LOWER(work_type) LIKE '%hybrid%') as hybrid,
+                        COUNT(*) FILTER (WHERE LOWER(work_type) LIKE '%onsite%' OR LOWER(work_type) LIKE '%on-site%' OR LOWER(work_type) LIKE '%office%') as onsite,
+                        COUNT(*) as total
+                    FROM job_archive
+                    WHERE status = 'active'
+                """)
+                work_type_row = cur.fetchone()
+                
+                # Calculate percentages
+                total = work_type_row['total'] if work_type_row and work_type_row['total'] > 0 else 1
+                work_type_distribution = {
+                    'remote': int(work_type_row['remote']) if work_type_row else 0,
+                    'hybrid': int(work_type_row['hybrid']) if work_type_row else 0,
+                    'onsite': int(work_type_row['onsite']) if work_type_row else 0,
+                    'remote_percent': round((work_type_row['remote'] or 0) / total * 100, 1) if work_type_row else 0,
+                    'hybrid_percent': round((work_type_row['hybrid'] or 0) / total * 100, 1) if work_type_row else 0,
+                    'onsite_percent': round((work_type_row['onsite'] or 0) / total * 100, 1) if work_type_row else 0,
+                }
+                
+                logger.info(f"Work type distribution: {work_type_distribution}")
                     
                     # Salary insights
                     cur.execute("""
