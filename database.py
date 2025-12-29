@@ -200,6 +200,36 @@ class Database:
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_intel_events_type_time ON intelligence_events(event_type, detected_at DESC)")
                 
                 conn.commit()
+
+    # Add this function after scheduled_tier2_expansion (around line 150)
+
+def scheduled_snapshot_cleanup():
+    """Monthly cleanup of old snapshots"""
+    if not get_db().acquire_advisory_lock('snapshot_cleanup'):
+        return
+    try:
+        logger.info("Starting snapshot cleanup")
+        db = get_db()
+        deleted = db.cleanup_old_snapshots(90)  # Keep 90 days
+        logger.info(f"Snapshot cleanup complete: deleted {deleted} old snapshots")
+    finally:
+        get_db().release_advisory_lock('snapshot_cleanup')
+
+# Add this to the scheduler configuration (after line 175)
+scheduler.add_job(
+    scheduled_snapshot_cleanup, 
+    CronTrigger(day=1, hour=2),  # Monthly on 1st at 2 AM
+    id='snapshot_cleanup', 
+    replace_existing=True
+)
+
+# Update the logger.info section to include the new job
+logger.info("📅 Scheduler configured:")
+logger.info("   - Refresh: Daily at 6:00 AM UTC")
+logger.info("   - Discovery: Daily at 7:00 AM UTC")
+logger.info("   - Tier 1 Expansion: Weekly (Sunday 3:00 AM UTC)")
+logger.info("   - Tier 2 Expansion: Monthly (1st at 4:00 AM UTC)")
+logger.info("   - Snapshot Cleanup: Monthly (1st at 2:00 AM UTC)")  # ← ADD THIS LINE
     
     def _name_to_token(self, name: str) -> str:
         token = name.lower()
