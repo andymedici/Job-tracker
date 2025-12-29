@@ -248,15 +248,15 @@ def debug_analytics():
                 total_companies = cur.fetchone()[0]
                 
                 # Check if we have any skills data (sample a few jobs)
-                cur.execute("SELECT title FROM job_archive WHERE status = 'active' LIMIT 10")
+                cur.execute("SELECT title FROM job_archive WHERE status = 'active' LIMIT 100")
                 job_titles = [row[0] for row in cur.fetchall()]
                 
                 # Check locations
-                cur.execute("SELECT DISTINCT location FROM job_archive WHERE status = 'active' AND location IS NOT NULL LIMIT 10")
+                cur.execute("SELECT DISTINCT location FROM job_archive WHERE status = 'active' AND location IS NOT NULL LIMIT 100")
                 locations = [row[0] for row in cur.fetchall()]
                 
                 # Check departments
-                cur.execute("SELECT DISTINCT department FROM job_archive WHERE status = 'active' AND department IS NOT NULL LIMIT 10")
+                cur.execute("SELECT DISTINCT department FROM job_archive WHERE status = 'active' AND department IS NOT NULL LIMIT 100")
                 departments = [row[0] for row in cur.fetchall()]
                 
                 return jsonify({
