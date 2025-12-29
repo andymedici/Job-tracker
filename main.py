@@ -682,6 +682,261 @@ def api_company_detail(company_id):
         return jsonify({'error': str(e)}), 500
 
 # ============================================================================
+# TRENDS & ANALYTICS ENDPOINTS - NEW
+# ============================================================================
+
+@app.route('/api/trends/company/<int:company_id>')
+@limiter.limit("30 per minute")
+@optional_auth
+def get_company_trend(company_id):
+    """Get historical job count trends for a company"""
+    try:
+        days = request.args.get('days', 90, type=int)
+        days = min(days, 365)  # Max 1 year
+        
+        db = get_db()
+        trends = db.get_company_growth_trend(company_id, days)
+        
+        return jsonify({
+            'company_id': company_id,
+            'days': days,
+            'data_points': len(trends),
+            'trends': trends
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting company trend: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/trends/market')
+@limiter.limit("30 per minute")
+@optional_auth
+def get_market_trend():
+    """Get overall market hiring trends"""
+    try:
+        days = request.args.get('days', 90, type=int)
+        days = min(days, 365)
+        
+        db = get_db()
+        trends = db.get_market_trends(days)
+        
+        # Calculate growth rate
+        if len(trends) >= 2:
+            first_total = trends[0]['total_jobs']
+            last_total = trends[-1]['total_jobs']
+            growth_rate = ((last_total - first_total) / first_total * 100) if first_total > 0 else 0
+        else:
+            growth_rate = 0
+        
+        return jsonify({
+            'days': days,
+            'data_points': len(trends),
+            'growth_rate': round(growth_rate, 2),
+            'trends': trends,
+            'summary': {
+                'current_jobs': trends[-1]['total_jobs'] if trends else 0,
+                'current_companies': trends[-1]['active_companies'] if trends else 0,
+                'avg_jobs_per_company': float(trends[-1]['avg_jobs_per_company']) if trends else 0
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting market trends: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/trends/skills')
+@limiter.limit("30 per minute")
+@optional_auth
+def get_skills_trend():
+    """Get skills demand trends over time"""
+    try:
+        days = request.args.get('days', 90, type=int)
+        days = min(days, 365)
+        
+        db = get_db()
+        trends = db.get_skills_trends(days)
+        
+        # Calculate top growing skills
+        if trends:
+            weeks = sorted(trends.keys())
+            if len(weeks) >= 2:
+                first_week = weeks[0]
+                last_week = weeks[-1]
+                
+                growth = {}
+                for skill in trends[first_week].keys():
+                    first_count = trends[first_week][skill]
+                    last_count = trends[last_week][skill]
+                    if first_count > 0:
+                        growth[skill] = ((last_count - first_count) / first_count * 100)
+                
+                top_growing = sorted(growth.items(), key=lambda x: x[1], reverse=True)[:10]
+            else:
+                top_growing = []
+        else:
+            top_growing = []
+        
+        return jsonify({
+            'days': days,
+            'weeks_tracked': len(trends),
+            'trends': trends,
+            'top_growing': [{'skill': s, 'growth_percent': round(g, 1)} for s, g in top_growing]
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting skills trends: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/trends/salary')
+@limiter.limit("30 per minute")
+@optional_auth
+def get_salary_trend():
+    """Get salary trends over time"""
+    try:
+        days = request.args.get('days', 90, type=int)
+        days = min(days, 365)
+        
+        db = get_db()
+        trends = db.get_salary_trends(days)
+        
+        # Calculate salary inflation
+        if len(trends) >= 2:
+            first_avg = float(trends[0]['avg_salary'])
+            last_avg = float(trends[-1]['avg_salary'])
+            inflation = ((last_avg - first_avg) / first_avg * 100) if first_avg > 0 else 0
+        else:
+            inflation = 0
+        
+        return jsonify({
+            'days': days,
+            'data_points': len(trends),
+            'salary_inflation_percent': round(inflation, 2),
+            'trends': trends,
+            'current_average': float(trends[-1]['avg_salary']) if trends else 0,
+            'current_median': float(trends[-1]['median_salary']) if trends else 0
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting salary trends: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/trends/departments')
+@limiter.limit("30 per minute")
+@optional_auth
+def get_department_trend():
+    """Get hiring trends by department"""
+    try:
+        days = request.args.get('days', 90, type=int)
+        days = min(days, 365)
+        
+        db = get_db()
+        trends = db.get_department_growth_trends(days)
+        
+        # Calculate top growing departments
+        if trends:
+            weeks = sorted(trends.keys())
+            if len(weeks) >= 2:
+                first_week = weeks[0]
+                last_week = weeks[-1]
+                
+                growth = {}
+                all_depts = set()
+                for week_data in trends.values():
+                    all_depts.update(week_data.keys())
+                
+                for dept in all_depts:
+                    first_count = trends[first_week].get(dept, 0)
+                    last_count = trends[last_week].get(dept, 0)
+                    if first_count > 0:
+                        growth[dept] = ((last_count - first_count) / first_count * 100)
+                    elif last_count > 0:
+                        growth[dept] = 100  # New department
+                
+                top_growing = sorted(growth.items(), key=lambda x: x[1], reverse=True)[:10]
+            else:
+                top_growing = []
+        else:
+            top_growing = []
+        
+        return jsonify({
+            'days': days,
+            'weeks_tracked': len(trends),
+            'trends': trends,
+            'top_growing': [{'department': d, 'growth_percent': round(g, 1)} for d, g in top_growing]
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting department trends: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/metrics/retention')
+@limiter.limit("30 per minute")
+@optional_auth
+def get_retention_metrics():
+    """Get job retention and refill metrics"""
+    try:
+        db = get_db()
+        metrics = db.get_retention_metrics()
+        
+        return jsonify(metrics), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting retention metrics: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+# ============================================================================
+# ADMIN: MAINTENANCE & OPTIMIZATION
+# ============================================================================
+
+@app.route('/api/admin/cleanup-snapshots', methods=['POST'])
+@limiter.exempt
+@require_admin_key
+def cleanup_snapshots():
+    """Cleanup old snapshots"""
+    try:
+        data = request.get_json() or {}
+        days_to_keep = data.get('days_to_keep', 90)
+        
+        db = get_db()
+        deleted = db.cleanup_old_snapshots(days_to_keep)
+        
+        return jsonify({
+            'success': True,
+            'deleted_count': deleted,
+            'days_kept': days_to_keep,
+            'message': f'Deleted {deleted} snapshots older than {days_to_keep} days'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Snapshot cleanup failed: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/admin/add-indexes', methods=['POST'])
+@limiter.exempt
+@require_admin_key
+def add_indexes():
+    """Add performance indexes to database"""
+    try:
+        db = get_db()
+        db.add_performance_indexes()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Performance indexes created successfully'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Index creation failed: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# ============================================================================
 # JOBS API
 # ============================================================================
 @app.route('/api/jobs')
