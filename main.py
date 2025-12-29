@@ -1449,7 +1449,6 @@ def api_expand_seeds():
 # ============================================================================
 @app.route('/api/collect', methods=['POST'])
 @limiter.limit(RATE_LIMITS['write'])
-@require_api_key
 def api_collect():
     if collection_state['is_running']:
         return jsonify({'error': 'Collection already running'}), 409
