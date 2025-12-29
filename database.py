@@ -1153,7 +1153,7 @@ class Database:
             return []
     
     def get_advanced_analytics(self) -> Dict:
-        """Get comprehensive advanced analytics with skills extraction"""
+        """Get comprehensive advanced analytics with skills extraction - FIXED GROWTH METRICS"""
         try:
             with self.get_connection() as conn:
                 with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -1255,24 +1255,38 @@ class Database:
                     
                     top_skills = dict(sorted(all_skills.items(), key=lambda x: x[1], reverse=True)[:30])
                     
-                    # Fastest growing companies
+                    # Fastest growing companies - FIXED VERSION (excludes initial scans)
                     cur.execute("""
-                        WITH recent AS (
-                            SELECT DISTINCT ON (company_id)
+                        WITH company_snapshot_counts AS (
+                            SELECT 
                                 company_id,
-                                job_count as current_jobs,
-                                snapshot_time
+                                COUNT(*) as snapshot_count,
+                                MIN(snapshot_time) as first_snapshot
                             FROM snapshots_6h
-                            WHERE snapshot_time >= NOW() - INTERVAL '1 day'
-                            ORDER BY company_id, snapshot_time DESC
+                            WHERE snapshot_time >= %s::timestamp
+                            GROUP BY company_id
+                        ),
+                        recent AS (
+                            SELECT DISTINCT ON (s.company_id)
+                                s.company_id,
+                                s.job_count as current_jobs,
+                                s.snapshot_time
+                            FROM snapshots_6h s
+                            JOIN company_snapshot_counts csc ON s.company_id = csc.company_id
+                            WHERE s.snapshot_time >= NOW() - INTERVAL '1 day'
+                            AND csc.snapshot_count > 4
+                            ORDER BY s.company_id, s.snapshot_time DESC
                         ),
                         old AS (
-                            SELECT DISTINCT ON (company_id)
-                                company_id,
-                                job_count as old_jobs
-                            FROM snapshots_6h
-                            WHERE snapshot_time BETWEEN NOW() - INTERVAL '14 days' AND NOW() - INTERVAL '13 days'
-                            ORDER BY company_id, snapshot_time DESC
+                            SELECT DISTINCT ON (s.company_id)
+                                s.company_id,
+                                s.job_count as old_jobs
+                            FROM snapshots_6h s
+                            JOIN company_snapshot_counts csc ON s.company_id = csc.company_id
+                            WHERE s.snapshot_time BETWEEN NOW() - INTERVAL '14 days' AND NOW() - INTERVAL '13 days'
+                            AND csc.snapshot_count > 4
+                            AND s.snapshot_time > csc.first_snapshot + INTERVAL '1 day'
+                            ORDER BY s.company_id, s.snapshot_time DESC
                         )
                         SELECT 
                             c.company_name,
@@ -1286,7 +1300,7 @@ class Database:
                         WHERE (r.current_jobs - COALESCE(o.old_jobs, 0)) > 0
                         ORDER BY job_change DESC
                         LIMIT 10
-                    """)
+                    """, (TRENDS_CUTOFF_DATE,))
                     fastest_growing = [dict(row) for row in cur.fetchall()]
                     
                     # Time to fill
