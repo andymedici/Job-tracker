@@ -27,6 +27,28 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+        .nav-link {
+            color: #6b7280;
+            transition: all 0.2s;
+            position: relative;
+        }
+        .nav-link:hover {
+            color: #1f2937;
+            background-color: #f3f4f6;
+        }
+        .nav-link.active {
+            color: #3b82f6;
+            background-color: #eff6ff;
+        }
+        .nav-link.active::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background-color: #3b82f6;
+        }
     </style>
 </head>
 <body class="bg-gray-50">
@@ -68,31 +90,6 @@
         </div>
     </nav>
 
-    <style>
-        .nav-link {
-            color: #6b7280;
-            transition: all 0.2s;
-            position: relative;
-        }
-        .nav-link:hover {
-            color: #1f2937;
-            background-color: #f3f4f6;
-        }
-        .nav-link.active {
-            color: #3b82f6;
-            background-color: #eff6ff;
-        }
-        .nav-link.active::after {
-            content: '';
-            position: absolute;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            height: 2px;
-            background-color: #3b82f6;
-        }
-    </style>
-
     <!-- Main Content -->
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
@@ -100,6 +97,44 @@
         <div class="bg-gradient-to-r from-blue-600 to-blue-800 rounded-lg shadow-lg p-8 mb-8 text-white">
             <h2 class="text-3xl font-bold mb-2">Welcome to Job Intelligence Platform</h2>
             <p class="text-blue-100">Real-time job market intelligence and analytics</p>
+        </div>
+
+        <!-- Date Filter Section -->
+        <div class="bg-white rounded-lg shadow p-6 mb-8">
+            <div class="flex flex-col md:flex-row md:items-center md:justify-between">
+                <div>
+                    <h3 class="text-lg font-semibold text-gray-900 mb-2">📅 Data Analysis Period</h3>
+                    <p class="text-sm text-gray-600">Filter all metrics and trends from a specific date onwards</p>
+                </div>
+                <div class="mt-4 md:mt-0 flex items-center space-x-4">
+                    <div>
+                        <label for="cutoff-date" class="block text-sm font-medium text-gray-700 mb-1">
+                            Start Date for Analysis
+                        </label>
+                        <input 
+                            type="date" 
+                            id="cutoff-date" 
+                            value="2024-12-25"
+                            class="border-gray-300 rounded-lg shadow-sm focus:border-blue-500 focus:ring-blue-500 px-3 py-2"
+                        >
+                    </div>
+                    <button 
+                        id="apply-date-filter" 
+                        class="mt-6 bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition"
+                    >
+                        Apply Filter
+                    </button>
+                    <button 
+                        id="reset-date-filter" 
+                        class="mt-6 bg-gray-200 text-gray-700 px-6 py-2 rounded-lg hover:bg-gray-300 transition"
+                    >
+                        Reset
+                    </button>
+                </div>
+            </div>
+            <div id="date-filter-status" class="mt-3 text-sm text-gray-600">
+                <span class="font-medium">Current filter:</span> <span id="current-filter-date">December 25, 2024</span>
+            </div>
         </div>
 
         <!-- Key Stats -->
@@ -281,10 +316,59 @@
     </div>
 
     <script>
-        // Load dashboard data
+        // Date filter management
+        let currentCutoffDate = localStorage.getItem('cutoffDate') || '2024-12-25';
+        
+        // Initialize date picker with saved value
+        document.getElementById('cutoff-date').value = currentCutoffDate;
+        updateFilterStatus();
+        
+        // Apply date filter
+        document.getElementById('apply-date-filter').addEventListener('click', () => {
+            const dateInput = document.getElementById('cutoff-date').value;
+            if (dateInput) {
+                currentCutoffDate = dateInput;
+                localStorage.setItem('cutoffDate', currentCutoffDate);
+                updateFilterStatus();
+                loadDashboardData();
+                loadRecentExpansions();
+                loadTopCompanies();
+                loadActivityLog();
+                
+                // Show success message
+                const statusDiv = document.getElementById('date-filter-status');
+                statusDiv.innerHTML = '<span class="text-green-600 font-medium">✓ Filter applied successfully!</span>';
+                setTimeout(() => updateFilterStatus(), 2000);
+            }
+        });
+        
+        // Reset date filter
+        document.getElementById('reset-date-filter').addEventListener('click', () => {
+            currentCutoffDate = '2024-12-25';
+            localStorage.setItem('cutoffDate', currentCutoffDate);
+            document.getElementById('cutoff-date').value = currentCutoffDate;
+            updateFilterStatus();
+            loadDashboardData();
+            loadRecentExpansions();
+            loadTopCompanies();
+            loadActivityLog();
+        });
+        
+        // Update filter status display
+        function updateFilterStatus() {
+            const date = new Date(currentCutoffDate);
+            const formattedDate = date.toLocaleDateString('en-US', { 
+                year: 'numeric', 
+                month: 'long', 
+                day: 'numeric' 
+            });
+            document.getElementById('current-filter-date').textContent = formattedDate;
+        }
+        
+        // Load dashboard data with date filter
         async function loadDashboardData() {
             try {
-                const response = await fetch('/api/stats');
+                const response = await fetch(`/api/stats?cutoff_date=${currentCutoffDate}`);
                 const data = await response.json();
                 
                 document.getElementById('total-companies').textContent = data.total_companies.toLocaleString();
@@ -296,10 +380,10 @@
             }
         }
 
-        // Load recent expansions
+        // Load recent expansions with date filter
         async function loadRecentExpansions() {
             try {
-                const response = await fetch('/api/intelligence/location-expansions?days=7');
+                const response = await fetch(`/api/intelligence/location-expansions?days=7&cutoff_date=${currentCutoffDate}`);
                 const data = await response.json();
                 
                 const container = document.getElementById('recent-expansions');
@@ -330,10 +414,10 @@
             }
         }
 
-        // Load top companies
+        // Load top companies with date filter
         async function loadTopCompanies() {
             try {
-                const response = await fetch('/api/companies/top?limit=10');
+                const response = await fetch(`/api/companies/top?limit=10&cutoff_date=${currentCutoffDate}`);
                 const data = await response.json();
                 
                 const container = document.getElementById('top-companies');
@@ -380,7 +464,7 @@
                 </div>
                 <div class="flex items-center space-x-3 p-2">
                     <span class="text-purple-600">⚡</span>
-                    <span>6-hour snapshots active</span>
+                    <span>Analyzing data from ${document.getElementById('current-filter-date').textContent}</span>
                     <span class="ml-auto text-xs text-gray-400">${now.toLocaleTimeString()}</span>
                 </div>
             `;
