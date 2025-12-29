@@ -425,6 +425,62 @@ class Database:
                         # Infer work_type if not provided
                         work_type = job.get('work_type')
                         if not work_type or work_type.strip() == '':
+                            work_type = infer_work_type(
+                                job.get('title', ''),
+                                job.get('location', ''),
+                                job.get('metadata', {}).get('description', '') if isinstance(job.get('metadata'), dict) else None
+                            )
+                        
+                        # Check for new location
+                        location = job.get('location')
+                        if location and location.strip():
+                            location_lower = location.lower()
+                            if location_lower not in existing_locations and location_lower not in new_locations:
+                                new_locations.add(location_lower)
+                                # Track expansion event
+                                self.track_location_expansion(company_id, location, 1)
+                        
+                        cur.execute("""
+                            INSERT INTO job_archive 
+                            (company_id, job_id, title, location, department, work_type, job_url, posted_date, salary_min, salary_max, salary_currency, status, metadata)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s)
+                            ON CONFLICT (company_id, job_id) 
+                            DO UPDATE SET
+                                title = EXCLUDED.title,
+                                location = EXCLUDED.location,
+                                department = EXCLUDED.department,
+                                work_type = EXCLUDED.work_type,
+                                job_url = EXCLUDED.job_url,
+                                posted_date = EXCLUDED.posted_date,
+                                salary_min = EXCLUDED.salary_min,
+                                salary_max = EXCLUDED.salary_max,
+                                salary_currency = EXCLUDED.salary_currency,
+                                last_seen = NOW(),
+                                status = 'active',
+                                metadata = EXCLUDED.metadata
+                            RETURNING (xmax = 0) AS inserted
+                        """, (
+                            company_id, job['id'], job.get('title'), job.get('location'),
+                            job.get('department'), work_type, job.get('url'),
+                            job.get('posted_date'), job.get('salary_min'), job.get('salary_max'),
+                            job.get('salary_currency'), json.dumps(job.get('metadata', {}))
+                        ))
+                        was_inserted = cur.fetchone()[0]
+                        if was_inserted:
+                            new_count += 1
+                        else:
+                            updated_count += 1
+                    
+                    conn.commit()
+                    
+                    if new_locations:
+                        logger.info(f"📍 Detected {len(new_locations)} new location(s) for company {company_id}")
+                    
+                    logger.info(f"Job archive: +{new_count} new, ~{updated_count} updated, -{closed_count} closed")
+                    return new_count, updated_count, closed_count
+        except Exception as e:
+            logger.error(f"Error archiving jobs: {e}")
+            return 0, 0, 0
     
     def backfill_work_types(self) -> int:
         """Backfill work_type for existing jobs that don't have it set"""
@@ -1137,7 +1193,7 @@ class Database:
                     """)
                     ats_distribution = [dict(row) for row in cur.fetchall()]
                     
-                    # Work type distribution - FIXED VERSION
+                    # Work type distribution
                     cur.execute("""
                         SELECT 
                             COUNT(*) FILTER (WHERE LOWER(work_type) LIKE '%remote%') as remote,
@@ -1149,7 +1205,6 @@ class Database:
                     """)
                     work_type_row = cur.fetchone()
                     
-                    # Calculate percentages
                     total = work_type_row['total'] if work_type_row and work_type_row['total'] > 0 else 1
                     work_type_distribution = {
                         'remote': int(work_type_row['remote']) if work_type_row else 0,
@@ -1159,8 +1214,6 @@ class Database:
                         'hybrid_percent': round((work_type_row['hybrid'] or 0) / total * 100, 1) if work_type_row else 0,
                         'onsite_percent': round((work_type_row['onsite'] or 0) / total * 100, 1) if work_type_row else 0,
                     }
-                    
-                    logger.info(f"Work type distribution: {work_type_distribution}")
                     
                     # Salary insights
                     cur.execute("""
@@ -1182,7 +1235,7 @@ class Database:
                         'jobs_with_salary': salary_row['with_salary'] or 0
                     }
                     
-                    # Skills extraction from job titles
+                    # Skills extraction
                     cur.execute("""
                         SELECT title
                         FROM job_archive
@@ -1198,7 +1251,7 @@ class Database:
                     
                     top_skills = dict(sorted(all_skills.items(), key=lambda x: x[1], reverse=True)[:30])
                     
-                    # Fastest growing companies (last 14 days)
+                    # Fastest growing companies
                     cur.execute("""
                         WITH recent AS (
                             SELECT DISTINCT ON (company_id)
@@ -1265,7 +1318,7 @@ class Database:
             return {}
 
     # ========================================================================
-    # TRENDS & RETENTION METRICS - NEW METHODS
+    # TRENDS & RETENTION METRICS
     # ========================================================================
     
     def get_salary_trends(self, days=90):
@@ -1413,7 +1466,6 @@ class Database:
                 
                 retention = cur.fetchone()
                 
-                # Check for repeat postings
                 cur.execute("""
                     WITH job_pairs AS (
                         SELECT 
@@ -1465,53 +1517,15 @@ class Database:
         """Add missing indexes for better query performance"""
         with self.get_connection() as conn:
             with conn.cursor() as cur:
-                # Snapshot indexes
-                cur.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_snapshots_time 
-                    ON snapshots_6h(snapshot_time DESC)
-                """)
-                
-                cur.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_snapshots_company_time 
-                    ON snapshots_6h(company_id, snapshot_time DESC)
-                """)
-                
-                # Job archive indexes
-                cur.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_jobs_dates 
-                    ON job_archive(first_seen DESC, last_seen DESC, closed_at)
-                """)
-                
-                cur.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_jobs_salary 
-                    ON job_archive(salary_min, salary_max) 
-                    WHERE salary_min IS NOT NULL
-                """)
-                
-                cur.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_jobs_department 
-                    ON job_archive(department) 
-                    WHERE department IS NOT NULL
-                """)
-                
-                cur.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_jobs_location 
-                    ON job_archive(location) 
-                    WHERE location IS NOT NULL
-                """)
-                
-                cur.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_jobs_work_type 
-                    ON job_archive(work_type) 
-                    WHERE work_type IS NOT NULL
-                """)
-                
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_time ON snapshots_6h(snapshot_time DESC)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_company_time ON snapshots_6h(company_id, snapshot_time DESC)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_jobs_dates ON job_archive(first_seen DESC, last_seen DESC, closed_at)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_jobs_salary ON job_archive(salary_min, salary_max) WHERE salary_min IS NOT NULL")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_jobs_department ON job_archive(department) WHERE department IS NOT NULL")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_jobs_location ON job_archive(location) WHERE location IS NOT NULL")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_jobs_work_type ON job_archive(work_type) WHERE work_type IS NOT NULL")
                 conn.commit()
                 logger.info("✅ Performance indexes created")
-
-    # ========================================================================
-    # END TRENDS & RETENTION METRICS
-    # ========================================================================
 
 
 # ============================================================================
