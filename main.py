@@ -822,6 +822,50 @@ def get_skills_trend():
         logger.error(f"Error getting skills trends: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/admin/init-database', methods=['POST'])
+@limiter.exempt
+@require_admin_key
+def init_database():
+    """One-time database initialization - adds indexes and cleans up snapshots"""
+    try:
+        results = {
+            'indexes_added': False,
+            'snapshots_cleaned': 0,
+            'errors': []
+        }
+        
+        # Add performance indexes
+        try:
+            db = get_db()
+            db.add_performance_indexes()
+            results['indexes_added'] = True
+            logger.info("✅ Performance indexes added")
+        except Exception as e:
+            results['errors'].append(f"Index creation error: {str(e)}")
+            logger.error(f"Index creation failed: {e}")
+        
+        # Cleanup old snapshots
+        try:
+            deleted = db.cleanup_old_snapshots(90)
+            results['snapshots_cleaned'] = deleted
+            logger.info(f"✅ Deleted {deleted} old snapshots")
+        except Exception as e:
+            results['errors'].append(f"Snapshot cleanup error: {str(e)}")
+            logger.error(f"Snapshot cleanup failed: {e}")
+        
+        return jsonify({
+            'success': len(results['errors']) == 0,
+            'message': 'Database initialization complete' if len(results['errors']) == 0 else 'Initialization completed with errors',
+            'results': results
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Database initialization failed: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 
 @app.route('/api/trends/salary')
 @limiter.limit("30 per minute")
@@ -1668,6 +1712,59 @@ def run_migrations_endpoint():
     except Exception as e:
         logger.error(f"Migration failed: {e}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
+
+# One-time database initialization flag
+_db_initialized = False
+
+def init_database_once():
+    """Run database initialization once on startup"""
+    global _db_initialized
+    if _db_initialized:
+        return
+    
+    try:
+        logger.info("🔧 Running one-time database initialization...")
+        db = get_db()
+        
+        # Check if indexes already exist (to avoid re-running)
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT COUNT(*) 
+                    FROM pg_indexes 
+                    WHERE indexname = 'idx_snapshots_time'
+                """)
+                if cur.fetchone()[0] > 0:
+                    logger.info("✅ Database already initialized, skipping")
+                    _db_initialized = True
+                    return
+        
+        # Add indexes
+        db.add_performance_indexes()
+        logger.info("✅ Performance indexes created")
+        
+        # Cleanup old snapshots
+        deleted = db.cleanup_old_snapshots(90)
+        logger.info(f"✅ Cleaned up {deleted} old snapshots")
+        
+        _db_initialized = True
+        logger.info("✅ Database initialization complete")
+        
+    except Exception as e:
+        logger.error(f"Database initialization failed: {e}")
+
+# Run on startup (but only once)
+if os.getenv('RUN_DB_INIT', 'false').lower() == 'true':
+    init_database_once()
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
+```
+
+Then set environment variable in Render:
+```
+RUN_DB_INIT=true
 
 # ============================================================================
 # APPLICATION STARTUP
