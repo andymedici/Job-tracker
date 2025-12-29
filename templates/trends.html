@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Market Trends - Job Intelligence Platform</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        .chart-container {
+            position: relative;
+            height: 350px;
+        }
+        .metric-card {
+            transition: all 0.3s ease;
+        }
+        .metric-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        }
+        .loading-spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3b82f6;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .trend-up {
+            color: #10b981;
+        }
+        .trend-down {
+            color: #ef4444;
+        }
+        .filter-button {
+            transition: all 0.2s;
+        }
+        .filter-button.active {
+            background-color: #3b82f6;
+            color: white;
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <!-- Navigation -->
+    <nav class="bg-white shadow-sm border-b border-gray-200">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center space-x-8">
+                    <h1 class="text-2xl font-bold text-gray-900">
+                        📊 Job Intelligence Platform
+                    </h1>
+                    <div class="hidden md:flex items-center space-x-1">
+                        <a href="/dashboard" class="nav-link px-3 py-2 rounded-md text-sm font-medium">
+                            📈 Dashboard
+                        </a>
+                        <a href="/analytics" class="nav-link px-3 py-2 rounded-md text-sm font-medium">
+                            📊 Analytics
+                        </a>
+                        <a href="/trends" class="nav-link active px-3 py-2 rounded-md text-sm font-medium">
+                            📉 Trends
+                        </a>
+                        <a href="/companies" class="nav-link px-3 py-2 rounded-md text-sm font-medium">
+                            🏢 Companies
+                        </a>
+                        <a href="/jobs" class="nav-link px-3 py-2 rounded-md text-sm font-medium">
+                            💼 Jobs
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <style>
+        .nav-link {
+            color: #6b7280;
+            transition: all 0.2s;
+            position: relative;
+        }
+        .nav-link:hover {
+            color: #1f2937;
+            background-color: #f3f4f6;
+        }
+        .nav-link.active {
+            color: #3b82f6;
+            background-color: #eff6ff;
+        }
+        .nav-link.active::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background-color: #3b82f6;
+        }
+    </style>
+
+    <!-- Main Content -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        
+        <!-- Header with Time Filter -->
+        <div class="bg-white rounded-lg shadow p-6 mb-8">
+            <div class="flex flex-col md:flex-row md:items-center md:justify-between">
+                <div>
+                    <h2 class="text-3xl font-bold text-gray-900">Market Trends Analysis</h2>
+                    <p class="text-gray-600 mt-1">Historical data and trend analysis across the job market</p>
+                </div>
+                <div class="mt-4 md:mt-0 flex space-x-2">
+                    <button class="filter-button active px-4 py-2 rounded-lg border" data-days="30">30 Days</button>
+                    <button class="filter-button px-4 py-2 rounded-lg border" data-days="60">60 Days</button>
+                    <button class="filter-button px-4 py-2 rounded-lg border" data-days="90">90 Days</button>
+                    <button class="filter-button px-4 py-2 rounded-lg border" data-days="180">6 Months</button>
+                    <button class="filter-button px-4 py-2 rounded-lg border" data-days="365">1 Year</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Market Overview Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <div class="metric-card bg-white rounded-lg shadow p-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-600">Market Growth</p>
+                        <p id="market-growth" class="text-3xl font-bold text-gray-900 mt-2">-</p>
+                        <p class="text-xs text-gray-500 mt-1">vs previous period</p>
+                    </div>
+                    <div class="bg-blue-100 rounded-full p-3">
+                        <svg class="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+
+            <div class="metric-card bg-white rounded-lg shadow p-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-600">Salary Inflation</p>
+                        <p id="salary-inflation" class="text-3xl font-bold text-gray-900 mt-2">-</p>
+                        <p class="text-xs text-gray-500 mt-1">average salary change</p>
+                    </div>
+                    <div class="bg-green-100 rounded-full p-3">
+                        <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+
+            <div class="metric-card bg-white rounded-lg shadow p-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-600">Avg Days Open</p>
+                        <p id="avg-days-open" class="text-3xl font-bold text-gray-900 mt-2">-</p>
+                        <p class="text-xs text-gray-500 mt-1">time to fill</p>
+                    </div>
+                    <div class="bg-purple-100 rounded-full p-3">
+                        <svg class="w-8 h-8 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+
+            <div class="metric-card bg-white rounded-lg shadow p-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-600">Hottest Skill</p>
+                        <p id="hottest-skill" class="text-2xl font-bold text-gray-900 mt-2">-</p>
+                        <p id="hottest-skill-growth" class="text-xs text-gray-500 mt-1">-</p>
+                    </div>
+                    <div class="bg-yellow-100 rounded-full p-3">
+                        <svg class="w-8 h-8 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Market Trends Charts -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">Total Jobs Over Time</h3>
+                <div class="chart-container">
+                    <canvas id="market-jobs-chart"></canvas>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">Active Companies</h3>
+                <div class="chart-container">
+                    <canvas id="market-companies-chart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Salary Trends -->
+        <div class="bg-white rounded-lg shadow p-6 mb-8">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold text-gray-900">💰 Salary Trends</h3>
+                <div class="text-sm text-gray-600">
+                    <span id="salary-sample-size">Loading...</span>
+                </div>
+            </div>
+            <div class="chart-container" style="height: 400px;">
+                <canvas id="salary-trend-chart"></canvas>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
+                <div class="bg-gray-50 rounded-lg p-4">
+                    <p class="text-sm text-gray-600">Current Average</p>
+                    <p id="current-avg-salary" class="text-2xl font-bold text-gray-900 mt-1">-</p>
+                </div>
+                <div class="bg-gray-50 rounded-lg p-4">
+                    <p class="text-sm text-gray-600">Current Median</p>
+                    <p id="current-median-salary" class="text-2xl font-bold text-gray-900 mt-1">-</p>
+                </div>
+                <div class="bg-gray-50 rounded-lg p-4">
+                    <p class="text-sm text-gray-600">Change Over Period</p>
+                    <p id="salary-change" class="text-2xl font-bold mt-1">-</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Skills Trends -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">💻 Top Growing Skills</h3>
+                <div class="chart-container">
+                    <canvas id="skills-growth-chart"></canvas>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">Skills Demand Trends</h3>
+                <div id="skills-legend" class="mb-4 flex flex-wrap gap-2">
+                    <!-- Legend will be populated by JS -->
+                </div>
+                <div class="chart-container">
+                    <canvas id="skills-trend-chart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Department Trends -->
+        <div class="bg-white rounded-lg shadow p-6 mb-8">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">🏢 Department Hiring Trends</h3>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="chart-container">
+                    <canvas id="dept-growth-chart"></canvas>
+                </div>
+                <div class="chart-container">
+                    <canvas id="dept-trend-chart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Retention Metrics -->
+        <div class="bg-white rounded-lg shadow p-6 mb-8">
+            <h3 class="text-lg font-semibold text-gray-900 mb-6">📊 Job Market Health Metrics</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <div class="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-6">
+                    <p class="text-sm font-medium text-blue-900">Avg Days Open</p>
+                    <p id="retention-avg-days" class="text-4xl font-bold text-blue-900 mt-2">-</p>
+                    <p class="text-xs text-blue-700 mt-1">How long jobs stay open</p>
+                </div>
+                <div class="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-6">
+                    <p class="text-sm font-medium text-green-900">Median Days Open</p>
+                    <p id="retention-median-days" class="text-4xl font-bold text-green-900 mt-2">-</p>
+                    <p class="text-xs text-green-700 mt-1">Middle of the range</p>
+                </div>
+                <div class="bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg p-6">
+                    <p class="text-sm font-medium text-purple-900">Refilled Positions</p>
+                    <p id="retention-refilled" class="text-4xl font-bold text-purple-900 mt-2">-</p>
+                    <p class="text-xs text-purple-700 mt-1">Jobs reposted recently</p>
+                </div>
+                <div class="bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-lg p-6">
+                    <p class="text-sm font-medium text-yellow-900">Days to Refill</p>
+                    <p id="retention-refill-days" class="text-4xl font-bold text-yellow-900 mt-2">-</p>
+                    <p class="text-xs text-yellow-700 mt-1">Avg time to repost</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Company Growth Lookup -->
+        <div class="bg-white rounded-lg shadow p-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">🔍 Individual Company Growth</h3>
+            <div class="flex gap-4 mb-6">
+                <input 
+                    type="text" 
+                    id="company-search" 
+                    placeholder="Enter company name..." 
+                    class="flex-1 border-gray-300 rounded-lg shadow-sm"
+                >
+                <button onclick="searchCompany()" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition">
+                    Search
+                </button>
+            </div>
+            <div id="company-growth-container" class="hidden">
+                <h4 id="company-growth-name" class="text-xl font-semibold text-gray-900 mb-4"></h4>
+                <div class="chart-container" style="height: 400px;">
+                    <canvas id="company-growth-chart"></canvas>
+                </div>
+            </div>
+            <div id="company-search-results" class="space-y-2">
+                <!-- Search results will appear here -->
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // Global state
+        let currentDays = 30;
+        let charts = {};
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            loadAllTrends();
+            setupFilters();
+        });
+        
+        // Setup time filter buttons
+        function setupFilters() {
+            document.querySelectorAll('.filter-button').forEach(button => {
+                button.addEventListener('click', () => {
+                    document.querySelectorAll('.filter-button').forEach(b => b.classList.remove('active'));
+                    button.classList.add('active');
+                    currentDays = parseInt(button.dataset.days);
+                    loadAllTrends();
+                });
+            });
+        }
+        
+        // Load all trend data
+        async function loadAllTrends() {
+            await Promise.all([
+                loadMarketTrends(),
+                loadSalaryTrends(),
+                loadSkillsTrends(),
+                loadDepartmentTrends(),
+                loadRetentionMetrics()
+            ]);
+        }
+        
+        // Load market trends
+        async function loadMarketTrends() {
+            try {
+                const response = await fetch(`/api/trends/market?days=${currentDays}`);
+                const data = await response.json();
+                
+                if (data.trends && data.trends.length > 0) {
+                    // Update growth metric
+                    document.getElementById('market-growth').textContent = `${data.growth_rate > 0 ? '+' : ''}${data.growth_rate}%`;
+                    document.getElementById('market-growth').className = `text-3xl font-bold mt-2 ${data.growth_rate >= 0 ? 'trend-up' : 'trend-down'}`;
+                    
+                    // Jobs chart
+                    const jobsCtx = document.getElementById('market-jobs-chart').getContext('2d');
+                    if (charts.marketJobs) charts.marketJobs.destroy();
+                    
+                    charts.marketJobs = new Chart(jobsCtx, {
+                        type: 'line',
+                        data: {
+                            labels: data.trends.map(t => new Date(t.date).toLocaleDateString()),
+                            datasets: [{
+                                label: 'Total Jobs',
+                                data: data.trends.map(t => t.total_jobs),
+                                borderColor: '#3b82f6',
+                                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                                fill: true,
+                                tension: 0.4
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { display: false }
+                            },
+                            scales: {
+                                y: { beginAtZero: false }
+                            }
+                        }
+                    });
+                    
+                    // Companies chart
+                    const companiesCtx = document.getElementById('market-companies-chart').getContext('2d');
+                    if (charts.marketCompanies) charts.marketCompanies.destroy();
+                    
+                    charts.marketCompanies = new Chart(companiesCtx, {
+                        type: 'line',
+                        data: {
+                            labels: data.trends.map(t => new Date(t.date).toLocaleDateString()),
+                            datasets: [{
+                                label: 'Active Companies',
+                                data: data.trends.map(t => t.active_companies),
+                                borderColor: '#10b981',
+                                backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                                fill: true,
+                                tension: 0.4
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { display: false }
+                            },
+                            scales: {
+                                y: { beginAtZero: false }
+                            }
+                        }
+                    });
+                }
+            } catch (error) {
+                console.error('Error loading market trends:', error);
+            }
+        }
+        
+        // Load salary trends
+        async function loadSalaryTrends() {
+            try {
+                const response = await fetch(`/api/trends/salary?days=${currentDays}`);
+                const data = await response.json();
+                
+                if (data.trends && data.trends.length > 0) {
+                    // Update metrics
+                    document.getElementById('salary-inflation').textContent = `${data.salary_inflation_percent > 0 ? '+' : ''}${data.salary_inflation_percent}%`;
+                    document.getElementById('salary-inflation').className = `text-3xl font-bold mt-2 ${data.salary_inflation_percent >= 0 ? 'trend-up' : 'trend-down'}`;
+                    
+                    document.getElementById('current-avg-salary').textContent = `$${Math.round(data.current_average).toLocaleString()}`;
+                    document.getElementById('current-median-salary').textContent = `$${Math.round(data.current_median).toLocaleString()}`;
+                    document.getElementById('salary-change').textContent = `${data.salary_inflation_percent > 0 ? '+' : ''}${data.salary_inflation_percent}%`;
+                    document.getElementById('salary-change').className = `text-2xl font-bold mt-1 ${data.salary_inflation_percent >= 0 ? 'trend-up' : 'trend-down'}`;
+                    
+                    document.getElementById('salary-sample-size').textContent = `Based on ${data.data_points} weeks of data`;
+                    
+                    // Salary chart
+                    const salaryCtx = document.getElementById('salary-trend-chart').getContext('2d');
+                    if (charts.salary) charts.salary.destroy();
+                    
+                    charts.salary = new Chart(salaryCtx, {
+                        type: 'line',
+                        data: {
+                            labels: data.trends.map(t => new Date(t.week).toLocaleDateString()),
+                            datasets: [
+                                {
+                                    label: 'Average Salary',
+                                    data: data.trends.map(t => parseFloat(t.avg_salary)),
+                                    borderColor: '#10b981',
+                                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                                    fill: true,
+                                    tension: 0.4
+                                },
+                                {
+                                    label: 'Median Salary',
+                                    data: data.trends.map(t => parseFloat(t.median_salary)),
+                                    borderColor: '#3b82f6',
+                                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                                    fill: true,
+                                    tension: 0.4
+                                }
+                            ]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { position: 'top' },
+                                tooltip: {
+                                    callbacks: {
+                                        label: function(context) {
+                                            return context.dataset.label + ': $' + Math.round(context.parsed.y).toLocaleString();
+                                        }
+                                    }
+                                }
+                            },
+                            scales: {
+                                y: {
+                                    beginAtZero: false,
+                                    ticks: {
+                                        callback: function(value) {
+                                            return '$' + value.toLocaleString();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+            } catch (error) {
+                console.error('Error loading salary trends:', error);
+            }
+        }
+        
+        // Load skills trends
+        async function loadSkillsTrends() {
+            try {
+                const response = await fetch(`/api/trends/skills?days=${currentDays}`);
+                const data = await response.json();
+                
+                if (data.top_growing && data.top_growing.length > 0) {
+                    // Update hottest skill
+                    document.getElementById('hottest-skill').textContent = data.top_growing[0].skill;
+                    document.getElementById('hottest-skill-growth').textContent = `+${data.top_growing[0].growth_percent}% growth`;
+                    
+                    // Skills growth chart
+                    const skillsGrowthCtx = document.getElementById('skills-growth-chart').getContext('2d');
+                    if (charts.skillsGrowth) charts.skillsGrowth.destroy();
+                    
+                    const topSkills = data.top_growing.slice(0, 10);
+                    
+                    charts.skillsGrowth = new Chart(skillsGrowthCtx, {
+                        type: 'bar',
+                        data: {
+                            labels: topSkills.map(s => s.skill),
+                            datasets: [{
+                                label: 'Growth %',
+                                data: topSkills.map(s => s.growth_percent),
+                                backgroundColor: '#8b5cf6'
+                            }]
+                        },
+                        options: {
+                            indexAxis: 'y',
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { display: false }
+                            }
+                        }
+                    });
+                    
+                    // Skills trend lines
+                    if (data.trends && Object.keys(data.trends).length > 0) {
+                        const skillsTrendCtx = document.getElementById('skills-trend-chart').getContext('2d');
+                        if (charts.skillsTrend) charts.skillsTrend.destroy();
+                        
+                        const weeks = Object.keys(data.trends).sort();
+                        const topSkillNames = topSkills.slice(0, 5).map(s => s.skill);
+                        
+                        const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
+                        const datasets = topSkillNames.map((skill, idx) => ({
+                            label: skill,
+                            data: weeks.map(week => data.trends[week][skill] || 0),
+                            borderColor: colors[idx],
+                            backgroundColor: colors[idx] + '20',
+                            tension: 0.4
+                        }));
+                        
+                        charts.skillsTrend = new Chart(skillsTrendCtx, {
+                            type: 'line',
+                            data: {
+                                labels: weeks.map(w => new Date(w).toLocaleDateString()),
+                                datasets: datasets
+                            },
+                            options: {
+                                responsive: true,
+                                maintainAspectRatio: false,
+                                plugins: {
+                                    legend: { position: 'top' }
+                                }
+                            }
+                        });
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading skills trends:', error);
+            }
+        }
+        
+        // Load department trends
+        async function loadDepartmentTrends() {
+            try {
+                const response = await fetch(`/api/trends/departments?days=${currentDays}`);
+                const data = await response.json();
+                
+                if (data.top_growing && data.top_growing.length > 0) {
+                    // Department growth chart
+                    const deptGrowthCtx = document.getElementById('dept-growth-chart').getContext('2d');
+                    if (charts.deptGrowth) charts.deptGrowth.destroy();
+                    
+                    const topDepts = data.top_growing.slice(0, 10);
+                    
+                    charts.deptGrowth = new Chart(deptGrowthCtx, {
+                        type: 'bar',
+                        data: {
+                            labels: topDepts.map(d => d.department),
+                            datasets: [{
+                                label: 'Growth %',
+                                data: topDepts.map(d => d.growth_percent),
+                                backgroundColor: '#f59e0b'
+                            }]
+                        },
+                        options: {
+                            indexAxis: 'y',
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { display: false }
+                            }
+                        }
+                    });
+                    
+                    // Department trend lines
+                    if (data.trends && Object.keys(data.trends).length > 0) {
+                        const deptTrendCtx = document.getElementById('dept-trend-chart').getContext('2d');
+                        if (charts.deptTrend) charts.deptTrend.destroy();
+                        
+                        const weeks = Object.keys(data.trends).sort();
+                        const topDeptNames = topDepts.slice(0, 5).map(d => d.department);
+                        
+                        const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
+                        const datasets = topDeptNames.map((dept, idx) => ({
+                            label: dept,
+                            data: weeks.map(week => data.trends[week][dept] || 0),
+                            borderColor: colors[idx],
+                            backgroundColor: colors[idx] + '20',
+                            tension: 0.4
+                        }));
+                        
+                        charts.deptTrend = new Chart(deptTrendCtx, {
+                            type: 'line',
+                            data: {
+                                labels: weeks.map(w => new Date(w).toLocaleDateString()),
+                                datasets: datasets
+                            },
+                            options: {
+                                responsive: true,
+                                maintainAspectRatio: false,
+                                plugins: {
+                                    legend: { position: 'top' }
+                                }
+                            }
+                        });
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading department trends:', error);
+            }
+        }
+        
+        // Load retention metrics
+        async function loadRetentionMetrics() {
+            try {
+                const response = await fetch('/api/metrics/retention');
+                const data = await response.json();
+                
+                document.getElementById('retention-avg-days').textContent = Math.round(data.avg_days_open);
+                document.getElementById('retention-median-days').textContent = Math.round(data.median_days_open);
+                document.getElementById('retention-refilled').textContent = data.refilled_positions.toLocaleString();
+                document.getElementById('retention-refill-days').textContent = Math.round(data.avg_days_to_refill);
+                
+                document.getElementById('avg-days-open').textContent = Math.round(data.avg_days_open);
+            } catch (error) {
+                console.error('Error loading retention metrics:', error);
+            }
+        }
+        
+        // Company search
+        async function searchCompany() {
+            const query = document.getElementById('company-search').value.trim();
+            if (!query) return;
+            
+            try {
+                const response = await fetch(`/api/companies/search?q=${encodeURIComponent(query)}`);
+                const data = await response.json();
+                
+                const resultsDiv = document.getElementById('company-search-results');
+                
+                if (data.companies && data.companies.length > 0) {
+                    resultsDiv.innerHTML = `
+                        <p class="text-sm text-gray-600 mb-2">Select a company:</p>
+                        ${data.companies.map(c => `
+                            <button onclick="loadCompanyGrowth(${c.id}, '${c.company_name}')" 
+                                    class="w-full text-left px-4 py-3 border rounded-lg hover:bg-gray-50 transition">
+                                <div class="font-medium">${c.company_name}</div>
+                                <div class="text-sm text-gray-600">${c.job_count} jobs • ${c.ats_type}</div>
+                            </button>
+                        `).join('')}
+                    `;
+                } else {
+                    resultsDiv.innerHTML = '<p class="text-gray-500">No companies found</p>';
+                }
+            } catch (error) {
+                console.error('Error searching companies:', error);
+            }
+        }
+        
+        // Load company growth
+        async function loadCompanyGrowth(companyId, companyName) {
+            try {
+                const response = await fetch(`/api/trends/company/${companyId}?days=${currentDays}`);
+                const data = await response.json();
+                
+                if (data.trends && data.trends.length > 0) {
+                    document.getElementById('company-search-results').innerHTML = '';
+                    document.getElementById('company-growth-container').classList.remove('hidden');
+                    document.getElementById('company-growth-name').textContent = companyName;
+                    
+                    const ctx = document.getElementById('company-growth-chart').getContext('2d');
+                    if (charts.companyGrowth) charts.companyGrowth.destroy();
+                    
+                    charts.companyGrowth = new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            labels: data.trends.map(t => new Date(t.date).toLocaleDateString()),
+                            datasets: [{
+                                label: 'Job Count',
+                                data: data.trends.map(t => t.avg_jobs),
+                                borderColor: '#3b82f6',
+                                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                                fill: true,
+                                tension: 0.4
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { display: false }
+                            },
+                            scales: {
+                                y: { beginAtZero: false }
+                            }
+                        }
+                    });
+                }
+            } catch (error) {
+                console.error('Error loading company growth:', error);
+            }
+        }
+    </script>
+</body>
+</html>
