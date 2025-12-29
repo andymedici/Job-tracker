@@ -1293,6 +1293,247 @@ class Database:
             logger.error(f"Error getting advanced analytics: {e}", exc_info=True)
             return {}
 
+def get_salary_trends(self, days=90):
+        """Get salary trends over time"""
+        with self.get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT 
+                        DATE_TRUNC('week', first_seen) as week,
+                        AVG((salary_min + salary_max) / 2)::DECIMAL(10,2) as avg_salary,
+                        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY (salary_min + salary_max) / 2)::DECIMAL(10,2) as median_salary,
+                        COUNT(*) as job_count
+                    FROM job_archive
+                    WHERE first_seen > NOW() - INTERVAL %s
+                    AND salary_min IS NOT NULL
+                    AND salary_max IS NOT NULL
+                    AND status = 'active'
+                    GROUP BY week
+                    ORDER BY week
+                """, (f'{days} days',))
+                
+                return [dict(row) for row in cur.fetchall()]
+
+    def get_skills_trends(self, days=90):
+        """Get skills demand trends over time"""
+        with self.get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT 
+                        DATE_TRUNC('week', first_seen) as week,
+                        title,
+                        COUNT(*) as job_count
+                    FROM job_archive
+                    WHERE first_seen > NOW() - INTERVAL %s
+                    AND status = 'active'
+                    GROUP BY week, title
+                    ORDER BY week, job_count DESC
+                """, (f'{days} days',))
+                
+                weekly_data = {}
+                skills_to_track = [
+                    'python', 'javascript', 'react', 'java', 'typescript',
+                    'node', 'aws', 'kubernetes', 'docker', 'sql',
+                    'go', 'rust', 'vue', 'angular', 'graphql',
+                    'mongodb', 'postgresql', 'redis', 'kafka', 'spark',
+                    'machine learning', 'ai', 'data science', 'devops',
+                    'tensorflow', 'pytorch', 'backend', 'frontend', 'fullstack'
+                ]
+                
+                for row in cur.fetchall():
+                    week = row['week'].isoformat()
+                    title = row['title'].lower()
+                    count = row['job_count']
+                    
+                    if week not in weekly_data:
+                        weekly_data[week] = {skill: 0 for skill in skills_to_track}
+                    
+                    for skill in skills_to_track:
+                        if skill in title:
+                            weekly_data[week][skill] += count
+                
+                return weekly_data
+
+    def get_company_growth_trend(self, company_id, days=90):
+        """Get job count trend for a specific company"""
+        with self.get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT 
+                        DATE_TRUNC('day', snapshot_time) as date,
+                        AVG(job_count)::INTEGER as avg_jobs,
+                        MAX(job_count) as max_jobs,
+                        MIN(job_count) as min_jobs,
+                        AVG(active_jobs)::INTEGER as avg_active_jobs
+                    FROM snapshots_6h
+                    WHERE company_id = %s
+                    AND snapshot_time > NOW() - INTERVAL %s
+                    GROUP BY DATE_TRUNC('day', snapshot_time)
+                    ORDER BY date
+                """, (company_id, f'{days} days'))
+                
+                return [dict(row) for row in cur.fetchall()]
+
+    def get_market_trends(self, days=90):
+        """Get overall market hiring trends"""
+        with self.get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT 
+                        DATE_TRUNC('day', snapshot_time) as date,
+                        SUM(job_count)::INTEGER as total_jobs,
+                        COUNT(DISTINCT company_id) as active_companies,
+                        AVG(job_count)::DECIMAL(10,2) as avg_jobs_per_company
+                    FROM snapshots_6h
+                    WHERE snapshot_time > NOW() - INTERVAL %s
+                    GROUP BY DATE_TRUNC('day', snapshot_time)
+                    ORDER BY date
+                """, (f'{days} days',))
+                
+                return [dict(row) for row in cur.fetchall()]
+
+    def get_department_growth_trends(self, days=90):
+        """Get hiring trends by department"""
+        with self.get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT 
+                        DATE_TRUNC('week', first_seen) as week,
+                        department,
+                        COUNT(*) as new_jobs
+                    FROM job_archive
+                    WHERE first_seen > NOW() - INTERVAL %s
+                    AND department IS NOT NULL
+                    AND status = 'active'
+                    GROUP BY week, department
+                    ORDER BY week, new_jobs DESC
+                """, (f'{days} days',))
+                
+                weekly_data = {}
+                for row in cur.fetchall():
+                    week = row['week'].isoformat()
+                    dept = row['department']
+                    count = row['new_jobs']
+                    
+                    if week not in weekly_data:
+                        weekly_data[week] = {}
+                    
+                    weekly_data[week][dept] = count
+                
+                return weekly_data
+
+    def get_retention_metrics(self):
+        """Get job retention and refill metrics"""
+        with self.get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT 
+                        AVG(EXTRACT(EPOCH FROM (COALESCE(closed_at, NOW()) - first_seen)) / 86400)::DECIMAL(10,2) as avg_days_open,
+                        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (COALESCE(closed_at, NOW()) - first_seen)) / 86400)::DECIMAL(10,2) as median_days_open,
+                        COUNT(*) FILTER (WHERE closed_at IS NOT NULL) as closed_jobs,
+                        COUNT(*) FILTER (WHERE closed_at IS NULL) as open_jobs
+                    FROM job_archive
+                    WHERE first_seen > NOW() - INTERVAL '90 days'
+                """)
+                
+                retention = cur.fetchone()
+                
+                # Check for repeat postings (same title at same company within 30 days)
+                cur.execute("""
+                    WITH job_pairs AS (
+                        SELECT 
+                            j1.company_id,
+                            j1.title,
+                            j1.closed_at as first_closed,
+                            j2.first_seen as reposted,
+                            EXTRACT(EPOCH FROM (j2.first_seen - j1.closed_at)) / 86400 as days_between
+                        FROM job_archive j1
+                        JOIN job_archive j2 ON 
+                            j1.company_id = j2.company_id 
+                            AND j1.title = j2.title
+                            AND j1.id != j2.id
+                        WHERE j1.closed_at IS NOT NULL
+                        AND j2.first_seen > j1.closed_at
+                        AND j2.first_seen < j1.closed_at + INTERVAL '90 days'
+                        AND j1.first_seen > NOW() - INTERVAL '180 days'
+                    )
+                    SELECT 
+                        COUNT(*) as refilled_positions,
+                        AVG(days_between)::DECIMAL(10,2) as avg_days_to_refill
+                    FROM job_pairs
+                """)
+                
+                refill = cur.fetchone()
+                
+                return {
+                    'avg_days_open': float(retention['avg_days_open']) if retention['avg_days_open'] else 0,
+                    'median_days_open': float(retention['median_days_open']) if retention['median_days_open'] else 0,
+                    'closed_jobs': retention['closed_jobs'],
+                    'open_jobs': retention['open_jobs'],
+                    'refilled_positions': refill['refilled_positions'],
+                    'avg_days_to_refill': float(refill['avg_days_to_refill']) if refill['avg_days_to_refill'] else 0
+                }
+
+    def cleanup_old_snapshots(self, days_to_keep=90):
+        """Delete snapshots older than specified days"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    DELETE FROM snapshots_6h 
+                    WHERE snapshot_time < NOW() - INTERVAL %s
+                """, (f'{days_to_keep} days',))
+                deleted = cur.rowcount
+                conn.commit()
+                return deleted
+
+    def add_performance_indexes(self):
+        """Add missing indexes for better query performance"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                # Snapshot indexes
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_snapshots_time 
+                    ON snapshots_6h(snapshot_time DESC)
+                """)
+                
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_snapshots_company_time 
+                    ON snapshots_6h(company_id, snapshot_time DESC)
+                """)
+                
+                # Job archive indexes
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_jobs_dates 
+                    ON job_archive(first_seen DESC, last_seen DESC, closed_at)
+                """)
+                
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_jobs_salary 
+                    ON job_archive(salary_min, salary_max) 
+                    WHERE salary_min IS NOT NULL
+                """)
+                
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_jobs_department 
+                    ON job_archive(department) 
+                    WHERE department IS NOT NULL
+                """)
+                
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_jobs_location 
+                    ON job_archive(location) 
+                    WHERE location IS NOT NULL
+                """)
+                
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_jobs_work_type 
+                    ON job_archive(work_type) 
+                    WHERE work_type IS NOT NULL
+                """)
+                
+                conn.commit()
+                logger.info("✅ Performance indexes created")
+
 _db_instance = None
 
 def get_db() -> Database:
