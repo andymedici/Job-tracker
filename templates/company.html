@@ -5,126 +5,432 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Company Details - Job Intelligence Platform</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .stat-card {
+            transition: all 0.3s ease;
+        }
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        }
+        .job-card {
+            transition: all 0.2s ease;
+        }
+        .job-card:hover {
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+        .loading-spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3b82f6;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
 </head>
 <body class="bg-gray-50">
+    <!-- Navigation -->
     <nav class="bg-white shadow-sm border-b border-gray-200">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex justify-between h-16">
                 <div class="flex items-center space-x-8">
-                    <h1 class="text-2xl font-bold text-gray-900">📊 Job Intelligence</h1>
-                    <div class="flex space-x-4">
-                        <a href="/dashboard" class="text-gray-600 hover:text-gray-900">Dashboard</a>
-                        <a href="/companies" class="text-gray-600 hover:text-gray-900">← Back to Companies</a>
+                    <h1 class="text-2xl font-bold text-gray-900">
+                        📊 Job Intelligence
+                    </h1>
+                    <div class="hidden md:flex items-center space-x-4">
+                        <a href="/dashboard" class="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
+                            Dashboard
+                        </a>
+                        <a href="/companies" class="text-blue-600 bg-blue-50 px-3 py-2 rounded-md text-sm font-medium">
+                            ← Back to Companies
+                        </a>
                     </div>
                 </div>
             </div>
         </div>
     </nav>
 
+    <!-- Main Content -->
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div id="company-header" class="bg-white rounded-lg shadow p-6 mb-6">
-            <p class="text-gray-500">Loading...</p>
+        
+        <!-- Loading State -->
+        <div id="loading-state" class="bg-white rounded-lg shadow p-8 text-center">
+            <div class="loading-spinner"></div>
+            <p class="text-gray-600 mt-4">Loading company details...</p>
         </div>
 
-        <div class="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-6">
-            <div class="bg-white rounded-lg shadow p-6">
-                <p class="text-sm text-gray-600">Total Jobs</p>
-                <p id="stat-total" class="text-3xl font-bold text-gray-900 mt-2">-</p>
+        <!-- Error State -->
+        <div id="error-state" class="hidden bg-red-50 border border-red-200 rounded-lg p-6">
+            <div class="flex items-center">
+                <svg class="w-6 h-6 text-red-600 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+                <div>
+                    <h3 class="text-lg font-semibold text-red-900">Failed to Load Company</h3>
+                    <p id="error-message" class="text-red-700 mt-1"></p>
+                </div>
             </div>
-            <div class="bg-white rounded-lg shadow p-6">
-                <p class="text-sm text-gray-600">Active Jobs</p>
-                <p id="stat-active" class="text-3xl font-bold text-green-600 mt-2">-</p>
-            </div>
-            <div class="bg-white rounded-lg shadow p-6">
-                <p class="text-sm text-gray-600">Departments</p>
-                <p id="stat-depts" class="text-3xl font-bold text-blue-600 mt-2">-</p>
-            </div>
-            <div class="bg-white rounded-lg shadow p-6">
-                <p class="text-sm text-gray-600">Locations</p>
-                <p id="stat-locations" class="text-3xl font-bold text-purple-600 mt-2">-</p>
+            <div class="mt-4">
+                <button onclick="window.location.href='/companies'" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+                    Back to Companies
+                </button>
             </div>
         </div>
 
-        <div class="bg-white rounded-lg shadow p-6">
-            <h2 class="text-lg font-semibold text-gray-900 mb-4">Job Listings</h2>
-            <div id="jobs-list" class="space-y-4">
-                <p class="text-gray-500">Loading jobs...</p>
+        <!-- Company Content -->
+        <div id="company-content" class="hidden">
+            <!-- Company Header -->
+            <div class="bg-white rounded-lg shadow p-6 mb-6">
+                <div class="flex items-start justify-between">
+                    <div>
+                        <h2 id="company-name" class="text-3xl font-bold text-gray-900 mb-2">-</h2>
+                        <div class="flex items-center space-x-4 text-sm text-gray-600">
+                            <span class="flex items-center">
+                                <span class="font-medium mr-2">ATS:</span>
+                                <span id="company-ats" class="px-3 py-1 bg-green-100 text-green-800 rounded-full">-</span>
+                            </span>
+                            <span id="last-updated">Last updated: -</span>
+                        </div>
+                    </div>
+                    <a id="careers-url" href="#" target="_blank" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition">
+                        Visit Careers Page →
+                    </a>
+                </div>
+            </div>
+
+            <!-- Stats Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                <div class="stat-card bg-white rounded-lg shadow p-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-sm font-medium text-gray-600">Total Jobs</p>
+                            <p id="total-jobs" class="text-3xl font-bold text-gray-900 mt-2">-</p>
+                        </div>
+                        <div class="bg-blue-100 rounded-full p-3">
+                            <svg class="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="stat-card bg-white rounded-lg shadow p-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-sm font-medium text-gray-600">Active Jobs</p>
+                            <p id="active-jobs" class="text-3xl font-bold text-green-600 mt-2">-</p>
+                        </div>
+                        <div class="bg-green-100 rounded-full p-3">
+                            <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="stat-card bg-white rounded-lg shadow p-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-sm font-medium text-gray-600">Departments</p>
+                            <p id="departments-count" class="text-3xl font-bold text-purple-600 mt-2">-</p>
+                        </div>
+                        <div class="bg-purple-100 rounded-full p-3">
+                            <svg class="w-8 h-8 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="stat-card bg-white rounded-lg shadow p-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-sm font-medium text-gray-600">Locations</p>
+                            <p id="locations-count" class="text-3xl font-bold text-yellow-600 mt-2">-</p>
+                        </div>
+                        <div class="bg-yellow-100 rounded-full p-3">
+                            <svg class="w-8 h-8 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Filters -->
+            <div class="bg-white rounded-lg shadow p-4 mb-6">
+                <div class="flex flex-wrap items-center gap-4">
+                    <input 
+                        type="text" 
+                        id="search-jobs" 
+                        placeholder="Search job titles..." 
+                        class="flex-1 min-w-[200px] border-gray-300 rounded-lg shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                    >
+                    <select id="filter-status" class="border-gray-300 rounded-lg shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                        <option value="">All Statuses</option>
+                        <option value="active">Active</option>
+                        <option value="closed">Closed</option>
+                    </select>
+                    <select id="filter-department" class="border-gray-300 rounded-lg shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                        <option value="">All Departments</option>
+                    </select>
+                    <select id="filter-location" class="border-gray-300 rounded-lg shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                        <option value="">All Locations</option>
+                    </select>
+                    <button onclick="applyFilters()" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition">
+                        Apply Filters
+                    </button>
+                </div>
+            </div>
+
+            <!-- Job Listings -->
+            <div class="bg-white rounded-lg shadow">
+                <div class="p-6 border-b border-gray-200">
+                    <h3 class="text-xl font-semibold text-gray-900">Job Listings</h3>
+                </div>
+                <div id="jobs-container" class="divide-y divide-gray-200">
+                    <div class="p-8 text-center text-gray-500">
+                        <div class="loading-spinner"></div>
+                        <p class="mt-4">Loading jobs...</p>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 
     <script>
-        const API_BASE = window.location.origin;
-        let API_KEY = localStorage.getItem('api_key') || '';
-        const companyId = window.location.pathname.split('/').pop();
+        // Get company ID from URL path
+        function getCompanyId() {
+            const pathParts = window.location.pathname.split('/');
+            const companyId = pathParts[pathParts.length - 1];
+            console.log('Extracted company ID:', companyId);
+            return companyId;
+        }
 
-        async function loadCompany() {
+        // Store all jobs for filtering
+        let allJobs = [];
+
+        // Load company data
+        async function loadCompanyData() {
+            const companyId = getCompanyId();
+            
+            if (!companyId || companyId === 'company') {
+                showError('Invalid company ID in URL');
+                return;
+            }
+
             try {
-                const response = await fetch(`${API_BASE}/api/companies/${companyId}`, {
-                    headers: { 'X-API-Key': API_KEY }
-                });
+                console.log('Fetching company data for ID:', companyId);
+                const response = await fetch(`/api/companies/${companyId}`);
                 
-                if (response.status === 401) {
-                    window.location.href = '/dashboard';
-                    return;
+                if (!response.ok) {
+                    if (response.status === 404) {
+                        throw new Error('Company not found');
+                    }
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
                 
                 const data = await response.json();
-                displayCompany(data);
+                console.log('Company data received:', data);
+                
+                displayCompanyData(data);
+                
             } catch (error) {
-                console.error('Error:', error);
+                console.error('Error loading company:', error);
+                showError(error.message);
             }
         }
 
-        function displayCompany(data) {
-            document.getElementById('company-header').innerHTML = `
-                <div class="flex justify-between items-start">
-                    <div>
-                        <h1 class="text-3xl font-bold text-gray-900 mb-2">${data.company.company_name}</h1>
-                        <div class="flex space-x-4 text-sm text-gray-600">
-                            <span class="px-3 py-1 bg-green-100 text-green-800 rounded-full font-medium">${data.company.ats_type}</span>
-                            <span>Last updated: ${new Date(data.company.last_scraped).toLocaleString()}</span>
-                        </div>
+        // Display company data
+        function displayCompanyData(data) {
+            // Hide loading, show content
+            document.getElementById('loading-state').classList.add('hidden');
+            document.getElementById('company-content').classList.remove('hidden');
+            
+            // Update company header
+            document.getElementById('company-name').textContent = data.company_name || 'Unknown Company';
+            document.getElementById('company-ats').textContent = data.ats_type || 'Unknown';
+            
+            if (data.last_scraped) {
+                const date = new Date(data.last_scraped);
+                document.getElementById('last-updated').textContent = `Last updated: ${date.toLocaleDateString()}`;
+            }
+            
+            if (data.board_url) {
+                const careersLink = document.getElementById('careers-url');
+                careersLink.href = data.board_url;
+                careersLink.classList.remove('hidden');
+            } else {
+                document.getElementById('careers-url').classList.add('hidden');
+            }
+            
+            // Store jobs for filtering
+            allJobs = data.jobs || [];
+            
+            // Calculate stats
+            const totalJobs = allJobs.length;
+            const activeJobs = allJobs.filter(j => j.status === 'active').length;
+            
+            const departments = new Set(allJobs.map(j => j.department).filter(Boolean));
+            const locations = new Set(allJobs.map(j => j.location).filter(Boolean));
+            
+            document.getElementById('total-jobs').textContent = totalJobs.toLocaleString();
+            document.getElementById('active-jobs').textContent = activeJobs.toLocaleString();
+            document.getElementById('departments-count').textContent = departments.size;
+            document.getElementById('locations-count').textContent = locations.size;
+            
+            // Populate filter dropdowns
+            populateFilters(departments, locations);
+            
+            // Display jobs
+            displayJobs(allJobs);
+        }
+
+        // Populate filter dropdowns
+        function populateFilters(departments, locations) {
+            const deptSelect = document.getElementById('filter-department');
+            const locSelect = document.getElementById('filter-location');
+            
+            // Clear existing options (except "All")
+            deptSelect.innerHTML = '<option value="">All Departments</option>';
+            locSelect.innerHTML = '<option value="">All Locations</option>';
+            
+            // Add department options
+            Array.from(departments).sort().forEach(dept => {
+                const option = document.createElement('option');
+                option.value = dept;
+                option.textContent = dept;
+                deptSelect.appendChild(option);
+            });
+            
+            // Add location options
+            Array.from(locations).sort().forEach(loc => {
+                const option = document.createElement('option');
+                option.value = loc;
+                option.textContent = loc;
+                locSelect.appendChild(option);
+            });
+        }
+
+        // Display jobs
+        function displayJobs(jobs) {
+            const container = document.getElementById('jobs-container');
+            
+            if (jobs.length === 0) {
+                container.innerHTML = `
+                    <div class="p-8 text-center text-gray-500">
+                        <p>No jobs found matching your filters.</p>
                     </div>
-                    <a href="${data.company.board_url}" target="_blank" 
-                       class="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700">
-                        View Career Page →
-                    </a>
-                </div>
-            `;
-
-            document.getElementById('stat-total').textContent = data.stats.total;
-            document.getElementById('stat-active').textContent = data.stats.active;
-            document.getElementById('stat-depts').textContent = data.stats.departments;
-            document.getElementById('stat-locations').textContent = data.stats.locations;
-
-            document.getElementById('jobs-list').innerHTML = data.jobs.map(job => `
-                <div class="border-b pb-4 last:border-b-0">
-                    <div class="flex justify-between items-start">
-                        <div>
-                            <h3 class="font-semibold text-gray-900">${job.title}</h3>
-                            <div class="flex space-x-4 text-sm text-gray-600 mt-1">
-                                ${job.department ? `<span>📂 ${job.department}</span>` : ''}
-                                ${job.location ? `<span>📍 ${job.location}</span>` : ''}
-                                ${job.work_type ? `<span class="px-2 py-0.5 rounded ${
-                                    job.work_type === 'remote' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'
-                                }">${job.work_type}</span>` : ''}
+                `;
+                return;
+            }
+            
+            container.innerHTML = jobs.map(job => `
+                <div class="job-card p-6 hover:bg-gray-50">
+                    <div class="flex items-start justify-between">
+                        <div class="flex-1">
+                            <h4 class="text-lg font-semibold text-gray-900 mb-2">${job.title}</h4>
+                            <div class="flex flex-wrap items-center gap-3 text-sm text-gray-600 mb-3">
+                                ${job.location ? `
+                                    <span class="flex items-center">
+                                        <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
+                                        </svg>
+                                        ${job.location}
+                                    </span>
+                                ` : ''}
+                                ${job.department ? `
+                                    <span class="flex items-center">
+                                        <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+                                        </svg>
+                                        ${job.department}
+                                    </span>
+                                ` : ''}
+                                ${job.work_type ? `
+                                    <span class="px-2 py-1 bg-purple-100 text-purple-800 rounded-full text-xs font-medium">
+                                        ${job.work_type}
+                                    </span>
+                                ` : ''}
+                                <span class="px-2 py-1 ${job.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'} rounded-full text-xs font-medium">
+                                    ${job.status}
+                                </span>
                             </div>
+                            ${job.first_seen ? `
+                                <p class="text-xs text-gray-500">
+                                    First seen: ${new Date(job.first_seen).toLocaleDateString()}
+                                    ${job.last_seen ? ` • Last seen: ${new Date(job.last_seen).toLocaleDateString()}` : ''}
+                                </p>
+                            ` : ''}
                         </div>
-                        <a href="${job.job_url}" target="_blank" 
-                           class="text-blue-600 hover:text-blue-800 text-sm font-medium">
-                            View Job →
-                        </a>
+                        ${job.job_url ? `
+                            <a href="${job.job_url}" target="_blank" class="ml-4 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition text-sm whitespace-nowrap">
+                                View Job →
+                            </a>
+                        ` : ''}
                     </div>
                 </div>
             `).join('');
         }
 
-        if (!API_KEY) {
-            window.location.href = '/dashboard';
-        } else {
-            loadCompany();
+        // Apply filters
+        function applyFilters() {
+            const searchTerm = document.getElementById('search-jobs').value.toLowerCase();
+            const statusFilter = document.getElementById('filter-status').value;
+            const deptFilter = document.getElementById('filter-department').value;
+            const locFilter = document.getElementById('filter-location').value;
+            
+            const filtered = allJobs.filter(job => {
+                // Search filter
+                if (searchTerm && !job.title.toLowerCase().includes(searchTerm)) {
+                    return false;
+                }
+                
+                // Status filter
+                if (statusFilter && job.status !== statusFilter) {
+                    return false;
+                }
+                
+                // Department filter
+                if (deptFilter && job.department !== deptFilter) {
+                    return false;
+                }
+                
+                // Location filter
+                if (locFilter && job.location !== locFilter) {
+                    return false;
+                }
+                
+                return true;
+            });
+            
+            displayJobs(filtered);
         }
+
+        // Show error
+        function showError(message) {
+            document.getElementById('loading-state').classList.add('hidden');
+            document.getElementById('error-state').classList.remove('hidden');
+            document.getElementById('error-message').textContent = message;
+        }
+
+        // Auto-apply filters on Enter key
+        document.getElementById('search-jobs').addEventListener('keyup', (e) => {
+            if (e.key === 'Enter') {
+                applyFilters();
+            }
+        });
+
+        // Load data on page load
+        console.log('Page loaded, starting data fetch...');
+        loadCompanyData();
     </script>
 </body>
 </html>
