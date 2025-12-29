@@ -648,7 +648,7 @@ def api_companies():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/companies/<int:company_id>')
-@limiter.limit(RATE_LIMITS['authenticated_read'])
+@limiter.limit("30 per minute")
 @optional_auth
 def api_company_detail(company_id):
     try:
@@ -663,18 +663,21 @@ def api_company_detail(company_id):
                 columns = [desc[0] for desc in cur.description]
                 company_data = dict(zip(columns, company))
                 
+                # Get ALL jobs for this company (NO LIMIT)
                 cur.execute("""
                     SELECT job_id, title, location, department, work_type, job_url, 
                            posted_date, salary_min, salary_max, salary_currency, status, first_seen, last_seen
                     FROM job_archive
                     WHERE company_id = %s
-                    ORDER BY status, first_seen DESC
+                    ORDER BY status DESC, first_seen DESC
                 """, (company_id,))
                 
                 jobs_columns = [desc[0] for desc in cur.description]
                 jobs = [dict(zip(jobs_columns, row)) for row in cur.fetchall()]
                 
                 company_data['jobs'] = jobs
+                
+                logger.info(f"Company {company_id} ({company_data.get('company_name')}): Returning {len(jobs)} jobs")
                 
                 return jsonify(company_data), 200
     except Exception as e:
