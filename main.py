@@ -1760,11 +1760,6 @@ if os.getenv('RUN_DB_INIT', 'false').lower() == 'true':
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
-```
-
-Then set environment variable in Render:
-```
-RUN_DB_INIT=true
 
 # ============================================================================
 # APPLICATION STARTUP
