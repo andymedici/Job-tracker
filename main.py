@@ -649,6 +649,7 @@ def api_companies():
 
 @app.route('/api/companies/<int:company_id>')
 @limiter.limit(RATE_LIMITS['authenticated_read'])
+@optional_auth
 def api_company_detail(company_id):
     try:
         db = get_db()
