@@ -11,7 +11,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.jobstores.base import JobLookupError
 
-from database import get_db
+from database import get_db, TRENDS_CUTOFF_DATE  # ADD TRENDS_CUTOFF_DATE here
 from collector import run_collection, run_refresh
 from market_intel import run_daily_maintenance
 from middleware.auth import AuthManager, require_api_key, require_admin_key, optional_auth
@@ -201,6 +201,8 @@ def index():
         'endpoints': {
             'dashboard': '/dashboard',
             'analytics': '/analytics',
+            'trends': '/trends',
+            'intelligence': '/intelligence',
             'companies': '/companies',
             'jobs': '/jobs',
             'submit_seed': '/submit-seed',
@@ -311,32 +313,30 @@ def debug_analytics():
         logger.error(f"Debug error: {e}", exc_info=True)
         return jsonify({'error': str(e), 'has_data': False}), 200
 
+@app.route('/api/advanced-analytics')
+@limiter.limit("30 per minute")
+@optional_auth
+def get_advanced_analytics_simple():
+    """Get advanced analytics (simple endpoint)"""
+    try:
+        db = get_db()
+        analytics = db.get_advanced_analytics()
+        return jsonify(analytics), 200
+    except Exception as e:
+        logger.error(f"Error getting advanced analytics: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/analytics/advanced')
 @limiter.limit("30 per minute")
 @optional_auth
 def get_advanced_analytics_api():
     """Get advanced analytics with optional cutoff date"""
     try:
-        cutoff_date = request.args.get('cutoff_date', None)
         db = get_db()
-        
-        # Temporarily update cutoff if provided
-        original_cutoff = None
-        if cutoff_date:
-            import database
-            original_cutoff = database.TRENDS_CUTOFF_DATE
-            database.TRENDS_CUTOFF_DATE = cutoff_date
-        
         analytics = db.get_advanced_analytics()
-        
-        # Restore original cutoff
-        if original_cutoff:
-            import database
-            database.TRENDS_CUTOFF_DATE = original_cutoff
-        
         return jsonify(analytics), 200
     except Exception as e:
-        logger.error(f"Error getting advanced analytics: {e}")
+        logger.error(f"Error getting advanced analytics: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 # ============================================================================
@@ -380,7 +380,7 @@ def get_location_expansions_api():
         }), 200
         
     except Exception as e:
-        logger.error(f"Error getting location expansions: {e}")
+        logger.error(f"Error getting location expansions: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 
@@ -441,7 +441,7 @@ def get_intelligence_events_api():
                 }), 200
                 
     except Exception as e:
-        logger.error(f"Error getting intelligence events: {e}")
+        logger.error(f"Error getting intelligence events: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/stats')
@@ -458,7 +458,7 @@ def get_stats():
         
         return jsonify(stats), 200
     except Exception as e:
-        logger.error(f"Error getting stats: {e}")
+        logger.error(f"Error getting stats: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/intel')
@@ -739,7 +739,7 @@ def api_company_detail(company_id):
                 
                 return jsonify(company_data), 200
     except Exception as e:
-        logger.error(f"Error getting company detail: {e}")
+        logger.error(f"Error getting company detail: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 # ============================================================================
@@ -766,7 +766,7 @@ def get_company_trend(company_id):
         }), 200
         
     except Exception as e:
-        logger.error(f"Error getting company trend: {e}")
+        logger.error(f"Error getting company trend: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 
@@ -803,7 +803,7 @@ def get_market_trend():
         }), 200
         
     except Exception as e:
-        logger.error(f"Error getting market trends: {e}")
+        logger.error(f"Error getting market trends: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 
@@ -847,7 +847,7 @@ def get_skills_trend():
         }), 200
         
     except Exception as e:
-        logger.error(f"Error getting skills trends: {e}")
+        logger.error(f"Error getting skills trends: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/admin/init-database', methods=['POST'])
@@ -888,7 +888,7 @@ def init_database():
         }), 200
         
     except Exception as e:
-        logger.error(f"Database initialization failed: {e}")
+        logger.error(f"Database initialization failed: {e}", exc_info=True)
         return jsonify({
             'success': False,
             'error': str(e)
@@ -911,10 +911,9 @@ def get_top_companies():
                 cur.execute("""
                     SELECT c.id, c.company_name, c.ats_type, c.job_count, c.last_scraped
                     FROM companies c
-                    WHERE c.last_scraped >= %s::timestamp
                     ORDER BY c.job_count DESC
                     LIMIT %s
-                """, (cutoff_date, limit))
+                """, (limit,))
                 columns = [desc[0] for desc in cur.description]
                 companies = [dict(zip(columns, row)) for row in cur.fetchall()]
                 
@@ -924,7 +923,7 @@ def get_top_companies():
             'cutoff_date': cutoff_date
         }), 200
     except Exception as e:
-        logger.error(f"Error getting top companies: {e}")
+        logger.error(f"Error getting top companies: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/trends/salary')
@@ -957,7 +956,7 @@ def get_salary_trend():
         }), 200
         
     except Exception as e:
-        logger.error(f"Error getting salary trends: {e}")
+        logger.error(f"Error getting salary trends: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 
@@ -1007,7 +1006,7 @@ def get_department_trend():
         }), 200
         
     except Exception as e:
-        logger.error(f"Error getting department trends: {e}")
+        logger.error(f"Error getting department trends: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 
@@ -1023,7 +1022,7 @@ def get_retention_metrics():
         return jsonify(metrics), 200
         
     except Exception as e:
-        logger.error(f"Error getting retention metrics: {e}")
+        logger.error(f"Error getting retention metrics: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 
@@ -1051,7 +1050,7 @@ def cleanup_snapshots():
         }), 200
         
     except Exception as e:
-        logger.error(f"Snapshot cleanup failed: {e}")
+        logger.error(f"Snapshot cleanup failed: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 
@@ -1070,7 +1069,7 @@ def add_indexes():
         }), 200
         
     except Exception as e:
-        logger.error(f"Index creation failed: {e}")
+        logger.error(f"Index creation failed: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 # ============================================================================
@@ -1123,7 +1122,7 @@ def get_jobs_api():
                     'limit_applied': limit
                 }), 200
     except Exception as e:
-        logger.error(f"Error getting jobs: {e}")
+        logger.error(f"Error getting jobs: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
         
 @app.route('/api/jobs/<int:job_id>')
@@ -1149,7 +1148,7 @@ def api_job_detail(job_id):
                 columns = [desc[0] for desc in cur.description]
                 return jsonify(dict(zip(columns, job))), 200
     except Exception as e:
-        logger.error(f"Error getting job detail: {e}")
+        logger.error(f"Error getting job detail: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 # ============================================================================
@@ -1164,7 +1163,7 @@ def get_seed_stats():
         stats = db.get_seed_stats()
         return jsonify(stats), 200
     except Exception as e:
-        logger.error(f"Error getting seed stats: {e}")
+        logger.error(f"Error getting seed stats: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/seeds/add', methods=['POST'])
@@ -1212,7 +1211,7 @@ def add_seed():
                 }), 409
     
     except Exception as e:
-        logger.error(f"Error adding seed: {e}")
+        logger.error(f"Error adding seed: {e}", exc_info=True)
         return jsonify({'error': 'Internal server error. Please try again.'}), 500
 
 @app.route('/api/seeds/manual', methods=['POST'])
@@ -1281,7 +1280,7 @@ def reset_seeds():
                 logger.info(f"Reset {reset_count} seeds")
                 return jsonify({'success': True, 'reset_count': reset_count}), 200
     except Exception as e:
-        logger.error(f"Error resetting seeds: {e}")
+        logger.error(f"Error resetting seeds: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/seeds/unblacklist-premium', methods=['POST'])
@@ -1306,7 +1305,7 @@ def unblacklist_premium():
                 logger.info(f"Unblacklisted {unblacklisted_count} premium seeds")
                 return jsonify({'success': True, 'unblacklisted_count': unblacklisted_count}), 200
     except Exception as e:
-        logger.error(f"Error unblacklisting seeds: {e}")
+        logger.error(f"Error unblacklisting seeds: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/seeds/clean-garbage', methods=['POST'])
@@ -1318,7 +1317,7 @@ def clean_garbage_seeds():
         deleted_count = db.cleanup_garbage_seeds()
         return jsonify({'success': True, 'deleted_count': deleted_count}), 200
     except Exception as e:
-        logger.error(f"Error cleaning garbage seeds: {e}")
+        logger.error(f"Error cleaning garbage seeds: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/seeds/expand-tier1', methods=['POST'])
@@ -1330,7 +1329,7 @@ def expand_tier1_seeds():
         added_count = asyncio.run(run_tier1_expansion())
         return jsonify({'success': True, 'added_count': added_count}), 200
     except Exception as e:
-        logger.error(f"Error expanding Tier 1: {e}")
+        logger.error(f"Error expanding Tier 1: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/seeds/expand-tier2', methods=['POST'])
@@ -1342,7 +1341,7 @@ def expand_tier2_seeds():
         added_count = asyncio.run(run_tier2_expansion())
         return jsonify({'success': True, 'added_count': added_count}), 200
     except Exception as e:
-        logger.error(f"Error expanding Tier 2: {e}")
+        logger.error(f"Error expanding Tier 2: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/seeds/nuclear-reset', methods=['POST'])
@@ -1366,7 +1365,7 @@ def nuclear_reset_seeds():
                 logger.info(f"Nuclear reset: {reset_count} seeds")
                 return jsonify({'success': True, 'reset_count': reset_count}), 200
     except Exception as e:
-        logger.error(f"Error in nuclear reset: {e}")
+        logger.error(f"Error in nuclear reset: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/seeds/expand', methods=['POST'])
@@ -1546,7 +1545,7 @@ def backfill_worktypes():
             'message': f'Successfully backfilled work_type for {updated} jobs'
         }), 200
     except Exception as e:
-        logger.error(f"Error in backfill: {e}")
+        logger.error(f"Error in backfill: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/admin/sql', methods=['POST'])
@@ -1811,15 +1810,11 @@ def init_database_once():
         logger.info("✅ Database initialization complete")
         
     except Exception as e:
-        logger.error(f"Database initialization failed: {e}")
+        logger.error(f"Database initialization failed: {e}", exc_info=True)
 
 # Run on startup (but only once)
 if os.getenv('RUN_DB_INIT', 'false').lower() == 'true':
     init_database_once()
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port)
 
 # ============================================================================
 # APPLICATION STARTUP
@@ -1832,6 +1827,7 @@ if __name__ == '__main__':
     db = get_db()
     stats = db.get_stats()
     logger.info(f"✅ Database connected: {stats['total_companies']} companies, {stats['total_jobs']} jobs")
+    logger.info(f"📅 Trends cutoff date: {TRENDS_CUTOFF_DATE}")
     
     scheduler.start()
     logger.info(f"✅ Scheduler started with {len(scheduler.get_jobs())} jobs")
