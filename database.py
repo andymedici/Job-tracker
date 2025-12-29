@@ -391,96 +391,40 @@ class Database:
             return []
     
     def archive_jobs(self, company_id: int, jobs: List[Dict]) -> Tuple[int, int, int]:
-    if not jobs:
-        return 0, 0, 0
-    try:
-        new_count = 0
-        updated_count = 0
-        closed_count = 0
-        
-        # Track new locations for expansion detection
-        new_locations = set()
-        
-        with self.get_connection() as conn:
-            with conn.cursor() as cur:
-                # Get existing locations for this company
-                cur.execute("""
-                    SELECT DISTINCT location 
-                    FROM job_archive 
-                    WHERE company_id = %s 
-                    AND location IS NOT NULL
-                """, (company_id,))
-                existing_locations = {row[0].lower() for row in cur.fetchall()}
-                
-                cur.execute("SELECT job_id FROM job_archive WHERE company_id = %s AND status = 'active'", (company_id,))
-                current_job_ids = {row[0] for row in cur.fetchall()}
-                new_job_ids = {job['id'] for job in jobs}
-                closed_ids = current_job_ids - new_job_ids
-                
-                if closed_ids:
-                    cur.execute("UPDATE job_archive SET status = 'closed', closed_at = NOW() WHERE company_id = %s AND job_id = ANY(%s) AND status = 'active'", (company_id, list(closed_ids)))
-                    closed_count = cur.rowcount
-                
-                for job in jobs:
-                    # Infer work_type if not provided
-                    work_type = job.get('work_type')
-                    if not work_type or work_type.strip() == '':
-                        work_type = infer_work_type(
-                            job.get('title', ''),
-                            job.get('location', ''),
-                            job.get('metadata', {}).get('description', '') if isinstance(job.get('metadata'), dict) else None
-                        )
-                    
-                    # Check for new location
-                    location = job.get('location')
-                    if location and location.strip():
-                        location_lower = location.lower()
-                        if location_lower not in existing_locations and location_lower not in new_locations:
-                            new_locations.add(location_lower)
-                            # Track expansion event
-                            self.track_location_expansion(company_id, location, 1)
-                    
+        if not jobs:
+            return 0, 0, 0
+        try:
+            new_count = 0
+            updated_count = 0
+            closed_count = 0
+            
+            # Track new locations for expansion detection
+            new_locations = set()
+            
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Get existing locations for this company
                     cur.execute("""
-                        INSERT INTO job_archive 
-                        (company_id, job_id, title, location, department, work_type, job_url, posted_date, salary_min, salary_max, salary_currency, status, metadata)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s)
-                        ON CONFLICT (company_id, job_id) 
-                        DO UPDATE SET
-                            title = EXCLUDED.title,
-                            location = EXCLUDED.location,
-                            department = EXCLUDED.department,
-                            work_type = EXCLUDED.work_type,
-                            job_url = EXCLUDED.job_url,
-                            posted_date = EXCLUDED.posted_date,
-                            salary_min = EXCLUDED.salary_min,
-                            salary_max = EXCLUDED.salary_max,
-                            salary_currency = EXCLUDED.salary_currency,
-                            last_seen = NOW(),
-                            status = 'active',
-                            metadata = EXCLUDED.metadata
-                        RETURNING (xmax = 0) AS inserted
-                    """, (
-                        company_id, job['id'], job.get('title'), job.get('location'),
-                        job.get('department'), work_type, job.get('url'),
-                        job.get('posted_date'), job.get('salary_min'), job.get('salary_max'),
-                        job.get('salary_currency'), json.dumps(job.get('metadata', {}))
-                    ))
-                    was_inserted = cur.fetchone()[0]
-                    if was_inserted:
-                        new_count += 1
-                    else:
-                        updated_count += 1
-                
-                conn.commit()
-                
-                if new_locations:
-                    logger.info(f"📍 Detected {len(new_locations)} new location(s) for company {company_id}")
-                
-                logger.info(f"Job archive: +{new_count} new, ~{updated_count} updated, -{closed_count} closed")
-                return new_count, updated_count, closed_count
-    except Exception as e:
-        logger.error(f"Error archiving jobs: {e}")
-        return 0, 0, 0
+                        SELECT DISTINCT location 
+                        FROM job_archive 
+                        WHERE company_id = %s 
+                        AND location IS NOT NULL
+                    """, (company_id,))
+                    existing_locations = {row[0].lower() for row in cur.fetchall()}
+                    
+                    cur.execute("SELECT job_id FROM job_archive WHERE company_id = %s AND status = 'active'", (company_id,))
+                    current_job_ids = {row[0] for row in cur.fetchall()}
+                    new_job_ids = {job['id'] for job in jobs}
+                    closed_ids = current_job_ids - new_job_ids
+                    
+                    if closed_ids:
+                        cur.execute("UPDATE job_archive SET status = 'closed', closed_at = NOW() WHERE company_id = %s AND job_id = ANY(%s) AND status = 'active'", (company_id, list(closed_ids)))
+                        closed_count = cur.rowcount
+                    
+                    for job in jobs:
+                        # Infer work_type if not provided
+                        work_type = job.get('work_type')
+                        if not work_type or work_type.strip() == '':
     
     def backfill_work_types(self) -> int:
         """Backfill work_type for existing jobs that don't have it set"""
