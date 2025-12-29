@@ -312,77 +312,32 @@ def debug_analytics():
         return jsonify({'error': str(e), 'has_data': False}), 200
 
 @app.route('/api/analytics/advanced')
-@app.route('/api/advanced-analytics')
 @limiter.limit("30 per minute")
-def get_advanced_analytics():
-    """Get comprehensive advanced analytics"""
+@optional_auth
+def get_advanced_analytics_api():
+    """Get advanced analytics with optional cutoff date"""
     try:
+        cutoff_date = request.args.get('cutoff_date', None)
         db = get_db()
+        
+        # Temporarily update cutoff if provided
+        original_cutoff = None
+        if cutoff_date:
+            import database
+            original_cutoff = database.TRENDS_CUTOFF_DATE
+            database.TRENDS_CUTOFF_DATE = cutoff_date
+        
         analytics = db.get_advanced_analytics()
         
-        logger.info(f"Analytics data keys: {analytics.keys() if analytics else 'None'}")
-        
-        if not analytics:
-            return jsonify({
-                'top_skills': {},
-                'top_hiring_regions': {},
-                'department_distribution': {},
-                'work_type_distribution': {
-                    'remote': 0,
-                    'hybrid': 0,
-                    'onsite': 0,
-                    'remote_percent': 0,
-                    'hybrid_percent': 0,
-                    'onsite_percent': 0
-                },
-                'time_to_fill': {
-                    'sample_size': 0,
-                    'overall_avg_ttf_days': 0,
-                    'median_ttf_days': 0,
-                    'min_ttf_days': 0,
-                    'max_ttf_days': 0,
-                    'by_work_type': {},
-                    'by_department': {}
-                },
-                'fastest_growing': [],
-                'ats_distribution': [],
-                'salary_insights': {},
-                'top_companies': [],
-                'recent_events': []
-            }), 200
+        # Restore original cutoff
+        if original_cutoff:
+            import database
+            database.TRENDS_CUTOFF_DATE = original_cutoff
         
         return jsonify(analytics), 200
-        
     except Exception as e:
-        logger.error(f"Error getting advanced analytics: {e}", exc_info=True)
-        return jsonify({
-            'error': str(e),
-            'top_skills': {},
-            'top_hiring_regions': {},
-            'department_distribution': {},
-            'work_type_distribution': {
-                'remote': 0,
-                'hybrid': 0,
-                'onsite': 0,
-                'remote_percent': 0,
-                'hybrid_percent': 0,
-                'onsite_percent': 0
-            },
-            'time_to_fill': {
-                'sample_size': 0,
-                'overall_avg_ttf_days': 0,
-                'median_ttf_days': 0,
-                'min_ttf_days': 0,
-                'max_ttf_days': 0,
-                'by_work_type': {},
-                'by_department': {}
-            },
-            'fastest_growing': [],
-            'ats_distribution': [],
-            'salary_insights': {},
-            'top_companies': [],
-            'recent_events': []
-        }), 200
+        logger.error(f"Error getting advanced analytics: {e}")
+        return jsonify({'error': str(e)}), 500
 
 # ============================================================================
 # STATS & INTELLIGENCE
@@ -391,18 +346,37 @@ def get_advanced_analytics():
 @limiter.limit("30 per minute")
 @optional_auth
 def get_location_expansions_api():
-    """Get recent location expansion events"""
+    """Get recent location expansion events with optional cutoff date"""
     try:
         days = request.args.get('days', 30, type=int)
         days = min(days, 365)
+        cutoff_date = request.args.get('cutoff_date', TRENDS_CUTOFF_DATE)
         
         db = get_db()
-        expansions = db.get_location_expansions(days)
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT 
+                        c.company_name,
+                        ie.metadata->>'location' as new_location,
+                        ie.metadata->>'job_count' as job_count,
+                        ie.detected_at
+                    FROM intelligence_events ie
+                    JOIN companies c ON ie.company_id = c.id
+                    WHERE ie.event_type = 'location_expansion'
+                    AND ie.detected_at >= NOW() - INTERVAL %s
+                    AND ie.detected_at >= %s::timestamp
+                    ORDER BY ie.detected_at DESC
+                    LIMIT 50
+                """, (f'{days} days', cutoff_date))
+                columns = [desc[0] for desc in cur.description]
+                expansions = [dict(zip(columns, row)) for row in cur.fetchall()]
         
         return jsonify({
             'days': days,
             'total_expansions': len(expansions),
-            'expansions': expansions
+            'expansions': expansions,
+            'cutoff_date': cutoff_date
         }), 200
         
     except Exception as e:
@@ -471,59 +445,20 @@ def get_intelligence_events_api():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/stats')
-@limiter.limit(RATE_LIMITS['authenticated_read'])
-@require_api_key
-def api_stats():
+@limiter.limit("60 per minute")
+def get_stats():
+    """Get platform statistics with optional cutoff date"""
     try:
+        cutoff_date = request.args.get('cutoff_date', TRENDS_CUTOFF_DATE)
         db = get_db()
         stats = db.get_stats()
         
-        # Add work type distribution
-        with db.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT 
-                        COALESCE(LOWER(work_type), 'unknown') as work_type,
-                        COUNT(*) as count
-                    FROM job_archive
-                    WHERE status = 'active'
-                    GROUP BY LOWER(work_type)
-                """)
-                work_types = {
-                    'remote': 0,
-                    'hybrid': 0,
-                    'onsite': 0,
-                    'unknown': 0
-                }
-                
-                for row in cur.fetchall():
-                    work_type = row[0] if row[0] else 'unknown'
-                    count = row[1]
-                    
-                    # Map variations to standard types
-                    if work_type == 'unknown' or work_type is None:
-                        work_types['unknown'] += count
-                    elif 'remote' in work_type:
-                        work_types['remote'] += count
-                    elif 'hybrid' in work_type:
-                        work_types['hybrid'] += count
-                    elif any(x in work_type for x in ['onsite', 'on-site', 'office', 'on site']):
-                        work_types['onsite'] += count
-                    else:
-                        work_types['unknown'] += count
-                
-                stats['work_type_distribution'] = work_types
+        # Add cutoff date info
+        stats['cutoff_date'] = cutoff_date
         
-        stats.update({
-            'is_running': collection_state['is_running'],
-            'mode': collection_state['mode'],
-            'current_progress': collection_state['current_progress'],
-            'last_stats': collection_state['last_stats'],
-            'last_run': collection_state['last_run']
-        })
         return jsonify(stats), 200
     except Exception as e:
-        logger.error(f"Error getting stats: {e}", exc_info=True)
+        logger.error(f"Error getting stats: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/intel')
@@ -959,6 +894,38 @@ def init_database():
             'error': str(e)
         }), 500
 
+
+@app.route('/api/companies/top')
+@limiter.limit("60 per minute")
+@optional_auth
+def get_top_companies():
+    """Get top companies by job count with optional cutoff date"""
+    try:
+        limit = request.args.get('limit', 20, type=int)
+        limit = min(limit, 100)
+        cutoff_date = request.args.get('cutoff_date', TRENDS_CUTOFF_DATE)
+        
+        db = get_db()
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT c.id, c.company_name, c.ats_type, c.job_count, c.last_scraped
+                    FROM companies c
+                    WHERE c.last_scraped >= %s::timestamp
+                    ORDER BY c.job_count DESC
+                    LIMIT %s
+                """, (cutoff_date, limit))
+                columns = [desc[0] for desc in cur.description]
+                companies = [dict(zip(columns, row)) for row in cur.fetchall()]
+                
+        return jsonify({
+            'companies': companies,
+            'count': len(companies),
+            'cutoff_date': cutoff_date
+        }), 200
+    except Exception as e:
+        logger.error(f"Error getting top companies: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/trends/salary')
 @limiter.limit("30 per minute")
