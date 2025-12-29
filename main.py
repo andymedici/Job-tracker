@@ -241,6 +241,11 @@ def company_page(company_id):
 def jobs_page():
     return render_template('jobs.html')
 
+@app.route('/trends')
+def trends_page():
+    """Trends analysis page"""
+    return render_template('trends.html')
+
 @app.route('/submit-seed')
 @optional_auth
 def submit_seed_page():
