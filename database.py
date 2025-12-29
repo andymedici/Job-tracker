@@ -14,6 +14,10 @@ from psycopg2.pool import ThreadedConnectionPool
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Cutoff date for trend analysis (exclude old/test data)
+TRENDS_CUTOFF_DATE = os.getenv('TRENDS_CUTOFF_DATE', '2024-12-25 00:00:00')
+logger.info(f"📅 Trends cutoff date set to: {TRENDS_CUTOFF_DATE}")
+
 def infer_work_type(title: str, location: str, description: str = None) -> Optional[str]:
     """Infer work type from job title, location, and description"""
     text = f"{title} {location} {description or ''}".lower()
@@ -1318,11 +1322,11 @@ class Database:
             return {}
 
     # ========================================================================
-    # TRENDS & RETENTION METRICS
+    # TRENDS & RETENTION METRICS - WITH CONFIGURABLE CUTOFF DATE
     # ========================================================================
     
     def get_salary_trends(self, days=90):
-        """Get salary trends over time"""
+        """Get salary trends over time - filtered by configurable cutoff date"""
         with self.get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
@@ -1333,17 +1337,18 @@ class Database:
                         COUNT(*) as job_count
                     FROM job_archive
                     WHERE first_seen > NOW() - INTERVAL %s
+                    AND first_seen >= %s::timestamp
                     AND salary_min IS NOT NULL
                     AND salary_max IS NOT NULL
                     AND status = 'active'
                     GROUP BY week
                     ORDER BY week
-                """, (f'{days} days',))
+                """, (f'{days} days', TRENDS_CUTOFF_DATE))
                 
                 return [dict(row) for row in cur.fetchall()]
 
     def get_skills_trends(self, days=90):
-        """Get skills demand trends over time"""
+        """Get skills demand trends over time - filtered by configurable cutoff date"""
         with self.get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
@@ -1353,10 +1358,11 @@ class Database:
                         COUNT(*) as job_count
                     FROM job_archive
                     WHERE first_seen > NOW() - INTERVAL %s
+                    AND first_seen >= %s::timestamp
                     AND status = 'active'
                     GROUP BY week, title
                     ORDER BY week, job_count DESC
-                """, (f'{days} days',))
+                """, (f'{days} days', TRENDS_CUTOFF_DATE))
                 
                 weekly_data = {}
                 skills_to_track = [
@@ -1383,7 +1389,7 @@ class Database:
                 return weekly_data
 
     def get_company_growth_trend(self, company_id, days=90):
-        """Get job count trend for a specific company"""
+        """Get job count trend for a specific company - filtered by configurable cutoff date"""
         with self.get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
@@ -1396,14 +1402,15 @@ class Database:
                     FROM snapshots_6h
                     WHERE company_id = %s
                     AND snapshot_time > NOW() - INTERVAL %s
+                    AND snapshot_time >= %s::timestamp
                     GROUP BY DATE_TRUNC('day', snapshot_time)
                     ORDER BY date
-                """, (company_id, f'{days} days'))
+                """, (company_id, f'{days} days', TRENDS_CUTOFF_DATE))
                 
                 return [dict(row) for row in cur.fetchall()]
 
     def get_market_trends(self, days=90):
-        """Get overall market hiring trends"""
+        """Get overall market hiring trends - filtered by configurable cutoff date"""
         with self.get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
@@ -1414,14 +1421,15 @@ class Database:
                         AVG(job_count)::DECIMAL(10,2) as avg_jobs_per_company
                     FROM snapshots_6h
                     WHERE snapshot_time > NOW() - INTERVAL %s
+                    AND snapshot_time >= %s::timestamp
                     GROUP BY DATE_TRUNC('day', snapshot_time)
                     ORDER BY date
-                """, (f'{days} days',))
+                """, (f'{days} days', TRENDS_CUTOFF_DATE))
                 
                 return [dict(row) for row in cur.fetchall()]
 
     def get_department_growth_trends(self, days=90):
-        """Get hiring trends by department"""
+        """Get hiring trends by department - filtered by configurable cutoff date"""
         with self.get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
@@ -1431,11 +1439,12 @@ class Database:
                         COUNT(*) as new_jobs
                     FROM job_archive
                     WHERE first_seen > NOW() - INTERVAL %s
+                    AND first_seen >= %s::timestamp
                     AND department IS NOT NULL
                     AND status = 'active'
                     GROUP BY week, department
                     ORDER BY week, new_jobs DESC
-                """, (f'{days} days',))
+                """, (f'{days} days', TRENDS_CUTOFF_DATE))
                 
                 weekly_data = {}
                 for row in cur.fetchall():
