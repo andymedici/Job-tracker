@@ -669,7 +669,6 @@ def api_company_detail(company_id):
                     FROM job_archive
                     WHERE company_id = %s
                     ORDER BY status, first_seen DESC
-                    LIMIT 1000
                 """, (company_id,))
                 
                 jobs_columns = [desc[0] for desc in cur.description]
