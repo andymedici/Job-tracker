@@ -973,13 +973,16 @@ def add_indexes():
 # JOBS API
 # ============================================================================
 @app.route('/api/jobs')
-@limiter.limit(RATE_LIMITS['authenticated_read'])
-@require_api_key
+@limiter.limit("30 per minute")
+@optional_auth
 def get_jobs_api():
     """Get all jobs with filters"""
     try:
         db = get_db()
-        limit = int(request.args.get('limit', 5000))
+        
+        # Support higher limits
+        limit = int(request.args.get('limit', 50000))
+        limit = min(limit, 100000)  # Max 100k
         
         with db.get_connection() as conn:
             with conn.cursor() as cur:
@@ -1007,10 +1010,13 @@ def get_jobs_api():
                 cur.execute("SELECT COUNT(DISTINCT company_id) FROM job_archive WHERE status = 'active'")
                 total_companies = cur.fetchone()[0]
                 
+                logger.info(f"Jobs API: Returning {len(jobs)} jobs (limit: {limit})")
+                
                 return jsonify({
                     'jobs': jobs,
                     'total_jobs': len(jobs),
-                    'total_companies': total_companies
+                    'total_companies': total_companies,
+                    'limit_applied': limit
                 }), 200
     except Exception as e:
         logger.error(f"Error getting jobs: {e}")
