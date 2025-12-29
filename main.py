@@ -377,6 +377,89 @@ def get_advanced_analytics():
 # ============================================================================
 # STATS & INTELLIGENCE
 # ============================================================================
+@app.route('/api/intelligence/location-expansions')
+@limiter.limit("30 per minute")
+@optional_auth
+def get_location_expansions_api():
+    """Get recent location expansion events"""
+    try:
+        days = request.args.get('days', 30, type=int)
+        days = min(days, 365)
+        
+        db = get_db()
+        expansions = db.get_location_expansions(days)
+        
+        return jsonify({
+            'days': days,
+            'total_expansions': len(expansions),
+            'expansions': expansions
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting location expansions: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/intelligence/events')
+@limiter.limit("30 per minute")
+@optional_auth
+def get_intelligence_events_api():
+    """Get all intelligence events"""
+    try:
+        days = request.args.get('days', 30, type=int)
+        event_type = request.args.get('type', None)
+        
+        db = get_db()
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                if event_type:
+                    cur.execute("""
+                        SELECT 
+                            ie.id,
+                            ie.event_type,
+                            ie.severity,
+                            ie.metadata,
+                            ie.detected_at,
+                            c.company_name,
+                            c.id as company_id
+                        FROM intelligence_events ie
+                        JOIN companies c ON ie.company_id = c.id
+                        WHERE ie.detected_at >= NOW() - INTERVAL %s
+                        AND ie.event_type = %s
+                        ORDER BY ie.detected_at DESC
+                        LIMIT 100
+                    """, (f'{days} days', event_type))
+                else:
+                    cur.execute("""
+                        SELECT 
+                            ie.id,
+                            ie.event_type,
+                            ie.severity,
+                            ie.metadata,
+                            ie.detected_at,
+                            c.company_name,
+                            c.id as company_id
+                        FROM intelligence_events ie
+                        JOIN companies c ON ie.company_id = c.id
+                        WHERE ie.detected_at >= NOW() - INTERVAL %s
+                        ORDER BY ie.detected_at DESC
+                        LIMIT 100
+                    """, (f'{days} days',))
+                
+                columns = [desc[0] for desc in cur.description]
+                events = [dict(zip(columns, row)) for row in cur.fetchall()]
+                
+                return jsonify({
+                    'days': days,
+                    'event_type': event_type,
+                    'total_events': len(events),
+                    'events': events
+                }), 200
+                
+    except Exception as e:
+        logger.error(f"Error getting intelligence events: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/stats')
 @limiter.limit(RATE_LIMITS['authenticated_read'])
 @require_api_key
