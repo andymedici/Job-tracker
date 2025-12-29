@@ -19,7 +19,7 @@
         }
 
         .container {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
         }
 
@@ -103,6 +103,19 @@
             box-shadow: 0 10px 30px rgba(0,0,0,0.2);
         }
 
+        .action-card.featured {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .action-card.featured h3 {
+            color: white;
+        }
+
+        .action-card.featured p {
+            color: rgba(255,255,255,0.9);
+        }
+
         .action-card h3 {
             font-size: 1.3rem;
             color: #333;
@@ -113,6 +126,35 @@
             color: #666;
             margin-bottom: 20px;
             line-height: 1.5;
+        }
+
+        .input-group {
+            margin-bottom: 15px;
+        }
+
+        .input-group label {
+            display: block;
+            font-size: 0.9rem;
+            margin-bottom: 5px;
+            color: #333;
+        }
+
+        .action-card.featured .input-group label {
+            color: white;
+        }
+
+        .input-group input {
+            width: 100%;
+            padding: 10px 14px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-family: inherit;
+        }
+
+        .action-card.featured .input-group input {
+            background: rgba(255,255,255,0.95);
+            border-color: rgba(255,255,255,0.3);
         }
 
         .btn {
@@ -135,6 +177,17 @@
         .btn-primary:hover {
             transform: translateY(-2px);
             box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-white {
+            background: white;
+            color: #667eea;
+            border: 2px solid white;
+        }
+
+        .btn-white:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(255, 255, 255, 0.3);
         }
 
         .btn-warning {
@@ -301,15 +354,24 @@
         .log-entry.info {
             color: #17a2b8;
         }
+
+        .section-title {
+            color: white;
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin: 30px 0 15px 0;
+            padding: 10px 0;
+            border-bottom: 2px solid rgba(255,255,255,0.3);
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <a href="/" class="back-link">Back to Dashboard</a>
+        <a href="/dashboard" class="back-link">Back to Dashboard</a>
 
         <div class="header">
-            <h1>🌱 Seed Management</h1>
-            <p>Manage your company seed database and job data</p>
+            <h1>🌱 Seed & Discovery Management</h1>
+            <p>Manage your company seed database, discover new companies, and maintain job data</p>
         </div>
 
         <div id="alert" class="alert"></div>
@@ -333,7 +395,55 @@
             </div>
         </div>
 
+        <h2 class="section-title">🚀 Discovery & Collection</h2>
+
         <div class="actions-grid">
+            <div class="action-card featured">
+                <h3>🔍 Discover New Companies</h3>
+                <p>Scan through seed database to find new companies with active job postings. This is your primary way to grow the company database!</p>
+                <div class="input-group">
+                    <label for="discovery-max">Max Companies to Test</label>
+                    <input type="number" id="discovery-max" value="2000" min="100" max="5000">
+                </div>
+                <button class="btn btn-white" onclick="discoverCompanies()">🚀 Start Discovery</button>
+            </div>
+
+            <div class="action-card featured">
+                <h3>🔄 Refresh Existing Companies</h3>
+                <p>Update job data for companies already in your database. Keeps existing data fresh and detects closed positions.</p>
+                <div class="input-group">
+                    <label for="refresh-max">Max Companies to Refresh</label>
+                    <input type="number" id="refresh-max" value="500" min="50" max="1000">
+                </div>
+                <button class="btn btn-white" onclick="refreshCompanies()">🔄 Refresh Data</button>
+            </div>
+        </div>
+
+        <h2 class="section-title">🌱 Seed Expansion</h2>
+
+        <div class="actions-grid">
+            <div class="action-card">
+                <h3>🚀 Expand Tier 1</h3>
+                <p>Add 15,000-20,000 premium seeds from YC, GitHub, unicorns, and high-growth startups.</p>
+                <button class="btn btn-primary" onclick="expandTier1()">Expand Tier 1 Seeds</button>
+            </div>
+
+            <div class="action-card">
+                <h3>📊 Expand Tier 2</h3>
+                <p>Add 25,000-35,000 public company seeds from SEC, S&P 500, NASDAQ, Fortune 500, etc.</p>
+                <button class="btn btn-primary" onclick="expandTier2()">Expand Tier 2 Seeds</button>
+            </div>
+        </div>
+
+        <h2 class="section-title">🔧 Maintenance & Optimization</h2>
+
+        <div class="actions-grid">
+            <div class="action-card">
+                <h3>🗑️ Clean Garbage</h3>
+                <p>Remove obviously bad seeds (UI elements, special characters, etc.). Run this first!</p>
+                <button class="btn btn-warning" onclick="cleanGarbage()">Clean Garbage Seeds</button>
+            </div>
+
             <div class="action-card">
                 <h3>🔄 Reset Seeds</h3>
                 <p>Reset test counters for seeds tested 1-2 times. Gives them fresh chances without deleting data.</p>
@@ -347,27 +457,9 @@
             </div>
 
             <div class="action-card">
-                <h3>🗑️ Clean Garbage</h3>
-                <p>Remove obviously bad seeds (UI elements, special characters, etc.). Run this first!</p>
-                <button class="btn btn-warning" onclick="cleanGarbage()">Clean Garbage Seeds</button>
-            </div>
-
-            <div class="action-card">
                 <h3>🔧 Backfill Work Types</h3>
                 <p>Analyze existing jobs and infer Remote/Hybrid/Onsite from titles and locations. Fixes analytics!</p>
                 <button class="btn btn-success" onclick="backfillWorkTypes()">Backfill Work Types</button>
-            </div>
-
-            <div class="action-card">
-                <h3>🚀 Expand Tier 1</h3>
-                <p>Add 15,000-20,000 premium seeds from YC, GitHub, unicorns, and high-growth startups.</p>
-                <button class="btn btn-primary" onclick="expandTier1()">Expand Tier 1 Seeds</button>
-            </div>
-
-            <div class="action-card">
-                <h3>📊 Expand Tier 2</h3>
-                <p>Add 25,000-35,000 public company seeds from SEC, S&P 500, NASDAQ, Fortune 500, etc.</p>
-                <button class="btn btn-primary" onclick="expandTier2()">Expand Tier 2 Seeds</button>
             </div>
 
             <div class="action-card">
@@ -431,6 +523,89 @@
                 document.getElementById('success-rate').textContent = data.avg_success_rate.toFixed(1) + '%';
             } catch (error) {
                 console.error('Error loading stats:', error);
+            }
+        }
+
+        async function discoverCompanies() {
+            const maxCompanies = parseInt(document.getElementById('discovery-max').value);
+            
+            if (maxCompanies < 100 || maxCompanies > 5000) {
+                showAlert('Please enter a value between 100 and 5000', 'error');
+                return;
+            }
+
+            if (!confirm(`Start discovery for up to ${maxCompanies.toLocaleString()} companies? This will test seeds and discover new companies with job postings.`)) {
+                return;
+            }
+            
+            showLoading(`Starting discovery for ${maxCompanies.toLocaleString()} companies...`);
+            addLog(`Starting company discovery (max: ${maxCompanies})...`, 'info');
+            
+            try {
+                const response = await fetch('/api/collect', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({max_companies: maxCompanies})
+                });
+                
+                const data = await response.json();
+                hideLoading();
+                
+                if (response.ok) {
+                    showAlert(`✅ Discovery started! Check logs for progress. This will take several minutes.`, 'success');
+                    addLog(`Discovery started successfully. Testing up to ${maxCompanies} companies...`, 'success');
+                    addLog('This process runs in the background. Check back in 10-20 minutes.', 'info');
+                } else {
+                    showAlert(data.error || 'Failed to start discovery', 'error');
+                    addLog(`Error: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                hideLoading();
+                showAlert('Network error. Please try again.', 'error');
+                addLog(`Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function refreshCompanies() {
+            const maxCompanies = parseInt(document.getElementById('refresh-max').value);
+            
+            if (maxCompanies < 50 || maxCompanies > 1000) {
+                showAlert('Please enter a value between 50 and 1000', 'error');
+                return;
+            }
+
+            if (!confirm(`Refresh up to ${maxCompanies.toLocaleString()} existing companies? This will update their job listings.`)) {
+                return;
+            }
+            
+            showLoading(`Refreshing ${maxCompanies.toLocaleString()} companies...`);
+            addLog(`Starting company refresh (max: ${maxCompanies})...`, 'info');
+            
+            try {
+                const response = await fetch('/api/refresh', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        max_companies: maxCompanies,
+                        hours_since_update: 24
+                    })
+                });
+                
+                const data = await response.json();
+                hideLoading();
+                
+                if (response.ok || data.success) {
+                    showAlert(`✅ Refresh started! This will take several minutes.`, 'success');
+                    addLog(`Refresh started successfully for ${maxCompanies} companies...`, 'success');
+                    addLog('This process runs in the background. Check back in 5-10 minutes.', 'info');
+                } else {
+                    showAlert(data.error || 'Failed to start refresh', 'error');
+                    addLog(`Error: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                hideLoading();
+                showAlert('Network error. Please try again.', 'error');
+                addLog(`Error: ${error.message}`, 'error');
             }
         }
 
