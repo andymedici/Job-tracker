@@ -258,6 +258,11 @@ def salary_insights_page():
     """Salary insights page"""
     return render_template('salary-insights.html')
 
+@app.route('/intelligence')
+def intelligence_page():
+    """Intelligence alerts page"""
+    return render_template('intelligence.html')
+
 # ============================================================================
 # ANALYTICS ENDPOINTS - FIXED
 # ============================================================================
