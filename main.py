@@ -214,6 +214,34 @@ def index():
         }
     }), 200
 
+@app.route('/api/seeds/expand-advanced', methods=['POST'])
+@limiter.limit(RATE_LIMITS['write'])
+def expand_advanced_seeds():
+    """Expand seeds using advanced multi-source collection"""
+    try:
+        def run_expansion():
+            try:
+                logger.info("Starting advanced seed expansion...")
+                import seed_sources
+                added = asyncio.run(seed_sources.run_advanced_seed_collection())
+                logger.info(f"✅ Advanced expansion complete: {added} seeds added")
+            except Exception as e:
+                logger.error(f"❌ Advanced seed expansion failed: {e}", exc_info=True)
+        
+        # Start in background
+        thread = threading.Thread(target=run_expansion, daemon=True)
+        thread.start()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Advanced seed expansion started in background',
+            'note': 'This will collect from 7+ premium sources. Check logs for progress.'
+        }), 202
+        
+    except Exception as e:
+        logger.error(f"Error in advanced seed expansion: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 # ============================================================================
 # PAGE ROUTES
 # ============================================================================
