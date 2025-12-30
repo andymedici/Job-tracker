@@ -797,6 +797,36 @@
             }
         }
 
+        async function expandAdvanced() {
+            if (!confirm('Start advanced multi-source seed expansion? This will collect from 7+ sources and may take 3-5 minutes.')) return;
+    
+            showLoading('Collecting seeds from multiple sources... (this may take 3-5 minutes)');
+            addLog('Starting advanced seed expansion...', 'info');
+    
+            try {
+                const response = await fetch('/api/seeds/expand-advanced', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'}
+                });
+        
+                const data = await response.json();
+                hideLoading();
+        
+            if (response.ok) {
+                showAlert(`✅ Advanced expansion started! Check logs for progress.`, 'success');
+                addLog('Advanced expansion running in background...', 'success');
+                addLog('Collecting from: Awesome Career Pages, YC, Unicorns, Forbes, Inc 5000, Tech Giants, Healthcare', 'info');
+            } else {
+                showAlert(data.error || 'Failed to start advanced expansion', 'error');
+                addLog(`Error: ${data.error}`, 'error');
+             }
+            } catch (error) {
+        hideLoading();
+        showAlert('Network error. Please try again.', 'error');
+        addLog(`Error: ${error.message}`, 'error');
+    }
+}
+ 
         async function nuclearReset() {
             const confirmed = confirm('⚠️ WARNING: This will reset ALL seeds to untested status. Are you absolutely sure?');
             if (!confirmed) return;
