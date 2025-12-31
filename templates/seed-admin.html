@@ -63,6 +63,18 @@
             font-size: 1.1rem;
         }
 
+        .upgrade-badge {
+            display: inline-block;
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            color: white;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-left: 10px;
+            vertical-align: middle;
+        }
+
         .stats-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
@@ -87,6 +99,10 @@
             font-size: 2.5rem;
             font-weight: 700;
             color: #667eea;
+        }
+
+        .stat-value.small {
+            font-size: 1.5rem;
         }
 
         .actions-grid {
@@ -116,6 +132,45 @@
             color: rgba(255,255,255,0.9);
         }
 
+        .action-card.v7 {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            color: white;
+        }
+
+        .action-card.v7 h3 {
+            color: white;
+        }
+
+        .action-card.v7 p {
+            color: rgba(255,255,255,0.9);
+        }
+
+        .action-card.mega {
+            background: linear-gradient(135deg, #fc4a1a 0%, #f7b733 100%);
+            color: white;
+        }
+
+        .action-card.mega h3 {
+            color: white;
+        }
+
+        .action-card.mega p {
+            color: rgba(255,255,255,0.9);
+        }
+
+        .action-card.growth {
+            background: linear-gradient(135deg, #4776E6 0%, #8E54E9 100%);
+            color: white;
+        }
+
+        .action-card.growth h3 {
+            color: white;
+        }
+
+        .action-card.growth p {
+            color: rgba(255,255,255,0.9);
+        }
+
         .action-card h3 {
             font-size: 1.3rem;
             color: #333;
@@ -126,6 +181,23 @@
             color: #666;
             margin-bottom: 20px;
             line-height: 1.5;
+        }
+
+        .feature-list {
+            list-style: none;
+            margin: 15px 0;
+            padding: 0;
+        }
+
+        .feature-list li {
+            padding: 5px 0;
+            font-size: 0.9rem;
+            opacity: 0.9;
+        }
+
+        .feature-list li::before {
+            content: '✓ ';
+            font-weight: bold;
         }
 
         .input-group {
@@ -139,11 +211,14 @@
             color: #333;
         }
 
-        .action-card.featured .input-group label {
+        .action-card.featured .input-group label,
+        .action-card.v7 .input-group label,
+        .action-card.mega .input-group label,
+        .action-card.growth .input-group label {
             color: white;
         }
 
-        .input-group input {
+        .input-group input, .input-group select {
             width: 100%;
             padding: 10px 14px;
             border: 2px solid #e0e0e0;
@@ -152,7 +227,14 @@
             font-family: inherit;
         }
 
-        .action-card.featured .input-group input {
+        .action-card.featured .input-group input,
+        .action-card.v7 .input-group input,
+        .action-card.mega .input-group input,
+        .action-card.growth .input-group input,
+        .action-card.featured .input-group select,
+        .action-card.v7 .input-group select,
+        .action-card.mega .input-group select,
+        .action-card.growth .input-group select {
             background: rgba(255,255,255,0.95);
             border-color: rgba(255,255,255,0.3);
         }
@@ -363,6 +445,37 @@
             padding: 10px 0;
             border-bottom: 2px solid rgba(255,255,255,0.3);
         }
+
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .status-indicator.available {
+            background: #38ef7d;
+            box-shadow: 0 0 10px rgba(56, 239, 125, 0.5);
+        }
+
+        .status-indicator.unavailable {
+            background: #dc3545;
+        }
+
+        .module-status {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            margin-top: 15px;
+        }
+
+        .module-status-item {
+            display: flex;
+            align-items: center;
+            font-size: 0.9rem;
+            color: #666;
+        }
     </style>
 </head>
 <body>
@@ -370,8 +483,11 @@
         <a href="/dashboard" class="back-link">Back to Dashboard</a>
 
         <div class="header">
-            <h1>🌱 Seed & Discovery Management</h1>
+            <h1>🌱 Seed & Discovery Management <span class="upgrade-badge">V7 UPGRADED</span></h1>
             <p>Manage your company seed database, discover new companies, and maintain job data</p>
+            <div class="module-status" id="module-status">
+                <!-- Populated by JS -->
+            </div>
         </div>
 
         <div id="alert" class="alert"></div>
@@ -393,19 +509,84 @@
                 <div class="stat-label">Success Rate</div>
                 <div class="stat-value" id="success-rate">-</div>
             </div>
+            <div class="stat-card">
+                <div class="stat-label">V7 Last Run</div>
+                <div class="stat-value small" id="v7-last-run">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">V7 Status</div>
+                <div class="stat-value small" id="v7-status">-</div>
+            </div>
         </div>
 
-        <h2 class="section-title">🚀 Discovery & Collection</h2>
+        <!-- NEW: V7 UPGRADE SECTION -->
+        <h2 class="section-title">⚡ V7 Upgraded Discovery (NEW)</h2>
+
+        <div class="actions-grid">
+            <div class="action-card v7">
+                <h3>🚀 V7 Discovery Engine</h3>
+                <p>Next-gen collector with 15 ATS types, parallel testing, and aggressive token generation. 4x faster than legacy!</p>
+                <ul class="feature-list">
+                    <li>15 ATS types (was 7)</li>
+                    <li>Parallel testing - 4x faster</li>
+                    <li>50+ token variations per company</li>
+                    <li>Auto-discovery from job descriptions</li>
+                </ul>
+                <div class="input-group">
+                    <label for="v7-max-seeds">Max Seeds to Test</label>
+                    <input type="number" id="v7-max-seeds" value="500" min="50" max="2000">
+                </div>
+                <button class="btn btn-white" onclick="runV7Discovery()">🚀 Run V7 Discovery</button>
+            </div>
+
+            <div class="action-card mega">
+                <h3>🌍 Mega Seed Expansion</h3>
+                <p>Expand to 50,000+ seeds from 20+ premium sources including YC, VC portfolios, Inc 5000, Forbes lists!</p>
+                <ul class="feature-list">
+                    <li>Y Combinator (4,000+ companies)</li>
+                    <li>40 VC portfolios (10,000+ companies)</li>
+                    <li>Inc 5000, Forbes Cloud 100</li>
+                    <li>SEC EDGAR, GitHub Awesome Lists</li>
+                </ul>
+                <div class="input-group">
+                    <label for="mega-tiers">Expansion Tiers</label>
+                    <select id="mega-tiers">
+                        <option value="1">Tier 1 only (Premium - 10k seeds)</option>
+                        <option value="1,2" selected>Tier 1 + 2 (Recommended - 30k seeds)</option>
+                        <option value="1,2,3">All Tiers (Maximum - 50k+ seeds)</option>
+                    </select>
+                </div>
+                <button class="btn btn-white" onclick="runMegaExpansion()">🌍 Run Mega Expansion</button>
+            </div>
+
+            <div class="action-card growth">
+                <h3>🧠 Self-Growth Intelligence</h3>
+                <p>AI discovers new companies from your existing data - partners, customers, competitors mentioned in jobs!</p>
+                <ul class="feature-list">
+                    <li>Mines job descriptions for mentions</li>
+                    <li>Crawls company websites</li>
+                    <li>Monitors funding news</li>
+                    <li>Auto-promotes to seeds</li>
+                </ul>
+                <div class="input-group">
+                    <label for="growth-limit">Companies to Analyze</label>
+                    <input type="number" id="growth-limit" value="200" min="50" max="500">
+                </div>
+                <button class="btn btn-white" onclick="runSelfGrowth()">🧠 Run Self-Growth</button>
+            </div>
+        </div>
+
+        <h2 class="section-title">🚀 Legacy Discovery & Collection</h2>
 
         <div class="actions-grid">
             <div class="action-card featured">
-                <h3>🔍 Discover New Companies</h3>
-                <p>Scan through seed database to find new companies with active job postings. This is your primary way to grow the company database!</p>
+                <h3>🔍 Discover New Companies (Legacy)</h3>
+                <p>Original collector - use V7 above for better results! Scans seeds to find companies with job postings.</p>
                 <div class="input-group">
                     <label for="discovery-max">Max Companies to Test</label>
                     <input type="number" id="discovery-max" value="2000" min="100" max="5000">
                 </div>
-                <button class="btn btn-white" onclick="discoverCompanies()">🚀 Start Discovery</button>
+                <button class="btn btn-white" onclick="discoverCompanies()">🔍 Start Legacy Discovery</button>
             </div>
 
             <div class="action-card featured">
@@ -419,24 +600,24 @@
             </div>
         </div>
 
-        <h2 class="section-title">🌱 Seed Expansion</h2>
+        <h2 class="section-title">🌱 Legacy Seed Expansion</h2>
 
         <div class="actions-grid">
             <div class="action-card">
-                <h3>🚀 Expand Tier 1</h3>
+                <h3>🚀 Expand Tier 1 (Legacy)</h3>
                 <p>Add 15,000-20,000 premium seeds from YC, GitHub, unicorns, and high-growth startups.</p>
                 <button class="btn btn-primary" onclick="expandTier1()">Expand Tier 1 Seeds</button>
             </div>
 
             <div class="action-card">
-                <h3>📊 Expand Tier 2</h3>
+                <h3>📊 Expand Tier 2 (Legacy)</h3>
                 <p>Add 25,000-35,000 public company seeds from SEC, S&P 500, NASDAQ, Fortune 500, etc.</p>
                 <button class="btn btn-primary" onclick="expandTier2()">Expand Tier 2 Seeds</button>
             </div>
 
             <div class="action-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white;">
-                <h3 style="color: white;">⚡ Advanced Multi-Source Expansion</h3>
-                <p style="color: rgba(255,255,255,0.9);">Collect 10,000-50,000 seeds from 7+ premium sources: Awesome Career Pages, Y Combinator, Unicorns, Forbes Cloud 100, Inc 5000, Tech Giants, Healthcare companies.</p>
+                <h3 style="color: white;">⚡ Advanced Multi-Source (Legacy)</h3>
+                <p style="color: rgba(255,255,255,0.9);">Collect 10,000-50,000 seeds from 7+ premium sources. Use Mega Expansion above for more sources!</p>
                 <button class="btn btn-white" onclick="expandAdvanced()">⚡ Start Advanced Expansion</button>
             </div>
             
@@ -525,14 +706,202 @@
                 const response = await fetch('/api/seeds/stats');
                 const data = await response.json();
                 
-                document.getElementById('total-seeds').textContent = data.total_seeds.toLocaleString();
-                document.getElementById('never-tested').textContent = data.never_tested.toLocaleString();
-                document.getElementById('blacklisted').textContent = data.blacklisted.toLocaleString();
-                document.getElementById('success-rate').textContent = data.avg_success_rate.toFixed(1) + '%';
+                document.getElementById('total-seeds').textContent = data.total_seeds?.toLocaleString() || '-';
+                document.getElementById('never-tested').textContent = data.never_tested?.toLocaleString() || '-';
+                document.getElementById('blacklisted').textContent = data.blacklisted?.toLocaleString() || '-';
+                document.getElementById('success-rate').textContent = (data.avg_success_rate?.toFixed(1) || '0') + '%';
             } catch (error) {
                 console.error('Error loading stats:', error);
             }
         }
+
+        async function loadV7Status() {
+            try {
+                const response = await fetch('/api/collect/v7/status');
+                const data = await response.json();
+                
+                // Update V7 status
+                document.getElementById('v7-status').textContent = data.is_running ? '🔄 Running' : '✅ Ready';
+                document.getElementById('v7-last-run').textContent = data.last_run 
+                    ? new Date(data.last_run).toLocaleString() 
+                    : 'Never';
+                
+                // Update module status indicators
+                const moduleStatus = document.getElementById('module-status');
+                moduleStatus.innerHTML = `
+                    <div class="module-status-item">
+                        <span class="status-indicator ${data.available ? 'available' : 'unavailable'}"></span>
+                        V7 Collector
+                    </div>
+                `;
+            } catch (error) {
+                console.error('Error loading V7 status:', error);
+                document.getElementById('v7-status').textContent = '❌ Unavailable';
+            }
+        }
+
+        async function loadModuleStatus() {
+            try {
+                const response = await fetch('/api/stats');
+                const data = await response.json();
+                
+                if (data.upgrade_modules) {
+                    const moduleStatus = document.getElementById('module-status');
+                    moduleStatus.innerHTML = `
+                        <div class="module-status-item">
+                            <span class="status-indicator ${data.upgrade_modules.collector_v7 ? 'available' : 'unavailable'}"></span>
+                            V7 Collector
+                        </div>
+                        <div class="module-status-item">
+                            <span class="status-indicator ${data.upgrade_modules.mega_expander ? 'available' : 'unavailable'}"></span>
+                            Mega Expander
+                        </div>
+                        <div class="module-status-item">
+                            <span class="status-indicator ${data.upgrade_modules.self_growth ? 'available' : 'unavailable'}"></span>
+                            Self-Growth
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Error loading module status:', error);
+            }
+        }
+
+        // =====================================================================
+        // V7 UPGRADE FUNCTIONS
+        // =====================================================================
+
+        async function runV7Discovery() {
+            const maxSeeds = parseInt(document.getElementById('v7-max-seeds').value);
+            
+            if (maxSeeds < 50 || maxSeeds > 2000) {
+                showAlert('Please enter a value between 50 and 2000', 'error');
+                return;
+            }
+
+            if (!confirm(`Start V7 Discovery for up to ${maxSeeds.toLocaleString()} seeds?\n\nThis uses the upgraded collector with:\n• 15 ATS types\n• Parallel testing (4x faster)\n• Aggressive token generation`)) {
+                return;
+            }
+            
+            showLoading(`Starting V7 Discovery for ${maxSeeds.toLocaleString()} seeds...`);
+            addLog(`🚀 Starting V7 Discovery (max: ${maxSeeds})...`, 'info');
+            
+            try {
+                const response = await fetch('/api/collect/v7', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({max_seeds: maxSeeds})
+                });
+                
+                const data = await response.json();
+                hideLoading();
+                
+                if (response.ok && data.success) {
+                    showAlert(`✅ V7 Discovery started! Check logs for progress.`, 'success');
+                    addLog(`V7 Discovery started successfully!`, 'success');
+                    addLog(`Features: ${data.features?.join(', ') || '15 ATS types, parallel testing'}`, 'info');
+                    addLog('This runs in background. Refresh page in 5-10 minutes to see results.', 'info');
+                    loadV7Status();
+                } else {
+                    showAlert(data.error || 'Failed to start V7 discovery', 'error');
+                    addLog(`Error: ${data.error || data.message}`, 'error');
+                }
+            } catch (error) {
+                hideLoading();
+                showAlert('Network error. Please try again.', 'error');
+                addLog(`Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function runMegaExpansion() {
+            const tiers = document.getElementById('mega-tiers').value;
+            const tierList = tiers.split(',').map(t => parseInt(t.trim()));
+            
+            const tierNames = {
+                1: 'Premium (YC, VCs, Forbes)',
+                2: 'Public (SEC, Inc 5000)',
+                3: 'Supplemental (Product Hunt, AngelList)'
+            };
+            const selectedTiers = tierList.map(t => tierNames[t]).join(', ');
+
+            if (!confirm(`Start Mega Seed Expansion?\n\nTiers: ${selectedTiers}\n\nThis will collect from 20+ sources and may add 10,000-50,000 new seeds!`)) {
+                return;
+            }
+            
+            showLoading(`Starting Mega Expansion for tiers ${tiers}...`);
+            addLog(`🌍 Starting Mega Seed Expansion (tiers: ${tiers})...`, 'info');
+            
+            try {
+                const response = await fetch('/api/seeds/expand-mega', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({tiers: tierList})
+                });
+                
+                const data = await response.json();
+                hideLoading();
+                
+                if (response.ok && data.success) {
+                    showAlert(`✅ Mega Expansion started!`, 'success');
+                    addLog(`Mega Expansion started successfully!`, 'success');
+                    addLog(`Sources: ${data.sources || '20+ premium sources'}`, 'info');
+                    addLog(`Expected seeds: ${data.expected_seeds || '10,000-50,000'}`, 'info');
+                    addLog('This runs in background. Check back in 5-10 minutes.', 'info');
+                } else {
+                    showAlert(data.error || 'Failed to start mega expansion', 'error');
+                    addLog(`Error: ${data.error || data.message}`, 'error');
+                }
+            } catch (error) {
+                hideLoading();
+                showAlert('Network error. Please try again.', 'error');
+                addLog(`Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function runSelfGrowth() {
+            const limit = parseInt(document.getElementById('growth-limit').value);
+            
+            if (limit < 50 || limit > 500) {
+                showAlert('Please enter a value between 50 and 500', 'error');
+                return;
+            }
+
+            if (!confirm(`Start Self-Growth Analysis on ${limit} companies?\n\nThis will:\n• Mine job descriptions for company mentions\n• Look for partners, customers, competitors\n• Auto-promote high-confidence discoveries to seeds`)) {
+                return;
+            }
+            
+            showLoading(`Starting Self-Growth Analysis on ${limit} companies...`);
+            addLog(`🧠 Starting Self-Growth Analysis (limit: ${limit})...`, 'info');
+            
+            try {
+                const response = await fetch('/api/self-growth/run', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({limit: limit})
+                });
+                
+                const data = await response.json();
+                hideLoading();
+                
+                if (response.ok && data.success) {
+                    showAlert(`✅ Self-Growth Analysis started!`, 'success');
+                    addLog(`Self-Growth Analysis started successfully!`, 'success');
+                    addLog(`Features: ${data.features?.join(', ') || 'job mining, website crawling, news monitoring'}`, 'info');
+                    addLog('Discoveries will be auto-promoted to seeds. Check logs for details.', 'info');
+                } else {
+                    showAlert(data.error || 'Failed to start self-growth', 'error');
+                    addLog(`Error: ${data.error || data.message}`, 'error');
+                }
+            } catch (error) {
+                hideLoading();
+                showAlert('Network error. Please try again.', 'error');
+                addLog(`Error: ${error.message}`, 'error');
+            }
+        }
+
+        // =====================================================================
+        // LEGACY FUNCTIONS (unchanged)
+        // =====================================================================
 
         async function discoverCompanies() {
             const maxCompanies = parseInt(document.getElementById('discovery-max').value);
@@ -542,12 +911,12 @@
                 return;
             }
 
-            if (!confirm(`Start discovery for up to ${maxCompanies.toLocaleString()} companies? This will test seeds and discover new companies with job postings.`)) {
+            if (!confirm(`Start legacy discovery for up to ${maxCompanies.toLocaleString()} companies?\n\n💡 Tip: Try V7 Discovery above for better results!`)) {
                 return;
             }
             
             showLoading(`Starting discovery for ${maxCompanies.toLocaleString()} companies...`);
-            addLog(`Starting company discovery (max: ${maxCompanies})...`, 'info');
+            addLog(`Starting legacy company discovery (max: ${maxCompanies})...`, 'info');
             
             try {
                 const response = await fetch('/api/collect', {
@@ -738,7 +1107,7 @@
         }
 
         async function expandTier1() {
-            if (!confirm('Add 15,000-20,000 Tier 1 seeds? This may take 2-3 minutes.')) return;
+            if (!confirm('Add 15,000-20,000 Tier 1 seeds? This may take 2-3 minutes.\n\n💡 Tip: Try Mega Expansion above for more sources!')) return;
             
             showLoading('Expanding Tier 1 seeds... (this may take 2-3 minutes)');
             addLog('Starting Tier 1 expansion...', 'info');
@@ -768,7 +1137,7 @@
         }
 
         async function expandTier2() {
-            if (!confirm('Add 25,000-35,000 Tier 2 seeds? This may take 3-5 minutes.')) return;
+            if (!confirm('Add 25,000-35,000 Tier 2 seeds? This may take 3-5 minutes.\n\n💡 Tip: Try Mega Expansion above for more sources!')) return;
             
             showLoading('Expanding Tier 2 seeds... (this may take 3-5 minutes)');
             addLog('Starting Tier 2 expansion...', 'info');
@@ -798,34 +1167,34 @@
         }
 
         async function expandAdvanced() {
-            if (!confirm('Start advanced multi-source seed expansion? This will collect from 7+ sources and may take 3-5 minutes.')) return;
+            if (!confirm('Start advanced multi-source seed expansion? This will collect from 7+ sources and may take 3-5 minutes.\n\n💡 Tip: Try Mega Expansion above for 20+ sources!')) return;
     
             showLoading('Collecting seeds from multiple sources... (this may take 3-5 minutes)');
             addLog('Starting advanced seed expansion...', 'info');
     
             try {
                 const response = await fetch('/api/seeds/expand-advanced', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'}
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
                 });
         
                 const data = await response.json();
                 hideLoading();
         
-            if (response.ok) {
-                showAlert(`✅ Advanced expansion started! Check logs for progress.`, 'success');
-                addLog('Advanced expansion running in background...', 'success');
-                addLog('Collecting from: Awesome Career Pages, YC, Unicorns, Forbes, Inc 5000, Tech Giants, Healthcare', 'info');
-            } else {
-                showAlert(data.error || 'Failed to start advanced expansion', 'error');
-                addLog(`Error: ${data.error}`, 'error');
-             }
+                if (response.ok) {
+                    showAlert(`✅ Advanced expansion started! Check logs for progress.`, 'success');
+                    addLog('Advanced expansion running in background...', 'success');
+                    addLog('Collecting from: Awesome Career Pages, YC, Unicorns, Forbes, Inc 5000, Tech Giants, Healthcare', 'info');
+                } else {
+                    showAlert(data.error || 'Failed to start advanced expansion', 'error');
+                    addLog(`Error: ${data.error}`, 'error');
+                }
             } catch (error) {
-        hideLoading();
-        showAlert('Network error. Please try again.', 'error');
-        addLog(`Error: ${error.message}`, 'error');
-    }
-}
+                hideLoading();
+                showAlert('Network error. Please try again.', 'error');
+                addLog(`Error: ${error.message}`, 'error');
+            }
+        }
  
         async function nuclearReset() {
             const confirmed = confirm('⚠️ WARNING: This will reset ALL seeds to untested status. Are you absolutely sure?');
@@ -863,9 +1232,12 @@
 
         // Load stats on page load
         loadStats();
+        loadV7Status();
+        loadModuleStatus();
         
         // Refresh stats every 30 seconds
         setInterval(loadStats, 30000);
+        setInterval(loadV7Status, 30000);
     </script>
 </body>
 </html>
