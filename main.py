@@ -188,7 +188,8 @@ def scheduled_v7_discovery():
         v7_collection_state['started_at'] = datetime.now(timezone.utc).isoformat()
         
         # Run V7 collector
-        stats = asyncio.run(collector_v7.run_v7_discovery(max_seeds=500))
+        db = get_db()  # <-- ADD THIS
+        stats = asyncio.run(collector_v7.run_discovery(db=db, max_seeds=500))
         
         v7_collection_state['last_stats'] = stats
         v7_collection_state['last_run'] = datetime.now(timezone.utc).isoformat()
