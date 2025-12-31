@@ -490,8 +490,19 @@ class GreenhouseScraper(ATSScraper):
 class LeverScraper(ATSScraper):
     """Lever ATS scraper"""
     
+    # Blacklist generic words
+    BLACKLISTED_TOKENS = {
+        'better', 'ecosystem', 'signal', 'choose', 'color', 'super', 'future',
+        'test', 'demo', 'jobs', 'careers', 'team', 'work', 'hire', 'company',
+        'the', 'and', 'for', 'with', 'about', 'home', 'main', 'app', 'web'
+    }
+    
     async def check_token(self, token: str) -> Optional[CompanyJobBoard]:
         """Check if a Lever token is valid and fetch jobs"""
+        # Skip short or blacklisted tokens
+        if len(token) < 3 or token.lower() in self.BLACKLISTED_TOKENS:
+            return None
+            
         url = f"https://api.lever.co/v0/postings/{token}?mode=json"
         data = await self.fetch(url)
         
@@ -622,8 +633,15 @@ class WorkdayScraper(ATSScraper):
     
     WORKDAY_PATTERNS = ['wd5', 'wd1', 'wd3', 'wd12']
     
+    # Blacklist ambiguous/generic short tokens
+    BLACKLISTED_TOKENS = {'ms', 'hr', 'it', 'us', 'uk', 'eu', 'ca', 'au', 'in', 'jp', 'de', 'fr', 'test', 'demo', 'jobs', 'careers'}
+    
     async def check_token(self, token: str) -> Optional[CompanyJobBoard]:
         """Try multiple Workday URL patterns"""
+        # Skip very short or blacklisted tokens
+        if len(token) < 3 or token.lower() in self.BLACKLISTED_TOKENS:
+            return None
+            
         for pattern in self.WORKDAY_PATTERNS:
             # Try different URL formats
             urls = [
@@ -790,8 +808,20 @@ class WorkableScraper(ATSScraper):
 class RecruiteeScraper(ATSScraper):
     """Recruitee ATS scraper"""
     
+    # Blacklist generic words that match random companies
+    BLACKLISTED_TOKENS = {
+        'library', 'manual', 'blue', 'flow', 'tech', 'pay', 'adam', 'max', 
+        'clay', 'nuvo', 'oculus', 'color', 'securing', 'onboarding', 'lindy',
+        'test', 'demo', 'jobs', 'careers', 'team', 'work', 'hire', 'staff',
+        'the', 'and', 'for', 'with', 'from', 'about', 'home', 'main', 'info'
+    }
+    
     async def check_token(self, token: str) -> Optional[CompanyJobBoard]:
         """Check Recruitee API"""
+        # Skip short or blacklisted tokens
+        if len(token) < 3 or token.lower() in self.BLACKLISTED_TOKENS:
+            return None
+            
         url = f"https://{token}.recruitee.com/api/offers"
         data = await self.fetch(url)
         
@@ -839,8 +869,18 @@ class RecruiteeScraper(ATSScraper):
 class SmartRecruitersScraper(ATSScraper):
     """SmartRecruiters ATS scraper"""
     
+    # Blacklist generic words
+    BLACKLISTED_TOKENS = {
+        'entropik', '2019', 'test', 'demo', 'jobs', 'careers', 'team', 'work',
+        'the', 'and', 'for', 'with', 'about', 'home', 'main', 'app', 'web', 'api'
+    }
+    
     async def check_token(self, token: str) -> Optional[CompanyJobBoard]:
         """Check SmartRecruiters API"""
+        # Skip short or blacklisted tokens
+        if len(token) < 3 or token.lower() in self.BLACKLISTED_TOKENS:
+            return None
+            
         url = f"https://api.smartrecruiters.com/v1/companies/{token}/postings"
         data = await self.fetch(url)
         
@@ -898,8 +938,18 @@ class SmartRecruitersScraper(ATSScraper):
 class BreezyScraper(ATSScraper):
     """Breezy HR ATS scraper"""
     
+    # Blacklist generic words
+    BLACKLISTED_TOKENS = {
+        'af', 'test', 'demo', 'jobs', 'careers', 'team', 'work', 'hire',
+        'the', 'and', 'for', 'with', 'about', 'home', 'main', 'app', 'hr'
+    }
+    
     async def check_token(self, token: str) -> Optional[CompanyJobBoard]:
         """Check Breezy HR"""
+        # Skip short or blacklisted tokens
+        if len(token) < 3 or token.lower() in self.BLACKLISTED_TOKENS:
+            return None
+            
         url = f"https://{token}.breezy.hr/json"
         data = await self.fetch(url)
         
@@ -1246,6 +1296,110 @@ async def run_discovery(db=None, max_seeds: int = 500) -> Dict:
                         logger.info(f"✅ Cleanup complete: removed {deleted} false positive companies, {orphaned_jobs} orphaned jobs")
                     else:
                         logger.info("✅ No false positive companies to clean up")
+                    
+                    # === SEED CLEANUP: Remove garbage/spam seeds ===
+                    garbage_patterns = [
+                        # Blog posts, articles, memos
+                        '%read the%memo%',
+                        '%read more%',
+                        '%state of the cloud%',
+                        '%avoiding burnout%',
+                        '%tips on%',
+                        '%how to%',
+                        '%terms of%',
+                        '%privacy policy%',
+                        '%cookie policy%',
+                        
+                        # Navigation/UI elements
+                        '%skip navigation%',
+                        '%see all%',
+                        '%filter options%',
+                        '%load more%',
+                        '%click here%',
+                        '%learn more%',
+                        '%sign up%',
+                        '%log in%',
+                        '%jobs(link%',
+                        
+                        # Status/metadata junk
+                        '%statusprivate%',
+                        '%statusactive%',
+                        '%backedsince%',
+                        '%founded%backed%',
+                        '%series a%',
+                        '%series b%',
+                        '%nasdaq:%',
+                        '%nyse:%',
+                        '%lon:%',
+                        '%omx:%',
+                        
+                        # Generic descriptions
+                        '%the world%s%',
+                        '%a community%',
+                        '%building%infrastructure%',
+                        '%powering%',
+                        '%transforming%',
+                        '%revolutionizing%',
+                        
+                        # n8n spam pattern
+                        'n8n%read more%',
+                        
+                        # Edited by / author patterns
+                        '%edited by%',
+                        '%written by%',
+                        
+                        # Date patterns in names
+                        '%september%',
+                        '%october%',
+                        '%november%',
+                        '%december%',
+                        '%january%',
+                        '%february%',
+                        
+                        # Other junk
+                        '%awesome%list%',
+                        '%resources%',
+                        '%courses%',
+                        '%generator%',
+                        '%collection%',
+                        '%library%',
+                    ]
+                    
+                    total_garbage_deleted = 0
+                    for pattern in garbage_patterns:
+                        cur.execute("DELETE FROM seed_companies WHERE LOWER(company_name) LIKE %s", (pattern,))
+                        if cur.rowcount > 0:
+                            total_garbage_deleted += cur.rowcount
+                    
+                    # Delete seeds that are too long (likely scraped descriptions)
+                    cur.execute("DELETE FROM seed_companies WHERE LENGTH(company_name) > 60")
+                    total_garbage_deleted += cur.rowcount
+                    
+                    # Delete seeds with too many words (likely sentences)
+                    cur.execute("""
+                        DELETE FROM seed_companies 
+                        WHERE array_length(string_to_array(company_name, ' '), 1) > 6
+                    """)
+                    total_garbage_deleted += cur.rowcount
+                    
+                    if total_garbage_deleted > 0:
+                        conn.commit()
+                        logger.info(f"🗑️ Removed {total_garbage_deleted} garbage seeds from database")
+                    
+                    # === AMBIGUOUS COMPANY CLEANUP: Remove companies with generic/ambiguous names ===
+                    ambiguous_company_names = [
+                        'Ms', 'Af', 'Ve', 'Aa', 'Hr', 'It', 'Us', 'Uk', 'Eu',  # 2-letter codes
+                        'Inc', 'Tech', 'Blue', 'Flow', 'Pay', 'Max', 'Test', 'Demo',  # Generic words
+                        'Library', 'Manual', 'Onboarding', 'Securing', 'Developer',  # Random word matches
+                        '2019', '2020', '2021', '2022', '2023', '2024', '2025',  # Years
+                    ]
+                    
+                    for name in ambiguous_company_names:
+                        cur.execute("DELETE FROM companies WHERE company_name = %s", (name,))
+                        if cur.rowcount > 0:
+                            logger.info(f"   Removed ambiguous company: {name}")
+                    
+                    conn.commit()
                         
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
