@@ -1060,53 +1060,54 @@ async def run_expansion(db=None, tiers: List[int] = None) -> Dict:
     
     logger.info(f"🌍 Starting mega seed expansion for tiers: {tiers}")
     
-    # Use PostgreSQL if db provided, otherwise sqlite
+    # Run expansion
+    expander = SeedExpander(db_path=None)
+    results = await expander.expand_all(tiers=tiers)
+    
+    total_found = sum(len(seeds) for seeds in results.values())
+    total_saved = 0
+    
+    # Save to PostgreSQL if db provided
     if db is not None:
-        expander = SeedExpander(db_path=None)  # Won't use sqlite
-        results = await expander.expand_all(tiers=tiers)
-        
-        # Save to PostgreSQL
-        total_saved = 0
-        for source, seeds in results.items():
-            for seed in seeds:
-                try:
-                    with db.get_connection() as conn:
-                        with conn.cursor() as cur:
-                            cur.execute("""
-                                INSERT INTO seed_companies (name, source, tier)
-                                VALUES (%s, %s, %s)
-                                ON CONFLICT (name) DO NOTHING
-                            """, (seed.name, source, seed.tier))
-                            if cur.rowcount > 0:
-                                total_saved += 1
-                        conn.commit()
-                except Exception as e:
-                    logger.debug(f"Error saving seed {seed.name}: {e}")
-        
-        total_found = sum(len(seeds) for seeds in results.values())
-        
-        stats = {
-            'success': True,
-            'tiers': tiers,
-            'total_found': total_found,
-            'total_saved': total_saved,
-            'by_source': {source: len(seeds) for source, seeds in results.items()},
-        }
+        logger.info(f"💾 Saving {total_found} seeds to PostgreSQL...")
+        try:
+            with db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    for source, seeds in results.items():
+                        source_saved = 0
+                        for seed in seeds:
+                            try:
+                                cur.execute("""
+                                    INSERT INTO seed_companies (name, source, tier)
+                                    VALUES (%s, %s, %s)
+                                    ON CONFLICT (name) DO NOTHING
+                                """, (seed.name, source, seed.tier))
+                                if cur.rowcount > 0:
+                                    total_saved += 1
+                                    source_saved += 1
+                            except Exception as e:
+                                logger.debug(f"Error saving seed {seed.name}: {e}")
+                        if source_saved > 0:
+                            logger.info(f"   {source}: saved {source_saved} new seeds")
+                    conn.commit()
+            logger.info(f"✅ Committed {total_saved} new seeds to PostgreSQL")
+        except Exception as e:
+            logger.error(f"❌ Error saving seeds to PostgreSQL: {e}")
     else:
         # Fallback to sqlite
-        expander = SeedExpander(db_path='job_intel.db')
-        results = await expander.expand_all(tiers=tiers)
+        logger.warning("⚠️ No db provided, saving to SQLite (this won't update your dashboard)")
         saved = expander.save_to_database(results)
-        
-        stats = {
-            'success': True,
-            'tiers': tiers,
-            'total_found': sum(len(seeds) for seeds in results.values()),
-            'total_saved': saved,
-            'by_source': {source: len(seeds) for source, seeds in results.items()},
-        }
+        total_saved = saved
     
-    logger.info(f"✅ Mega expansion complete: {stats['total_found']} found, {stats['total_saved']} saved")
+    stats = {
+        'success': True,
+        'tiers': tiers,
+        'total_found': total_found,
+        'total_saved': total_saved,
+        'by_source': {source: len(seeds) for source, seeds in results.items()},
+    }
+    
+    logger.info(f"✅ Mega expansion complete: {total_found} found, {total_saved} saved")
     return stats
 
 
