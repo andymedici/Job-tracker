@@ -1666,7 +1666,8 @@ def api_collect_v7():
             v7_collection_state['started_at'] = datetime.now(timezone.utc).isoformat()
             try:
                 logger.info(f"🚀 Starting V7 collection for {max_seeds} seeds")
-                stats = asyncio.run(collector_v7.run_v7_discovery(max_seeds=max_seeds))
+                db = get_db()  # <-- ADD THIS
+                stats = asyncio.run(collector_v7.run_discovery(db=db, max_seeds=max_seeds))  # <-- FIX THIS
                 v7_collection_state['last_stats'] = stats
                 v7_collection_state['last_run'] = datetime.now(timezone.utc).isoformat()
                 logger.info(f"✅ V7 collection complete: {stats}")
@@ -1772,7 +1773,8 @@ def api_expand_mega():
         def run_mega():
             try:
                 logger.info(f"🌱 Starting mega seed expansion for tiers: {tiers}")
-                stats = asyncio.run(mega_seed_expander.run_expansion(tiers=tiers))
+                db = get_db()  # <-- ADD THIS
+                stats = asyncio.run(mega_seed_expander.run_expansion(db=db, tiers=tiers))  # <-- PASS db
                 logger.info(f"✅ Mega expansion complete: {stats}")
             except Exception as e:
                 logger.error(f"❌ Mega expansion failed: {e}", exc_info=True)
@@ -1791,7 +1793,6 @@ def api_expand_mega():
     except Exception as e:
         logger.error(f"Error in mega expansion: {e}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
-
 
 @app.route('/api/self-growth/run', methods=['POST'])
 @limiter.limit(RATE_LIMITS['write'])
