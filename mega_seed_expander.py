@@ -1003,5 +1003,75 @@ async def main():
         print("  (Dry run - not saved)")
 
 
+# =============================================================================
+# HELPER FUNCTION FOR APP.PY INTEGRATION
+# =============================================================================
+
+async def run_expansion(db=None, tiers: List[int] = None) -> Dict:
+    """
+    Main entry point for app.py integration.
+    
+    Args:
+        db: Database object with get_connection() method (optional, uses sqlite if not provided)
+        tiers: List of tiers to expand [1, 2, 3]
+        
+    Returns:
+        Stats dictionary with results
+    """
+    if tiers is None:
+        tiers = [1, 2]
+    
+    logger.info(f"🌍 Starting mega seed expansion for tiers: {tiers}")
+    
+    # Use PostgreSQL if db provided, otherwise sqlite
+    if db is not None:
+        expander = SeedExpander(db_path=None)  # Won't use sqlite
+        results = await expander.expand_all(tiers=tiers)
+        
+        # Save to PostgreSQL
+        total_saved = 0
+        for source, seeds in results.items():
+            for seed in seeds:
+                try:
+                    with db.get_connection() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute("""
+                                INSERT INTO seed_companies (name, source, tier)
+                                VALUES (%s, %s, %s)
+                                ON CONFLICT (name) DO NOTHING
+                            """, (seed.name, source, seed.tier))
+                            if cur.rowcount > 0:
+                                total_saved += 1
+                        conn.commit()
+                except Exception as e:
+                    logger.debug(f"Error saving seed {seed.name}: {e}")
+        
+        total_found = sum(len(seeds) for seeds in results.values())
+        
+        stats = {
+            'success': True,
+            'tiers': tiers,
+            'total_found': total_found,
+            'total_saved': total_saved,
+            'by_source': {source: len(seeds) for source, seeds in results.items()},
+        }
+    else:
+        # Fallback to sqlite
+        expander = SeedExpander(db_path='job_intel.db')
+        results = await expander.expand_all(tiers=tiers)
+        saved = expander.save_to_database(results)
+        
+        stats = {
+            'success': True,
+            'tiers': tiers,
+            'total_found': sum(len(seeds) for seeds in results.values()),
+            'total_saved': saved,
+            'by_source': {source: len(seeds) for source, seeds in results.items()},
+        }
+    
+    logger.info(f"✅ Mega expansion complete: {stats['total_found']} found, {stats['total_saved']} saved")
+    return stats
+
+
 if __name__ == '__main__':
     asyncio.run(main())
