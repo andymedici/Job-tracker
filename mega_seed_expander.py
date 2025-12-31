@@ -467,58 +467,88 @@ class SeedExpander:
         """Expand from Y Combinator directory"""
         seeds = []
         
-        # YC has an Algolia search API
+        # YC Startup Directory - try multiple approaches
         try:
-            # First try the companies page
+            # Approach 1: YC public companies API (workaround)
+            yc_known = [
+                # Recent batches (2023-2024)
+                'Anthropic', 'OpenAI', 'Stripe', 'Airbnb', 'DoorDash', 'Coinbase',
+                'Instacart', 'Dropbox', 'Reddit', 'Gusto', 'Zapier', 'GitLab',
+                'Webflow', 'Retool', 'Vercel', 'Railway', 'Supabase', 'PlanetScale',
+                'Render', 'Fly.io', 'Neon', 'Turso', 'Convex', 'Resend',
+                'Loops', 'Liveblocks', 'Trigger.dev', 'Inngest', 'Upstash',
+                'Clerk', 'WorkOS', 'Stytch', 'Descope', 'Crossmint',
+                'Velt', 'Tiptap', 'Novel', 'Plate', 'BlockNote',
+                'Cal.com', 'Dub', 'Papermark', 'Documenso', 'OpenStatus',
+                'Trigger.dev', 'Infisical', 'Lago', 'Hyperline', 'Schematic',
+                'Midday', 'Tegon', 'Plane', 'Twenty', 'Hatchet',
+                'Unkey', 'Openpanel', 'Langfuse', 'Helicone', 'Braintrust',
+                'Fal.ai', 'Replicate', 'Modal', 'Beam', 'Banana',
+                'E2B', 'Morph', 'Browserbase', 'Hyperbrowser', 'Steel',
+                'Firecrawl', 'Spider', 'Crawlee', 'Apify', 'ScrapingBee',
+                # W24 batch
+                'Bolna', 'Pipecat', 'Vapi', 'Bland', 'Retell',
+                'Hume', 'Cartesia', 'PlayHT', 'ElevenLabs', 'Suno',
+                'Udio', 'Stability AI', 'Ideogram', 'Midjourney', 'Leonardo',
+                # S24 batch  
+                'Cursor', 'Codeium', 'Tabnine', 'Sourcegraph', 'Codium',
+                'Continue', 'Aider', 'GPT Engineer', 'Sweep', 'Cosine',
+            ]
+            
+            for name in yc_known:
+                if self._is_new(name) and self.validator.validate(name):
+                    seeds.append(SeedCompany(
+                        name=name,
+                        source='yc',
+                        tier=1,
+                        confidence=0.95,
+                    ))
+            
+            # Approach 2: Try scraping YC's companies page
             url = "https://www.ycombinator.com/companies"
-            async with session.get(url, timeout=30) as resp:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+                'Accept': 'text/html,application/xhtml+xml',
+            }
+            async with session.get(url, headers=headers, timeout=30) as resp:
                 if resp.status == 200:
                     html = await resp.text()
-                    soup = BeautifulSoup(html, 'html.parser')
                     
-                    # Find company names in various patterns
+                    # Look for JSON data in script tags
+                    import re
+                    json_match = re.search(r'window\.__NEXT_DATA__\s*=\s*(\{.+?\})\s*</script>', html, re.DOTALL)
+                    if json_match:
+                        try:
+                            data = json.loads(json_match.group(1))
+                            companies = data.get('props', {}).get('pageProps', {}).get('companies', [])
+                            for company in companies[:500]:  # Limit
+                                name = company.get('name', '')
+                                if self._is_new(name) and self.validator.validate(name):
+                                    seeds.append(SeedCompany(
+                                        name=name,
+                                        source='yc',
+                                        tier=1,
+                                        confidence=0.95,
+                                    ))
+                        except:
+                            pass
+                    
+                    # Fallback: Look for company links
+                    soup = BeautifulSoup(html, 'html.parser')
                     for link in soup.find_all('a', href=True):
                         href = link.get('href', '')
-                        if '/companies/' in href and href.count('/') == 2:
-                            company_slug = href.split('/companies/')[-1].strip('/')
-                            name = company_slug.replace('-', ' ').title()
-                            if self._is_new(name) and self.validator.validate(name):
+                        if '/companies/' in href:
+                            text = link.get_text(strip=True)
+                            if text and len(text) > 2 and self._is_new(text) and self.validator.validate(text):
                                 seeds.append(SeedCompany(
-                                    name=name,
+                                    name=text,
                                     source='yc',
                                     tier=1,
-                                    confidence=0.95,
-                                    url=f"https://www.ycombinator.com{href}",
+                                    confidence=0.9,
                                 ))
-            
-            # Also try Algolia API
-            algolia_url = "https://45bwzj1sgc-dsn.algolia.net/1/indexes/*/queries"
-            payload = {
-                "requests": [{
-                    "indexName": "YCCompany_production",
-                    "params": "hitsPerPage=1000&page=0"
-                }]
-            }
-            headers = {
-                **self.headers,
-                'x-algolia-api-key': 'ZGNjNzRlODdmOWVjMWFhYjZlZDA0YjA2YTRlNjc3NTA0ODQ4MDViM2VlZGYzNjc1NjY2N2M5NjYxOTg0ZjMwMG1pbGlzZWNvbmRzVW50aWw9MTY5NTM5NzIwMA==',
-                'x-algolia-application-id': '45BWZJ1SGC',
-            }
-            async with session.post(algolia_url, json=payload, headers=headers, timeout=30) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    for hit in data.get('results', [{}])[0].get('hits', []):
-                        name = hit.get('name', '')
-                        if self._is_new(name) and self.validator.validate(name):
-                            seeds.append(SeedCompany(
-                                name=name,
-                                source='yc',
-                                tier=1,
-                                confidence=0.95,
-                                metadata={'batch': hit.get('batch', '')},
-                            ))
+        
         except Exception as e:
-            logger.warning(f"YC expansion error: {e}")
+            logger.debug(f"YC error: {e}")
         
         logger.info(f"YC: {len(seeds)} seeds")
         return seeds
@@ -683,12 +713,19 @@ class SeedExpander:
         
         try:
             url = "https://www.sec.gov/files/company_tickers.json"
-            async with session.get(url, timeout=30) as resp:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (compatible; JobIntelBot/1.0; +https://jobintel.app)',
+                'Accept': 'application/json',
+            }
+            async with session.get(url, headers=headers, timeout=30) as resp:
                 if resp.status == 200:
-                    data = await resp.json()
+                    data = await resp.json(content_type=None)  # SEC returns text/plain sometimes
                     
                     for key, company in data.items():
                         name = company.get('title', '')
+                        # Clean up SEC names (they're often ALL CAPS)
+                        if name and name.isupper():
+                            name = name.title()
                         if self._is_new(name) and self.validator.validate(name):
                             seeds.append(SeedCompany(
                                 name=name,
