@@ -438,7 +438,9 @@ class GreenhouseScraper(ATSScraper):
         'system', 'original', 'magic', 'ie', 'test', 'demo', 'sample', 'example',
         'kiosk', 'talent', 'general', 'interest', 'future', 'seed', 'company',
         'jobs', 'careers', 'team', 'work', 'hire', 'the', 'and', 'for', 'app',
-        'li', 'linkedin',  # LinkedIn test companies
+        'li', 'linkedin',
+        # Generic words that produce false positives
+        'national', 'journey', 'commons', 'door', 'alarm',
     }
     
     async def check_token(self, token: str) -> Optional[CompanyJobBoard]:
@@ -507,9 +509,10 @@ class LeverScraper(ATSScraper):
         'better', 'ecosystem', 'signal', 'choose', 'color', 'super', 'future',
         'test', 'demo', 'jobs', 'careers', 'team', 'work', 'hire', 'company',
         'the', 'and', 'for', 'with', 'about', 'home', 'main', 'app', 'web',
-        # New additions based on false positives
         'life', 'capital', 'form', 'artificial', 'crypto', 'anomaly', 'hexa',
         'adaptive', 'sesame', 'teller', 'rigetti', 'maya', 'rupa', 'finch',
+        # NEW: More generic words from recent logs
+        'mega', 'brilliant', 'belong',
     }
     
     async def check_token(self, token: str) -> Optional[CompanyJobBoard]:
@@ -834,15 +837,20 @@ class RecruiteeScraper(ATSScraper):
         'clay', 'nuvo', 'oculus', 'color', 'securing', 'onboarding', 'lindy',
         'test', 'demo', 'jobs', 'careers', 'team', 'work', 'hire', 'staff',
         'the', 'and', 'for', 'with', 'from', 'about', 'home', 'main', 'info',
-        # New additions based on false positives
         'people', 'chaos', 'vertical', 'enterprise', 'data', 'experience',
         'legal', 'flawless', 'aa',
+        # NEW: More generic words and names from recent logs
+        'moore', 'alex', 'jay', 'rha', 'assist', 'automation', 'origin',
+        'healthcare', 'advanced', 'google', 'incognia', 'charles', 'national',
+        'journey', 'belong', 'mega', 'brilliant', 'media', 'solutions',
+        'global', 'group', 'services', 'digital', 'marketing', 'design',
+        'creative', 'studio', 'agency', 'partners', 'consulting', 'labs',
     }
     
     async def check_token(self, token: str) -> Optional[CompanyJobBoard]:
         """Check Recruitee API"""
         # Skip short or blacklisted tokens
-        if len(token) < 3 or token.lower() in self.BLACKLISTED_TOKENS:
+        if len(token) < 4 or token.lower() in self.BLACKLISTED_TOKENS:
             return None
             
         url = f"https://{token}.recruitee.com/api/offers"
@@ -895,13 +903,15 @@ class SmartRecruitersScraper(ATSScraper):
     # Blacklist generic words
     BLACKLISTED_TOKENS = {
         'entropik', '2019', 'test', 'demo', 'jobs', 'careers', 'team', 'work',
-        'the', 'and', 'for', 'with', 'about', 'home', 'main', 'app', 'web', 'api'
+        'the', 'and', 'for', 'with', 'about', 'home', 'main', 'app', 'web', 'api',
+        # NEW: More generic words
+        'healthcare', 'health', 'medical', 'national', 'global', 'digital',
     }
     
     async def check_token(self, token: str) -> Optional[CompanyJobBoard]:
         """Check SmartRecruiters API"""
         # Skip short or blacklisted tokens
-        if len(token) < 3 or token.lower() in self.BLACKLISTED_TOKENS:
+        if len(token) < 4 or token.lower() in self.BLACKLISTED_TOKENS:
             return None
             
         url = f"https://api.smartrecruiters.com/v1/companies/{token}/postings"
@@ -964,13 +974,15 @@ class BreezyScraper(ATSScraper):
     # Blacklist generic words
     BLACKLISTED_TOKENS = {
         'af', 'test', 'demo', 'jobs', 'careers', 'team', 'work', 'hire',
-        'the', 'and', 'for', 'with', 'about', 'home', 'main', 'app', 'hr'
+        'the', 'and', 'for', 'with', 'about', 'home', 'main', 'app', 'hr',
+        # Numbers and numeric patterns
+        '1001', '2020', '2021', '2022', '2023', '2024', '2025',
     }
     
     async def check_token(self, token: str) -> Optional[CompanyJobBoard]:
         """Check Breezy HR"""
-        # Skip short or blacklisted tokens
-        if len(token) < 3 or token.lower() in self.BLACKLISTED_TOKENS:
+        # Skip short or blacklisted tokens, and all-numeric tokens
+        if len(token) < 3 or token.lower() in self.BLACKLISTED_TOKENS or token.isdigit():
             return None
             
         url = f"https://{token}.breezy.hr/json"
@@ -1474,13 +1486,21 @@ async def run_discovery(db=None, max_seeds: int = 500) -> Dict:
                         'Inc', 'Tech', 'Blue', 'Flow', 'Pay', 'Max', 'Test', 'Demo',  # Generic words
                         'Library', 'Manual', 'Onboarding', 'Securing', 'Developer',  # Random word matches
                         '2019', '2020', '2021', '2022', '2023', '2024', '2025',  # Years
-                        # NEW: More ambiguous names from recent logs
+                        # More ambiguous names from recent logs
                         'Life', 'Capital', 'Path', 'System', 'People', 'Chaos',
                         'Vertical', 'Enterprise', 'Data', 'Experience', 'Legal',
                         'Form', 'Sim', 'IE', 'Original', 'Artificial', 'Magic',
                         'Anomaly', 'Hexa', 'Adaptive', 'Crypto',
                         # Test/demo companies
                         'LI Test Company', 'Test Company', 'Demo Company',
+                        # NEW: More false positives from latest run
+                        'Moore', 'Alex', 'Jay', 'Rha', 'Assist', 'Automation',
+                        'Origin', 'Healthcare', 'Advanced', 'Google', 'NATIONAL',
+                        'Journey', 'Belong', 'Mega', 'Brilliant', '1001',
+                        'Charles', 'National', 'Media', 'Solutions', 'Global',
+                        'Group', 'Services', 'Digital', 'Marketing', 'Design',
+                        'Creative', 'Studio', 'Agency', 'Partners', 'Consulting',
+                        'Labs', 'Commons', 'Door', 'Alarm',
                     ]
                     
                     for name in ambiguous_company_names:
