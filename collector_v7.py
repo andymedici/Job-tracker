@@ -1053,7 +1053,11 @@ class JobIntelCollectorV7:
         return stats
     
     async def _save_company(self, company: CompanyJobBoard):
-        """Save company to database"""
+        """Save company to database (SQLite fallback only)"""
+        # Skip if no db_path (we're saving to PostgreSQL instead)
+        if self.db_path is None:
+            return
+            
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
