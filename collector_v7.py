@@ -225,6 +225,7 @@ class CompanyJobBoard:
     company_name: str
     token: str
     ats_type: str
+    board_url: str = ""  # Add board_url field
     jobs: List[JobPosting] = field(default_factory=list)
     job_count: int = 0
     remote_count: int = 0
@@ -476,6 +477,7 @@ class GreenhouseScraper(ATSScraper):
             company_name=company_name,
             token=token,
             ats_type='greenhouse',
+            board_url=f'https://boards.greenhouse.io/{token}',
             jobs=jobs,
             job_count=len(jobs),
             remote_count=remote_count,
@@ -529,6 +531,7 @@ class LeverScraper(ATSScraper):
             company_name=token.replace('-', ' ').title(),
             token=token,
             ats_type='lever',
+            board_url=f'https://jobs.lever.co/{token}',
             jobs=jobs,
             job_count=len(jobs),
             remote_count=remote_count,
@@ -601,6 +604,7 @@ class AshbyScraper(ATSScraper):
                         company_name=token.replace('-', ' ').title(),
                         token=token,
                         ats_type='ashby',
+                        board_url=f'https://jobs.ashbyhq.com/{token}',
                         jobs=jobs,
                         job_count=len(jobs),
                         remote_count=remote_count,
@@ -651,6 +655,7 @@ class WorkdayScraper(ATSScraper):
                                         company_name=token.replace('-', ' ').title(),
                                         token=token,
                                         ats_type=f'workday_{pattern}',
+                                        board_url=url,
                                         job_count=0,  # Would need to parse HTML
                                     )
                 except Exception as e:
@@ -687,6 +692,7 @@ class WorkdayScraper(ATSScraper):
             company_name=token.replace('-', ' ').title(),
             token=token,
             ats_type=f'workday_{pattern}',
+            board_url=f'https://{token}.{pattern}.myworkdayjobs.com/en-US/External',
             jobs=jobs,
             job_count=data.get('total', len(jobs)),
             remote_count=remote_count,
@@ -716,6 +722,7 @@ class ICIMSScraper(ATSScraper):
                     company_name=token.replace('-', ' ').title(),
                     token=token,
                     ats_type='icims',
+                    board_url=url,
                     job_count=max(1, job_count),  # At least 1 if page loads
                 )
         
@@ -762,6 +769,7 @@ class WorkableScraper(ATSScraper):
             company_name=data.get('name', token.replace('-', ' ').title()),
             token=token,
             ats_type='workable',
+            board_url=f'https://apply.workable.com/{token}/',
             jobs=jobs,
             job_count=len(jobs),
             remote_count=remote_count,
@@ -810,6 +818,7 @@ class RecruiteeScraper(ATSScraper):
             company_name=token.replace('-', ' ').title(),
             token=token,
             ats_type='recruitee',
+            board_url=f'https://{token}.recruitee.com/',
             jobs=jobs,
             job_count=len(jobs),
             remote_count=remote_count,
@@ -859,6 +868,7 @@ class SmartRecruitersScraper(ATSScraper):
             company_name=job.get('company', {}).get('name', token) if data.get('content') else token,
             token=token,
             ats_type='smartrecruiters',
+            board_url=f'https://careers.smartrecruiters.com/{token}',
             jobs=jobs,
             job_count=data.get('totalFound', len(jobs)),
             remote_count=remote_count,
@@ -907,6 +917,7 @@ class BreezyScraper(ATSScraper):
             company_name=token.replace('-', ' ').title(),
             token=token,
             ats_type='breezy',
+            board_url=f'https://{token}.breezy.hr/',
             jobs=jobs,
             job_count=len(jobs),
             remote_count=remote_count,
@@ -927,6 +938,7 @@ class JobIntelCollectorV7:
         self.scrapers = {}
         self.token_generator = TokenGenerator()
         self.discovered_companies: Set[str] = set()
+        self.results: List[CompanyJobBoard] = []  # Store discovered companies
     
     async def init_scrapers(self, session: aiohttp.ClientSession):
         """Initialize all ATS scrapers"""
@@ -1023,6 +1035,9 @@ class JobIntelCollectorV7:
                             
                             # Collect self-discovered companies
                             self.discovered_companies.update(company.discovered_companies)
+                            
+                            # Store result for later saving to PostgreSQL
+                            self.results.append(company)
                             
                             logger.info(f"Found: {company.company_name} ({company.ats_type}) - {company.job_count} jobs")
                             
@@ -1187,7 +1202,7 @@ async def run_discovery(db=None, max_seeds: int = 500) -> Dict:
             with db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("""
-                        SELECT name FROM seed_companies 
+                        SELECT company_name FROM seed_companies 
                         WHERE is_blacklisted = FALSE 
                         AND (times_tested < 3 OR times_tested IS NULL)
                         ORDER BY 
@@ -1227,11 +1242,11 @@ async def run_discovery(db=None, max_seeds: int = 500) -> Dict:
                     with conn.cursor() as cur:
                         # Upsert company
                         cur.execute("""
-                            INSERT INTO companies (company_name, company_name_token, ats_type, board_url, job_count, last_updated)
+                            INSERT INTO companies (company_name, company_name_token, ats_type, board_url, job_count, last_scraped)
                             VALUES (%s, %s, %s, %s, %s, NOW())
                             ON CONFLICT (company_name) DO UPDATE SET
                                 job_count = EXCLUDED.job_count,
-                                last_updated = NOW()
+                                last_scraped = NOW()
                             RETURNING id
                         """, (
                             result.company_name,
@@ -1245,22 +1260,22 @@ async def run_discovery(db=None, max_seeds: int = 500) -> Dict:
                             saved_companies += 1
                             company_id = company_row[0]
                             
-                            # Save jobs
+                            # Save jobs (job is a JobPosting dataclass, use attributes)
                             for job in result.jobs[:100]:  # Limit jobs per company
                                 try:
                                     cur.execute("""
-                                        INSERT INTO job_archive (company_id, job_id, title, department, location, url, status, first_seen, last_seen)
+                                        INSERT INTO job_archive (company_id, job_id, title, department, location, job_url, status, first_seen, last_seen)
                                         VALUES (%s, %s, %s, %s, %s, %s, 'active', NOW(), NOW())
                                         ON CONFLICT (company_id, job_id) DO UPDATE SET
                                             last_seen = NOW(),
                                             status = 'active'
                                     """, (
                                         company_id,
-                                        job.get('id', job.get('title', '')[:50]),
-                                        job.get('title', ''),
-                                        job.get('department', ''),
-                                        job.get('location', ''),
-                                        job.get('url', ''),
+                                        job.id or job.title[:50],
+                                        job.title,
+                                        job.department or '',
+                                        job.location or '',
+                                        job.url or '',
                                     ))
                                     saved_jobs += 1
                                 except Exception as je:
@@ -1272,7 +1287,7 @@ async def run_discovery(db=None, max_seeds: int = 500) -> Dict:
                             SET times_tested = COALESCE(times_tested, 0) + 1,
                                 times_successful = COALESCE(times_successful, 0) + 1,
                                 last_tested_at = NOW()
-                            WHERE LOWER(name) = LOWER(%s)
+                            WHERE LOWER(company_name) = LOWER(%s)
                         """, (result.company_name,))
                         
                         conn.commit()
