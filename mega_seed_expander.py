@@ -1044,6 +1044,15 @@ async def main():
 # HELPER FUNCTION FOR APP.PY INTEGRATION
 # =============================================================================
 
+def _name_to_token(name: str) -> str:
+    """Convert company name to token for deduplication"""
+    token = name.lower()
+    token = re.sub(r'\s+(inc|llc|ltd|co|corp|corporation|gmbh|sa|ag|plc)\.?$', '', token, flags=re.IGNORECASE)
+    token = re.sub(r'[^a-z0-9\s-]', '', token)
+    token = re.sub(r'[\s-]+', '-', token).strip('-')
+    return token
+
+
 async def run_expansion(db=None, tiers: List[int] = None) -> Dict:
     """
     Main entry point for app.py integration.
@@ -1094,8 +1103,11 @@ async def run_expansion(db=None, tiers: List[int] = None) -> Dict:
                         
                         for seed in seeds:
                             try:
-                                # Check if seed already exists
-                                cur.execute("SELECT id FROM seed_companies WHERE LOWER(name) = LOWER(%s)", (seed.name,))
+                                # Generate token for uniqueness check
+                                token = _name_to_token(seed.name)
+                                
+                                # Check if seed already exists by token
+                                cur.execute("SELECT id FROM seed_companies WHERE company_name_token = %s", (token,))
                                 exists = cur.fetchone()
                                 
                                 if exists:
@@ -1103,9 +1115,9 @@ async def run_expansion(db=None, tiers: List[int] = None) -> Dict:
                                     total_skipped += 1
                                 else:
                                     cur.execute("""
-                                        INSERT INTO seed_companies (name, source, tier)
-                                        VALUES (%s, %s, %s)
-                                    """, (seed.name, source, seed.tier))
+                                        INSERT INTO seed_companies (company_name, company_name_token, source, tier)
+                                        VALUES (%s, %s, %s, %s)
+                                    """, (seed.name, token, source, seed.tier))
                                     total_saved += 1
                                     source_saved += 1
                                     
@@ -1114,12 +1126,15 @@ async def run_expansion(db=None, tiers: List[int] = None) -> Dict:
                                 total_errors += 1
                                 if source_errors <= 3:  # Only log first 3 errors per source
                                     logger.warning(f"   Error saving '{seed.name}': {e}")
+                                # Rollback just this failed statement
+                                conn.rollback()
+                        
+                        # Commit after each source
+                        conn.commit()
                         
                         # Log per source
-                        if source_saved > 0 or source_errors > 0:
+                        if source_saved > 0 or source_skipped > 0:
                             logger.info(f"   {source}: +{source_saved} new, {source_skipped} existing, {source_errors} errors")
-                    
-                    conn.commit()
                     
             logger.info(f"✅ Committed {total_saved} new seeds to PostgreSQL (skipped {total_skipped} existing, {total_errors} errors)")
             
