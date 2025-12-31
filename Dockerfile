@@ -32,7 +32,7 @@ RUN chown -R appuser:appuser /app && \
 USER appuser
 
 # 4. Install Playwright browser (CRUCIAL MOVE)
-RUN playwright install chromium || true
+RUN pip install playwright && playwright install chromium --with-deps || true
 
 # 5. Copy the rest of the application code
 COPY --chown=appuser:appuser . /app/
