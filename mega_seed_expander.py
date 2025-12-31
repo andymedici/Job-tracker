@@ -1066,33 +1066,77 @@ async def run_expansion(db=None, tiers: List[int] = None) -> Dict:
     
     total_found = sum(len(seeds) for seeds in results.values())
     total_saved = 0
+    total_skipped = 0
+    total_errors = 0
     
     # Save to PostgreSQL if db provided
     if db is not None:
         logger.info(f"💾 Saving {total_found} seeds to PostgreSQL...")
+        
+        # First, check existing seeds count
+        try:
+            with db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT COUNT(*) FROM seed_companies")
+                    existing_count = cur.fetchone()[0]
+                    logger.info(f"   Existing seeds in database: {existing_count}")
+        except Exception as e:
+            logger.error(f"   Error checking existing seeds: {e}")
+            existing_count = 0
+        
         try:
             with db.get_connection() as conn:
                 with conn.cursor() as cur:
                     for source, seeds in results.items():
                         source_saved = 0
+                        source_skipped = 0
+                        source_errors = 0
+                        
                         for seed in seeds:
                             try:
-                                cur.execute("""
-                                    INSERT INTO seed_companies (name, source, tier)
-                                    VALUES (%s, %s, %s)
-                                    ON CONFLICT (name) DO NOTHING
-                                """, (seed.name, source, seed.tier))
-                                if cur.rowcount > 0:
+                                # Check if seed already exists
+                                cur.execute("SELECT id FROM seed_companies WHERE LOWER(name) = LOWER(%s)", (seed.name,))
+                                exists = cur.fetchone()
+                                
+                                if exists:
+                                    source_skipped += 1
+                                    total_skipped += 1
+                                else:
+                                    cur.execute("""
+                                        INSERT INTO seed_companies (name, source, tier)
+                                        VALUES (%s, %s, %s)
+                                    """, (seed.name, source, seed.tier))
                                     total_saved += 1
                                     source_saved += 1
+                                    
                             except Exception as e:
-                                logger.debug(f"Error saving seed {seed.name}: {e}")
-                        if source_saved > 0:
-                            logger.info(f"   {source}: saved {source_saved} new seeds")
+                                source_errors += 1
+                                total_errors += 1
+                                if source_errors <= 3:  # Only log first 3 errors per source
+                                    logger.warning(f"   Error saving '{seed.name}': {e}")
+                        
+                        # Log per source
+                        if source_saved > 0 or source_errors > 0:
+                            logger.info(f"   {source}: +{source_saved} new, {source_skipped} existing, {source_errors} errors")
+                    
                     conn.commit()
-            logger.info(f"✅ Committed {total_saved} new seeds to PostgreSQL")
+                    
+            logger.info(f"✅ Committed {total_saved} new seeds to PostgreSQL (skipped {total_skipped} existing, {total_errors} errors)")
+            
+            # Verify final count
+            try:
+                with db.get_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT COUNT(*) FROM seed_companies")
+                        final_count = cur.fetchone()[0]
+                        logger.info(f"   Final seed count: {final_count} (was {existing_count}, added {final_count - existing_count})")
+            except Exception as e:
+                logger.error(f"   Error checking final count: {e}")
+                
         except Exception as e:
             logger.error(f"❌ Error saving seeds to PostgreSQL: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     else:
         # Fallback to sqlite
         logger.warning("⚠️ No db provided, saving to SQLite (this won't update your dashboard)")
@@ -1104,6 +1148,8 @@ async def run_expansion(db=None, tiers: List[int] = None) -> Dict:
         'tiers': tiers,
         'total_found': total_found,
         'total_saved': total_saved,
+        'total_skipped': total_skipped,
+        'total_errors': total_errors,
         'by_source': {source: len(seeds) for source, seeds in results.items()},
     }
     
