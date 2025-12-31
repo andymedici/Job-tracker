@@ -433,8 +433,20 @@ class ATSScraper:
 class GreenhouseScraper(ATSScraper):
     """Greenhouse ATS scraper using API"""
     
+    # Blacklist generic words and test companies
+    BLACKLISTED_TOKENS = {
+        'system', 'original', 'magic', 'ie', 'test', 'demo', 'sample', 'example',
+        'kiosk', 'talent', 'general', 'interest', 'future', 'seed', 'company',
+        'jobs', 'careers', 'team', 'work', 'hire', 'the', 'and', 'for', 'app',
+        'li', 'linkedin',  # LinkedIn test companies
+    }
+    
     async def check_token(self, token: str) -> Optional[CompanyJobBoard]:
         """Check if a Greenhouse token is valid and fetch jobs"""
+        # Skip short or blacklisted tokens
+        if len(token) < 3 or token.lower() in self.BLACKLISTED_TOKENS:
+            return None
+        
         url = f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs"
         data = await self.fetch(url)
         
@@ -494,7 +506,10 @@ class LeverScraper(ATSScraper):
     BLACKLISTED_TOKENS = {
         'better', 'ecosystem', 'signal', 'choose', 'color', 'super', 'future',
         'test', 'demo', 'jobs', 'careers', 'team', 'work', 'hire', 'company',
-        'the', 'and', 'for', 'with', 'about', 'home', 'main', 'app', 'web'
+        'the', 'and', 'for', 'with', 'about', 'home', 'main', 'app', 'web',
+        # New additions based on false positives
+        'life', 'capital', 'form', 'artificial', 'crypto', 'anomaly', 'hexa',
+        'adaptive', 'sesame', 'teller', 'rigetti', 'maya', 'rupa', 'finch',
     }
     
     async def check_token(self, token: str) -> Optional[CompanyJobBoard]:
@@ -634,7 +649,12 @@ class WorkdayScraper(ATSScraper):
     WORKDAY_PATTERNS = ['wd5', 'wd1', 'wd3', 'wd12']
     
     # Blacklist ambiguous/generic short tokens
-    BLACKLISTED_TOKENS = {'ms', 'hr', 'it', 'us', 'uk', 'eu', 'ca', 'au', 'in', 'jp', 'de', 'fr', 'test', 'demo', 'jobs', 'careers'}
+    BLACKLISTED_TOKENS = {
+        'ms', 'hr', 'it', 'us', 'uk', 'eu', 'ca', 'au', 'in', 'jp', 'de', 'fr', 
+        'test', 'demo', 'jobs', 'careers',
+        # New additions
+        'path', 'sim', 'capital', 'life', 'data', 'system', 'global', 'world',
+    }
     
     async def check_token(self, token: str) -> Optional[CompanyJobBoard]:
         """Try multiple Workday URL patterns"""
@@ -813,7 +833,10 @@ class RecruiteeScraper(ATSScraper):
         'library', 'manual', 'blue', 'flow', 'tech', 'pay', 'adam', 'max', 
         'clay', 'nuvo', 'oculus', 'color', 'securing', 'onboarding', 'lindy',
         'test', 'demo', 'jobs', 'careers', 'team', 'work', 'hire', 'staff',
-        'the', 'and', 'for', 'with', 'from', 'about', 'home', 'main', 'info'
+        'the', 'and', 'for', 'with', 'from', 'about', 'home', 'main', 'info',
+        # New additions based on false positives
+        'people', 'chaos', 'vertical', 'enterprise', 'data', 'experience',
+        'legal', 'flawless', 'aa',
     }
     
     async def check_token(self, token: str) -> Optional[CompanyJobBoard]:
@@ -1363,6 +1386,65 @@ async def run_discovery(db=None, max_seeds: int = 500) -> Dict:
                         '%generator%',
                         '%collection%',
                         '%library%',
+                        
+                        # NEW: More garbage patterns from recent logs
+                        '%delivering%services%',
+                        '%management levels%',
+                        '%marketing for%',
+                        '%matter most%',
+                        '%on-demand%',
+                        '%normalization%',
+                        '%deviance%',
+                        '%six ways%',
+                        '%influence people%',
+                        '%organizational perspective%',
+                        '%pairing with%',
+                        '%human-compatible%',
+                        '%cloud%platform%',
+                        '%publications%',
+                        '%exceptional%founders%',
+                        '%intelligent machinery%',
+                        '%biomaterials%',
+                        '%algorithm for%',
+                        '%scientific manuscript%',
+                        '%vc funding%',
+                        '%huge growth%',
+                        '%nft media%',
+                        '%predictive%analytics%',
+                        '%quantum%',
+                        '%psychology of%',
+                        '%ceos manage%',
+                        '%multibillion%',
+                        '%apollo syndrome%',
+                        '%executive assistant%',
+                        '%agile bullshit%',
+                        '%risk management%',
+                        '%oral health%',
+                        '%follow%linkedin%',
+                        '%emergence%marketplace%',
+                        '%radiology%automation%',
+                        '%performance management%',
+                        '%great manager%',
+                        '%distributed teams%',
+                        '%regulatory%',
+                        '%how we decide%',
+                        '%lending%community%',
+                        '%proteomics%',
+                        '%technical debt%',
+                        '%tetris%',
+                        '%newsletter%',
+                        '%benefiting humanity%',
+                        '%mafias form%',
+                        '%catechism%',
+                        '%investing for everyone%',
+                        '%rise of%europe%',
+                        '%identity company%',
+                        '%social network%',
+                        '%future of%services%',
+                        '%shareable data%',
+                        '%stem cell%manufacturing%',
+                        '%air capture%',
+                        '%healthcare predictions%',
                     ]
                     
                     total_garbage_deleted = 0
@@ -1392,12 +1474,24 @@ async def run_discovery(db=None, max_seeds: int = 500) -> Dict:
                         'Inc', 'Tech', 'Blue', 'Flow', 'Pay', 'Max', 'Test', 'Demo',  # Generic words
                         'Library', 'Manual', 'Onboarding', 'Securing', 'Developer',  # Random word matches
                         '2019', '2020', '2021', '2022', '2023', '2024', '2025',  # Years
+                        # NEW: More ambiguous names from recent logs
+                        'Life', 'Capital', 'Path', 'System', 'People', 'Chaos',
+                        'Vertical', 'Enterprise', 'Data', 'Experience', 'Legal',
+                        'Form', 'Sim', 'IE', 'Original', 'Artificial', 'Magic',
+                        'Anomaly', 'Hexa', 'Adaptive', 'Crypto',
+                        # Test/demo companies
+                        'LI Test Company', 'Test Company', 'Demo Company',
                     ]
                     
                     for name in ambiguous_company_names:
                         cur.execute("DELETE FROM companies WHERE company_name = %s", (name,))
                         if cur.rowcount > 0:
                             logger.info(f"   Removed ambiguous company: {name}")
+                    
+                    # Also remove companies with "Test" in the name
+                    cur.execute("DELETE FROM companies WHERE company_name ILIKE '%test company%'")
+                    if cur.rowcount > 0:
+                        logger.info(f"   Removed {cur.rowcount} test companies")
                     
                     conn.commit()
                         
