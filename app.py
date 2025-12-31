@@ -9,13 +9,52 @@ from flask import Flask, request, jsonify, render_template
 from waitress import serve
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.jobstores.base import JobLookupError
 
-from database import get_db, TRENDS_CUTOFF_DATE  # ADD TRENDS_CUTOFF_DATE here
+from database import get_db, TRENDS_CUTOFF_DATE
 from collector import run_collection, run_refresh
 from market_intel import run_daily_maintenance
 from middleware.auth import AuthManager, require_api_key, require_admin_key, optional_auth
 from middleware.rate_limit import setup_rate_limiter
+
+# =============================================================================
+# UPGRADE MODULE IMPORTS (V7 Collector, Mega Expander, Self-Growth)
+# =============================================================================
+try:
+    from config import config, ATS_CONFIGS, COMPANY_TOKEN_MAPPINGS
+    UPGRADE_CONFIG_LOADED = True
+except ImportError:
+    UPGRADE_CONFIG_LOADED = False
+    logging.warning("⚠️ Upgrade config not found - using defaults")
+
+try:
+    import collector_v7
+    COLLECTOR_V7_AVAILABLE = True
+except ImportError:
+    COLLECTOR_V7_AVAILABLE = False
+    logging.warning("⚠️ collector_v7.py not found - V7 features disabled")
+
+try:
+    import mega_seed_expander
+    MEGA_EXPANDER_AVAILABLE = True
+except ImportError:
+    MEGA_EXPANDER_AVAILABLE = False
+    logging.warning("⚠️ mega_seed_expander.py not found - mega expansion disabled")
+
+try:
+    import self_growth_intelligence
+    SELF_GROWTH_AVAILABLE = True
+except ImportError:
+    SELF_GROWTH_AVAILABLE = False
+    logging.warning("⚠️ self_growth_intelligence.py not found - self-growth disabled")
+
+try:
+    from integration import register_upgrade_routes, apply_schema_additions
+    INTEGRATION_AVAILABLE = True
+except ImportError:
+    INTEGRATION_AVAILABLE = False
+    logging.warning("⚠️ integration.py not found - upgrade routes disabled")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -39,6 +78,14 @@ collection_state = {
     'current_progress': 0,
     'last_stats': None,
     'last_run': None
+}
+
+# V7 Collection State (separate from legacy collector)
+v7_collection_state = {
+    'is_running': False,
+    'started_at': None,
+    'last_run': None,
+    'last_stats': None
 }
 
 def template_check():
@@ -125,18 +172,84 @@ def scheduled_tier2_expansion():
     finally:
         get_db().release_advisory_lock('tier2_expansion')
 
-scheduler.add_job(scheduled_refresh, CronTrigger(hour=6), id='refresh', replace_existing=True)
-scheduler.add_job(scheduled_discovery, CronTrigger(hour=7), id='discovery', replace_existing=True)
-scheduler.add_job(scheduled_tier1_expansion, CronTrigger(day_of_week='sun', hour=3), id='tier1_expansion', replace_existing=True)
-scheduler.add_job(scheduled_tier2_expansion, CronTrigger(day=1, hour=4), id='tier2_expansion', replace_existing=True)
+# =============================================================================
+# UPGRADE MODULE SCHEDULED TASKS
+# =============================================================================
 
-logger.info("📅 Scheduler configured:")
-logger.info("   - Refresh: Daily at 6:00 AM UTC")
-logger.info("   - Discovery: Daily at 7:00 AM UTC")
-logger.info("   - Tier 1 Expansion: Weekly (Sunday 3:00 AM UTC)")
-logger.info("   - Tier 2 Expansion: Monthly (1st at 4:00 AM UTC)")
+def scheduled_v7_discovery():
+    """Run V7 collector for new company discovery"""
+    if not COLLECTOR_V7_AVAILABLE:
+        logger.warning("V7 collector not available, skipping")
+        return
+    
+    if not get_db().acquire_advisory_lock('v7_discovery'):
+        logger.info("V7 discovery already running on another instance")
+        return
+    
+    try:
+        logger.info("🚀 Starting V7 scheduled discovery")
+        v7_collection_state['is_running'] = True
+        v7_collection_state['started_at'] = datetime.now(timezone.utc).isoformat()
+        
+        # Run V7 collector
+        stats = asyncio.run(collector_v7.run_v7_discovery(max_seeds=500))
+        
+        v7_collection_state['last_stats'] = stats
+        v7_collection_state['last_run'] = datetime.now(timezone.utc).isoformat()
+        
+        logger.info(f"✅ V7 discovery complete: {stats.get('companies_found', 0)} companies, {stats.get('jobs_found', 0)} jobs")
+    except Exception as e:
+        logger.error(f"❌ V7 discovery failed: {e}", exc_info=True)
+    finally:
+        v7_collection_state['is_running'] = False
+        get_db().release_advisory_lock('v7_discovery')
 
-# Add this function after scheduled_tier2_expansion (around line 150)
+
+def scheduled_mega_expansion():
+    """Run mega seed expansion (weekly)"""
+    if not MEGA_EXPANDER_AVAILABLE:
+        logger.warning("Mega expander not available, skipping")
+        return
+    
+    if not get_db().acquire_advisory_lock('mega_expansion'):
+        logger.info("Mega expansion already running on another instance")
+        return
+    
+    try:
+        logger.info("🌱 Starting scheduled mega seed expansion")
+        
+        # Run Tier 1 and 2 expansion
+        stats = asyncio.run(mega_seed_expander.run_expansion(tiers=[1, 2]))
+        
+        logger.info(f"✅ Mega expansion complete: {stats.get('total_added', 0)} seeds added")
+    except Exception as e:
+        logger.error(f"❌ Mega expansion failed: {e}", exc_info=True)
+    finally:
+        get_db().release_advisory_lock('mega_expansion')
+
+
+def scheduled_self_growth():
+    """Run self-growth intelligence (daily)"""
+    if not SELF_GROWTH_AVAILABLE:
+        logger.warning("Self-growth not available, skipping")
+        return
+    
+    if not get_db().acquire_advisory_lock('self_growth'):
+        logger.info("Self-growth already running on another instance")
+        return
+    
+    try:
+        logger.info("🧠 Starting scheduled self-growth analysis")
+        
+        db = get_db()
+        stats = asyncio.run(self_growth_intelligence.run_self_growth(db, limit=200))
+        
+        logger.info(f"✅ Self-growth complete: {stats.get('discoveries', 0)} new companies discovered")
+    except Exception as e:
+        logger.error(f"❌ Self-growth failed: {e}", exc_info=True)
+    finally:
+        get_db().release_advisory_lock('self_growth')
+
 
 def scheduled_snapshot_cleanup():
     """Monthly cleanup of old snapshots"""
@@ -150,21 +263,58 @@ def scheduled_snapshot_cleanup():
     finally:
         get_db().release_advisory_lock('snapshot_cleanup')
 
-# Add this to the scheduler configuration (after line 175)
-scheduler.add_job(
-    scheduled_snapshot_cleanup, 
-    CronTrigger(day=1, hour=2),  # Monthly on 1st at 2 AM
-    id='snapshot_cleanup', 
-    replace_existing=True
-)
 
-# Update the logger.info section to include the new job
+# =============================================================================
+# SCHEDULER CONFIGURATION
+# =============================================================================
+
+# Legacy scheduled jobs
+scheduler.add_job(scheduled_refresh, CronTrigger(hour=6), id='refresh', replace_existing=True)
+scheduler.add_job(scheduled_discovery, CronTrigger(hour=7), id='discovery', replace_existing=True)
+scheduler.add_job(scheduled_tier1_expansion, CronTrigger(day_of_week='sun', hour=3), id='tier1_expansion', replace_existing=True)
+scheduler.add_job(scheduled_tier2_expansion, CronTrigger(day=1, hour=4), id='tier2_expansion', replace_existing=True)
+scheduler.add_job(scheduled_snapshot_cleanup, CronTrigger(day=1, hour=2), id='snapshot_cleanup', replace_existing=True)
+
+# Upgrade module scheduled jobs
+if COLLECTOR_V7_AVAILABLE:
+    # V7 discovery every 6 hours (offset from legacy discovery)
+    scheduler.add_job(
+        scheduled_v7_discovery, 
+        CronTrigger(hour='0,6,12,18', minute=30),  # 30 min offset
+        id='v7_discovery', 
+        replace_existing=True
+    )
+
+if MEGA_EXPANDER_AVAILABLE:
+    # Mega expansion weekly on Saturday (different from Tier 1/2)
+    scheduler.add_job(
+        scheduled_mega_expansion, 
+        CronTrigger(day_of_week='sat', hour=5),
+        id='mega_expansion', 
+        replace_existing=True
+    )
+
+if SELF_GROWTH_AVAILABLE:
+    # Self-growth daily at 4 AM
+    scheduler.add_job(
+        scheduled_self_growth, 
+        CronTrigger(hour=4),
+        id='self_growth', 
+        replace_existing=True
+    )
+
 logger.info("📅 Scheduler configured:")
 logger.info("   - Refresh: Daily at 6:00 AM UTC")
 logger.info("   - Discovery: Daily at 7:00 AM UTC")
 logger.info("   - Tier 1 Expansion: Weekly (Sunday 3:00 AM UTC)")
 logger.info("   - Tier 2 Expansion: Monthly (1st at 4:00 AM UTC)")
-logger.info("   - Snapshot Cleanup: Monthly (1st at 2:00 AM UTC)")  # ← ADD THIS LINE
+logger.info("   - Snapshot Cleanup: Monthly (1st at 2:00 AM UTC)")
+if COLLECTOR_V7_AVAILABLE:
+    logger.info("   - V7 Discovery: Every 6 hours at :30")
+if MEGA_EXPANDER_AVAILABLE:
+    logger.info("   - Mega Expansion: Weekly (Saturday 5:00 AM UTC)")
+if SELF_GROWTH_AVAILABLE:
+    logger.info("   - Self-Growth: Daily at 4:00 AM UTC")
 
 # ============================================================================
 # ERROR HANDLERS
@@ -198,6 +348,13 @@ def index():
         'service': 'Job Intelligence Platform',
         'status': 'running',
         'timestamp': datetime.now(timezone.utc).isoformat(),
+        'upgrade_modules': {
+            'collector_v7': COLLECTOR_V7_AVAILABLE,
+            'mega_expander': MEGA_EXPANDER_AVAILABLE,
+            'self_growth': SELF_GROWTH_AVAILABLE,
+            'integration': INTEGRATION_AVAILABLE,
+            'config': UPGRADE_CONFIG_LOADED
+        },
         'endpoints': {
             'dashboard': '/dashboard',
             'analytics': '/analytics',
@@ -210,7 +367,11 @@ def index():
             'api_stats': '/api/stats',
             'api_intel': '/api/intel',
             'api_companies': '/api/companies',
-            'api_jobs': '/api/jobs'
+            'api_jobs': '/api/jobs',
+            # Upgrade endpoints
+            'api_v7_collect': '/api/collect/v7',
+            'api_mega_expand': '/api/seeds/expand-mega',
+            'api_self_growth': '/api/self-growth/run'
         }
     }), 200
 
@@ -483,6 +644,13 @@ def get_stats():
         
         # Add cutoff date info
         stats['cutoff_date'] = cutoff_date
+        
+        # Add upgrade module status
+        stats['upgrade_modules'] = {
+            'collector_v7': COLLECTOR_V7_AVAILABLE,
+            'mega_expander': MEGA_EXPANDER_AVAILABLE,
+            'self_growth': SELF_GROWTH_AVAILABLE
+        }
         
         return jsonify(stats), 200
     except Exception as e:
@@ -887,6 +1055,7 @@ def init_database():
         results = {
             'indexes_added': False,
             'snapshots_cleaned': 0,
+            'upgrade_schema': False,
             'errors': []
         }
         
@@ -908,6 +1077,16 @@ def init_database():
         except Exception as e:
             results['errors'].append(f"Snapshot cleanup error: {str(e)}")
             logger.error(f"Snapshot cleanup failed: {e}")
+        
+        # Apply upgrade schema additions
+        if INTEGRATION_AVAILABLE:
+            try:
+                apply_schema_additions(db)
+                results['upgrade_schema'] = True
+                logger.info("✅ Upgrade schema additions applied")
+            except Exception as e:
+                results['errors'].append(f"Upgrade schema error: {str(e)}")
+                logger.error(f"Upgrade schema failed: {e}")
         
         return jsonify({
             'success': len(results['errors']) == 0,
@@ -1473,7 +1652,305 @@ def api_expand_seeds():
         }), 500
 
 # ============================================================================
-# COLLECTION & REFRESH
+# UPGRADE MODULE ENDPOINTS - V7 Collector, Mega Expander, Self-Growth
+# ============================================================================
+
+@app.route('/api/collect/v7', methods=['POST'])
+@limiter.limit(RATE_LIMITS['write'])
+def api_collect_v7():
+    """Run V7 collector for enhanced company discovery"""
+    if not COLLECTOR_V7_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'error': 'V7 collector not available',
+            'message': 'collector_v7.py is not deployed. Please add it to your repo.'
+        }), 503
+    
+    if v7_collection_state['is_running']:
+        return jsonify({
+            'success': False,
+            'error': 'V7 collection already running',
+            'started_at': v7_collection_state['started_at']
+        }), 409
+    
+    try:
+        data = request.get_json(silent=True) or {}
+        max_seeds = min(data.get('max_seeds', 500), 2000)
+        
+        def run_v7_thread():
+            v7_collection_state['is_running'] = True
+            v7_collection_state['started_at'] = datetime.now(timezone.utc).isoformat()
+            try:
+                logger.info(f"🚀 Starting V7 collection for {max_seeds} seeds")
+                stats = asyncio.run(collector_v7.run_v7_discovery(max_seeds=max_seeds))
+                v7_collection_state['last_stats'] = stats
+                v7_collection_state['last_run'] = datetime.now(timezone.utc).isoformat()
+                logger.info(f"✅ V7 collection complete: {stats}")
+            except Exception as e:
+                logger.error(f"❌ V7 collection failed: {e}", exc_info=True)
+            finally:
+                v7_collection_state['is_running'] = False
+        
+        thread = threading.Thread(target=run_v7_thread, daemon=True)
+        thread.start()
+        
+        return jsonify({
+            'success': True,
+            'message': f'V7 collection started for {max_seeds} seeds',
+            'max_seeds': max_seeds,
+            'features': ['15 ATS types', 'parallel testing', 'aggressive token gen', 'self-discovery']
+        }), 202
+        
+    except Exception as e:
+        logger.error(f"Error starting V7 collection: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/collect/v7/test', methods=['POST'])
+@limiter.limit(RATE_LIMITS['write'])
+def api_collect_v7_test():
+    """Test V7 collector on specific companies"""
+    if not COLLECTOR_V7_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'error': 'V7 collector not available'
+        }), 503
+    
+    try:
+        data = request.get_json() or {}
+        companies = data.get('companies', [])
+        
+        if not companies:
+            return jsonify({
+                'success': False,
+                'error': 'No companies specified',
+                'example': {'companies': ['OpenAI', 'Anthropic', 'Stripe']}
+            }), 400
+        
+        if isinstance(companies, str):
+            companies = [c.strip() for c in companies.split(',')]
+        
+        companies = companies[:20]  # Max 20 companies for test
+        
+        def run_test():
+            try:
+                logger.info(f"🧪 Testing V7 collector on: {companies}")
+                results = asyncio.run(collector_v7.test_companies(companies))
+                logger.info(f"✅ V7 test complete: {results}")
+            except Exception as e:
+                logger.error(f"❌ V7 test failed: {e}", exc_info=True)
+        
+        thread = threading.Thread(target=run_test, daemon=True)
+        thread.start()
+        
+        return jsonify({
+            'success': True,
+            'message': f'Testing {len(companies)} companies with V7 collector',
+            'companies': companies
+        }), 202
+        
+    except Exception as e:
+        logger.error(f"Error in V7 test: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/collect/v7/status')
+@limiter.limit("60 per minute")
+def api_collect_v7_status():
+    """Get V7 collector status"""
+    return jsonify({
+        'available': COLLECTOR_V7_AVAILABLE,
+        'is_running': v7_collection_state['is_running'],
+        'started_at': v7_collection_state['started_at'],
+        'last_run': v7_collection_state['last_run'],
+        'last_stats': v7_collection_state['last_stats']
+    }), 200
+
+
+@app.route('/api/seeds/expand-mega', methods=['POST'])
+@limiter.limit(RATE_LIMITS['write'])
+def api_expand_mega():
+    """Run mega seed expansion (20+ sources, 50k+ seeds)"""
+    if not MEGA_EXPANDER_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'error': 'Mega expander not available',
+            'message': 'mega_seed_expander.py is not deployed. Please add it to your repo.'
+        }), 503
+    
+    try:
+        data = request.get_json(silent=True) or {}
+        tiers = data.get('tiers', [1, 2])
+        
+        if isinstance(tiers, str):
+            tiers = [int(t.strip()) for t in tiers.split(',')]
+        
+        def run_mega():
+            try:
+                logger.info(f"🌱 Starting mega seed expansion for tiers: {tiers}")
+                stats = asyncio.run(mega_seed_expander.run_expansion(tiers=tiers))
+                logger.info(f"✅ Mega expansion complete: {stats}")
+            except Exception as e:
+                logger.error(f"❌ Mega expansion failed: {e}", exc_info=True)
+        
+        thread = threading.Thread(target=run_mega, daemon=True)
+        thread.start()
+        
+        return jsonify({
+            'success': True,
+            'message': f'Mega seed expansion started for tiers {tiers}',
+            'tiers': tiers,
+            'sources': '20+ sources including YC, VCs, Inc 5000, Forbes lists',
+            'expected_seeds': '10,000-50,000 depending on tiers'
+        }), 202
+        
+    except Exception as e:
+        logger.error(f"Error in mega expansion: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/self-growth/run', methods=['POST'])
+@limiter.limit(RATE_LIMITS['write'])
+def api_self_growth_run():
+    """Run self-growth intelligence analysis"""
+    if not SELF_GROWTH_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'error': 'Self-growth not available',
+            'message': 'self_growth_intelligence.py is not deployed. Please add it to your repo.'
+        }), 503
+    
+    try:
+        data = request.get_json(silent=True) or {}
+        limit = min(data.get('limit', 200), 500)
+        
+        def run_growth():
+            try:
+                logger.info(f"🧠 Starting self-growth analysis (limit: {limit})")
+                db = get_db()
+                stats = asyncio.run(self_growth_intelligence.run_self_growth(db, limit=limit))
+                logger.info(f"✅ Self-growth complete: {stats}")
+            except Exception as e:
+                logger.error(f"❌ Self-growth failed: {e}", exc_info=True)
+        
+        thread = threading.Thread(target=run_growth, daemon=True)
+        thread.start()
+        
+        return jsonify({
+            'success': True,
+            'message': f'Self-growth analysis started (analyzing {limit} companies)',
+            'limit': limit,
+            'features': ['job description mining', 'website crawling', 'news monitoring', 'industry clustering']
+        }), 202
+        
+    except Exception as e:
+        logger.error(f"Error in self-growth: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/self-growth/discoveries')
+@limiter.limit("30 per minute")
+@optional_auth
+def api_self_growth_discoveries():
+    """Get self-growth discoveries"""
+    try:
+        db = get_db()
+        limit = request.args.get('limit', 100, type=int)
+        min_confidence = request.args.get('min_confidence', 0.5, type=float)
+        
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                # Check if table exists
+                cur.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_name = 'self_growth_discoveries'
+                    )
+                """)
+                table_exists = cur.fetchone()[0]
+                
+                if not table_exists:
+                    return jsonify({
+                        'discoveries': [],
+                        'total': 0,
+                        'message': 'Self-growth discoveries table not yet created. Run /api/admin/init-database first.'
+                    }), 200
+                
+                cur.execute("""
+                    SELECT 
+                        name, source_company, discovery_type, confidence,
+                        context, url, promoted_to_seed, discovered_at
+                    FROM self_growth_discoveries
+                    WHERE confidence >= %s
+                    ORDER BY discovered_at DESC
+                    LIMIT %s
+                """, (min_confidence, limit))
+                
+                columns = [desc[0] for desc in cur.description]
+                discoveries = [dict(zip(columns, row)) for row in cur.fetchall()]
+                
+                cur.execute("SELECT COUNT(*) FROM self_growth_discoveries WHERE confidence >= %s", (min_confidence,))
+                total = cur.fetchone()[0]
+                
+                return jsonify({
+                    'discoveries': discoveries,
+                    'total': total,
+                    'limit': limit,
+                    'min_confidence': min_confidence
+                }), 200
+                
+    except Exception as e:
+        logger.error(f"Error getting discoveries: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/stats/enhanced')
+@limiter.limit("30 per minute")
+@optional_auth
+def api_stats_enhanced():
+    """Get enhanced stats with ATS breakdown and upgrade module status"""
+    try:
+        db = get_db()
+        stats = db.get_stats()
+        
+        # Add ATS breakdown
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT ats_type, COUNT(*) as count, SUM(job_count) as total_jobs
+                    FROM companies
+                    WHERE ats_type IS NOT NULL
+                    GROUP BY ats_type
+                    ORDER BY count DESC
+                """)
+                ats_breakdown = [
+                    {'ats_type': row[0], 'companies': row[1], 'jobs': row[2] or 0}
+                    for row in cur.fetchall()
+                ]
+        
+        stats['ats_breakdown'] = ats_breakdown
+        stats['upgrade_modules'] = {
+            'collector_v7': {
+                'available': COLLECTOR_V7_AVAILABLE,
+                'is_running': v7_collection_state['is_running'],
+                'last_run': v7_collection_state['last_run']
+            },
+            'mega_expander': {
+                'available': MEGA_EXPANDER_AVAILABLE
+            },
+            'self_growth': {
+                'available': SELF_GROWTH_AVAILABLE
+            }
+        }
+        
+        return jsonify(stats), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting enhanced stats: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+# ============================================================================
+# COLLECTION & REFRESH (Legacy)
 # ============================================================================
 @app.route('/api/collect', methods=['POST'])
 @limiter.limit(RATE_LIMITS['write'])
@@ -1791,10 +2268,71 @@ def run_migrations_endpoint():
                 cur.execute("ALTER TABLE seed_companies ADD COLUMN IF NOT EXISTS success_rate DECIMAL(5,2) DEFAULT 0")
                 cur.execute("ALTER TABLE seed_companies ADD COLUMN IF NOT EXISTS is_blacklisted BOOLEAN DEFAULT FALSE")
                 
+                # =============================================================
+                # UPGRADE MODULE SCHEMA ADDITIONS
+                # =============================================================
+                logger.info("Adding upgrade module schema...")
+                
+                # Seed company enhancements for self-growth
+                cur.execute("ALTER TABLE seed_companies ADD COLUMN IF NOT EXISTS discovery_source VARCHAR(100)")
+                cur.execute("ALTER TABLE seed_companies ADD COLUMN IF NOT EXISTS discovery_confidence DECIMAL(3,2)")
+                cur.execute("ALTER TABLE seed_companies ADD COLUMN IF NOT EXISTS discovered_from VARCHAR(255)")
+                
+                # ATS predictions table
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS ats_predictions (
+                        id SERIAL PRIMARY KEY,
+                        company_name VARCHAR(255),
+                        predicted_ats VARCHAR(50),
+                        actual_ats VARCHAR(50),
+                        confidence DECIMAL(3,2),
+                        correct BOOLEAN,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                # Self-growth discoveries table
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS self_growth_discoveries (
+                        id SERIAL PRIMARY KEY,
+                        name VARCHAR(255),
+                        source_company VARCHAR(255),
+                        discovery_type VARCHAR(50),
+                        confidence DECIMAL(3,2),
+                        context TEXT,
+                        url VARCHAR(500),
+                        promoted_to_seed BOOLEAN DEFAULT FALSE,
+                        discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                # Discovery runs table
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS discovery_runs (
+                        id SERIAL PRIMARY KEY,
+                        run_type VARCHAR(50),
+                        started_at TIMESTAMP,
+                        completed_at TIMESTAMP,
+                        seeds_tested INTEGER,
+                        companies_found INTEGER,
+                        jobs_found INTEGER,
+                        errors INTEGER,
+                        ats_breakdown JSONB,
+                        notes TEXT
+                    )
+                """)
+                
+                # Indexes for upgrade tables
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_seed_tier ON seed_companies(tier)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_seed_source ON seed_companies(discovery_source)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_seed_tested ON seed_companies(last_tested_at)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_discovery_type ON self_growth_discoveries(discovery_type)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_discovery_confidence ON self_growth_discoveries(confidence)")
+                
                 conn.commit()
-                logger.info("✅ All migrations complete!")
+                logger.info("✅ All migrations complete (including upgrade schema)!")
         
-        return jsonify({'success': True, 'message': 'Database migrations completed'}), 200
+        return jsonify({'success': True, 'message': 'Database migrations completed (including upgrade schema)'}), 200
     except Exception as e:
         logger.error(f"Migration failed: {e}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -1844,6 +2382,17 @@ if os.getenv('RUN_DB_INIT', 'false').lower() == 'true':
     init_database_once()
 
 # ============================================================================
+# REGISTER INTEGRATION ROUTES (if available)
+# ============================================================================
+if INTEGRATION_AVAILABLE:
+    try:
+        db = get_db()
+        register_upgrade_routes(app, db, limiter)
+        logger.info("✅ Upgrade routes registered from integration.py")
+    except Exception as e:
+        logger.error(f"Failed to register upgrade routes: {e}")
+
+# ============================================================================
 # APPLICATION STARTUP
 # ============================================================================
 if __name__ == '__main__':
@@ -1855,6 +2404,16 @@ if __name__ == '__main__':
     stats = db.get_stats()
     logger.info(f"✅ Database connected: {stats['total_companies']} companies, {stats['total_jobs']} jobs")
     logger.info(f"📅 Trends cutoff date: {TRENDS_CUTOFF_DATE}")
+    
+    # Log upgrade module status
+    logger.info("=" * 80)
+    logger.info("🔌 UPGRADE MODULES STATUS:")
+    logger.info(f"   - Config loaded: {UPGRADE_CONFIG_LOADED}")
+    logger.info(f"   - Collector V7: {'✅ Available' if COLLECTOR_V7_AVAILABLE else '❌ Not found'}")
+    logger.info(f"   - Mega Expander: {'✅ Available' if MEGA_EXPANDER_AVAILABLE else '❌ Not found'}")
+    logger.info(f"   - Self-Growth: {'✅ Available' if SELF_GROWTH_AVAILABLE else '❌ Not found'}")
+    logger.info(f"   - Integration: {'✅ Available' if INTEGRATION_AVAILABLE else '❌ Not found'}")
+    logger.info("=" * 80)
     
     scheduler.start()
     logger.info(f"✅ Scheduler started with {len(scheduler.get_jobs())} jobs")
