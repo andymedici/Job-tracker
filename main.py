@@ -214,8 +214,8 @@ def scheduled_mega_expansion():
     
     try:
         logger.info("🌱 Starting scheduled mega seed expansion")
-        db = get_db()  # <-- ADD THIS
-        stats = asyncio.run(mega_seed_expander.run_expansion(db=db, tiers=[1, 2]))  # <-- ADD db=db
+        db = get_db()
+        stats = asyncio.run(mega_seed_expander.run_expansion(db=db, tiers=[1, 2]))
         logger.info(f"✅ Mega expansion complete: {stats.get('total_saved', 0)} seeds added")
     except Exception as e:
         logger.error(f"❌ Mega expansion failed: {e}", exc_info=True)
