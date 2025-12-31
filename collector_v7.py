@@ -1163,5 +1163,135 @@ async def main():
         print(f"  {list(collector.discovered_companies)[:10]}...")
 
 
+# =============================================================================
+# HELPER FUNCTION FOR APP.PY INTEGRATION
+# =============================================================================
+
+async def run_discovery(db=None, max_seeds: int = 500) -> Dict:
+    """
+    Main entry point for app.py integration.
+    
+    Args:
+        db: Database object with get_connection() method
+        max_seeds: Maximum seeds to test
+        
+    Returns:
+        Stats dictionary with results
+    """
+    logger.info(f"🚀 Starting V7 discovery with max {max_seeds} seeds...")
+    
+    # Load seeds from database
+    seeds = []
+    if db is not None:
+        try:
+            with db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT name FROM seed_companies 
+                        WHERE is_blacklisted = FALSE 
+                        AND (times_tested < 3 OR times_tested IS NULL)
+                        ORDER BY 
+                            tier ASC,
+                            times_tested ASC NULLS FIRST,
+                            RANDOM()
+                        LIMIT %s
+                    """, (max_seeds,))
+                    seeds = [row[0] for row in cur.fetchall()]
+        except Exception as e:
+            logger.error(f"Error loading seeds: {e}")
+    
+    if not seeds:
+        logger.warning("No seeds found to test")
+        return {
+            'success': False,
+            'message': 'No seeds found to test',
+            'seeds_tested': 0,
+            'companies_found': 0,
+            'jobs_found': 0,
+        }
+    
+    logger.info(f"Loaded {len(seeds)} seeds to test")
+    
+    # Create collector and run
+    collector = JobIntelCollectorV7(db_path=None)  # Won't use sqlite
+    stats = await collector.discover_from_seeds(seeds, batch_size=10)
+    
+    # Save results to PostgreSQL
+    saved_companies = 0
+    saved_jobs = 0
+    
+    if db is not None and collector.results:
+        for result in collector.results:
+            try:
+                with db.get_connection() as conn:
+                    with conn.cursor() as cur:
+                        # Upsert company
+                        cur.execute("""
+                            INSERT INTO companies (company_name, company_name_token, ats_type, board_url, job_count, last_updated)
+                            VALUES (%s, %s, %s, %s, %s, NOW())
+                            ON CONFLICT (company_name) DO UPDATE SET
+                                job_count = EXCLUDED.job_count,
+                                last_updated = NOW()
+                            RETURNING id
+                        """, (
+                            result.company_name,
+                            result.token,
+                            result.ats_type,
+                            result.board_url,
+                            result.job_count,
+                        ))
+                        company_row = cur.fetchone()
+                        if company_row:
+                            saved_companies += 1
+                            company_id = company_row[0]
+                            
+                            # Save jobs
+                            for job in result.jobs[:100]:  # Limit jobs per company
+                                try:
+                                    cur.execute("""
+                                        INSERT INTO job_archive (company_id, job_id, title, department, location, url, status, first_seen, last_seen)
+                                        VALUES (%s, %s, %s, %s, %s, %s, 'active', NOW(), NOW())
+                                        ON CONFLICT (company_id, job_id) DO UPDATE SET
+                                            last_seen = NOW(),
+                                            status = 'active'
+                                    """, (
+                                        company_id,
+                                        job.get('id', job.get('title', '')[:50]),
+                                        job.get('title', ''),
+                                        job.get('department', ''),
+                                        job.get('location', ''),
+                                        job.get('url', ''),
+                                    ))
+                                    saved_jobs += 1
+                                except Exception as je:
+                                    logger.debug(f"Error saving job: {je}")
+                        
+                        # Update seed as tested
+                        cur.execute("""
+                            UPDATE seed_companies 
+                            SET times_tested = COALESCE(times_tested, 0) + 1,
+                                times_successful = COALESCE(times_successful, 0) + 1,
+                                last_tested_at = NOW()
+                            WHERE LOWER(name) = LOWER(%s)
+                        """, (result.company_name,))
+                        
+                        conn.commit()
+            except Exception as e:
+                logger.debug(f"Error saving result for {result.company_name}: {e}")
+    
+    return {
+        'success': True,
+        'seeds_tested': stats.seeds_tested,
+        'companies_found': stats.companies_found,
+        'jobs_found': stats.jobs_found,
+        'saved_companies': saved_companies,
+        'saved_jobs': saved_jobs,
+        'errors': stats.errors,
+        'duration_seconds': stats.duration_seconds,
+        'ats_breakdown': stats.ats_breakdown,
+        'new_discoveries': stats.new_discoveries,
+    }
+
+
 if __name__ == '__main__':
     asyncio.run(main())
