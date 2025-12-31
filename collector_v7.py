@@ -706,6 +706,10 @@ class ICIMSScraper(ATSScraper):
     
     async def check_token(self, token: str) -> Optional[CompanyJobBoard]:
         """Check iCIMS careers page"""
+        # Skip very short tokens (likely false positives)
+        if len(token) < 3:
+            return None
+            
         urls = [
             f"https://careers-{token}.icims.com/jobs/search",
             f"https://{token}.icims.com/jobs/search",
@@ -714,17 +718,22 @@ class ICIMSScraper(ATSScraper):
         
         for url in urls:
             html = await self.fetch(url, json_response=False)
-            if html and ('iCIMS' in str(html) or 'job-result' in str(html).lower()):
-                # Count jobs from HTML (basic)
-                job_count = str(html).lower().count('job-result') or str(html).count('iCIMS_JobsTable')
-                
-                return CompanyJobBoard(
-                    company_name=token.replace('-', ' ').title(),
-                    token=token,
-                    ats_type='icims',
-                    board_url=url,
-                    job_count=max(1, job_count),  # At least 1 if page loads
-                )
+            if html:
+                html_str = str(html)
+                # More strict check - require actual job listings, not just iCIMS branding
+                if 'iCIMS_JobsTable' in html_str or 'class="iCIMS_Jobs' in html_str:
+                    # Count actual job rows
+                    job_count = html_str.count('iCIMS_JobsTable_Job') or html_str.lower().count('job-result')
+                    
+                    # Only return if we found actual jobs
+                    if job_count > 0:
+                        return CompanyJobBoard(
+                            company_name=token.replace('-', ' ').title(),
+                            token=token,
+                            ats_type='icims',
+                            board_url=url,
+                            job_count=job_count,
+                        )
         
         return None
 
@@ -838,6 +847,11 @@ class SmartRecruitersScraper(ATSScraper):
         if not data or 'content' not in data:
             return None
         
+        # Skip if no jobs found
+        total_jobs = data.get('totalFound', 0)
+        if total_jobs == 0 or not data.get('content'):
+            return None
+        
         jobs = []
         departments = set()
         locations = set()
@@ -864,13 +878,17 @@ class SmartRecruitersScraper(ATSScraper):
             if location:
                 locations.add(location)
         
+        # Double check we have jobs
+        if not jobs:
+            return None
+        
         return CompanyJobBoard(
-            company_name=job.get('company', {}).get('name', token) if data.get('content') else token,
+            company_name=data.get('content', [{}])[0].get('company', {}).get('name', token) if data.get('content') else token,
             token=token,
             ats_type='smartrecruiters',
             board_url=f'https://careers.smartrecruiters.com/{token}',
             jobs=jobs,
-            job_count=data.get('totalFound', len(jobs)),
+            job_count=total_jobs,
             remote_count=remote_count,
             departments=list(departments),
             locations=list(locations),
@@ -1027,6 +1045,10 @@ class JobIntelCollectorV7:
                     
                     if result:
                         for company in result:
+                            # Skip 0-job false positives
+                            if company.job_count == 0:
+                                continue
+                                
                             stats.companies_found += 1
                             stats.jobs_found += company.job_count
                             
@@ -1199,6 +1221,35 @@ async def run_discovery(db=None, max_seeds: int = 500) -> Dict:
     """
     logger.info(f"🚀 Starting V7 discovery with max {max_seeds} seeds...")
     
+    # === ONE-TIME CLEANUP: Remove false positive companies with 0 jobs ===
+    if db is not None:
+        try:
+            with db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Count before cleanup
+                    cur.execute("SELECT COUNT(*) FROM companies WHERE job_count = 0")
+                    zero_job_count = cur.fetchone()[0]
+                    
+                    if zero_job_count > 0:
+                        logger.info(f"🧹 Cleaning up {zero_job_count} false positive companies with 0 jobs...")
+                        
+                        # Delete companies with 0 jobs
+                        cur.execute("DELETE FROM companies WHERE job_count = 0")
+                        deleted = cur.rowcount
+                        
+                        # Also clean up any orphaned job records (shouldn't be any)
+                        cur.execute("DELETE FROM job_archive WHERE company_id NOT IN (SELECT id FROM companies)")
+                        orphaned_jobs = cur.rowcount
+                        
+                        conn.commit()
+                        
+                        logger.info(f"✅ Cleanup complete: removed {deleted} false positive companies, {orphaned_jobs} orphaned jobs")
+                    else:
+                        logger.info("✅ No false positive companies to clean up")
+                        
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+    
     # Load seeds from database
     seeds = []
     if db is not None:
@@ -1241,6 +1292,10 @@ async def run_discovery(db=None, max_seeds: int = 500) -> Dict:
     
     if db is not None and collector.results:
         for result in collector.results:
+            # Skip companies with no jobs (false positives)
+            if result.job_count == 0:
+                continue
+                
             try:
                 with db.get_connection() as conn:
                     with conn.cursor() as cur:
