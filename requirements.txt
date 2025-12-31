@@ -1,5 +1,4 @@
-# Job Intelligence Platform - Upgrade Package Dependencies
-# Install with: pip install -r requirements.txt --break-system-packages
+# Job Intelligence Platform - Complete Dependencies
 
 # Core HTTP/Web
 requests>=2.31.0
@@ -8,9 +7,9 @@ httpx>=0.25.0
 urllib3>=2.0.0
 waitress>=2.1.0
 fake-useragent>=1.4.0
+
+# Browser Automation
 playwright>=1.40.0
-
-
 
 # HTML Parsing
 beautifulsoup4>=4.12.0
@@ -18,7 +17,6 @@ lxml>=4.9.0
 html5lib>=1.1
 
 # Async Support
-asyncio>=3.4.3
 aiofiles>=23.2.0
 
 # Database
@@ -54,29 +52,3 @@ redis>=5.0.0
 # Logging & Monitoring
 structlog>=23.2.0
 python-json-logger>=2.0.0
-
-# Testing
-pytest>=7.4.0
-pytest-asyncio>=0.21.0
-pytest-cov>=4.1.0
-pytest-mock>=3.12.0
-responses>=0.24.0
-aioresponses>=0.7.4
-
-# Development
-black>=23.9.0
-flake8>=6.1.0
-mypy>=1.6.0
-isort>=5.12.0
-
-# Optional: Proxy Support
-# PySocks>=1.7.1
-# requests[socks]>=2.31.0
-
-# Optional: Browser Automation (for JavaScript-heavy sites)
-# playwright>=1.39.0
-# selenium>=4.15.0
-
-# Optional: ML-based ATS Prediction
-# scikit-learn>=1.3.0
-# joblib>=1.3.0
