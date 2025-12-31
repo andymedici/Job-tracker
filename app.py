@@ -49,12 +49,8 @@ except ImportError:
     SELF_GROWTH_AVAILABLE = False
     logging.warning("⚠️ self_growth_intelligence.py not found - self-growth disabled")
 
-try:
-    from integration import register_upgrade_routes, apply_schema_additions
-    INTEGRATION_AVAILABLE = True
-except ImportError:
-    INTEGRATION_AVAILABLE = False
-    logging.warning("⚠️ integration.py not found - upgrade routes disabled")
+# NOTE: integration.py not used - upgrade endpoints are built directly into app.py
+INTEGRATION_AVAILABLE = False
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -352,7 +348,6 @@ def index():
             'collector_v7': COLLECTOR_V7_AVAILABLE,
             'mega_expander': MEGA_EXPANDER_AVAILABLE,
             'self_growth': SELF_GROWTH_AVAILABLE,
-            'integration': INTEGRATION_AVAILABLE,
             'config': UPGRADE_CONFIG_LOADED
         },
         'endpoints': {
@@ -1055,7 +1050,6 @@ def init_database():
         results = {
             'indexes_added': False,
             'snapshots_cleaned': 0,
-            'upgrade_schema': False,
             'errors': []
         }
         
@@ -1077,16 +1071,6 @@ def init_database():
         except Exception as e:
             results['errors'].append(f"Snapshot cleanup error: {str(e)}")
             logger.error(f"Snapshot cleanup failed: {e}")
-        
-        # Apply upgrade schema additions
-        if INTEGRATION_AVAILABLE:
-            try:
-                apply_schema_additions(db)
-                results['upgrade_schema'] = True
-                logger.info("✅ Upgrade schema additions applied")
-            except Exception as e:
-                results['errors'].append(f"Upgrade schema error: {str(e)}")
-                logger.error(f"Upgrade schema failed: {e}")
         
         return jsonify({
             'success': len(results['errors']) == 0,
@@ -1852,56 +1836,12 @@ def api_self_growth_run():
 @limiter.limit("30 per minute")
 @optional_auth
 def api_self_growth_discoveries():
-    """Get self-growth discoveries"""
-    try:
-        db = get_db()
-        limit = request.args.get('limit', 100, type=int)
-        min_confidence = request.args.get('min_confidence', 0.5, type=float)
-        
-        with db.get_connection() as conn:
-            with conn.cursor() as cur:
-                # Check if table exists
-                cur.execute("""
-                    SELECT EXISTS (
-                        SELECT FROM information_schema.tables 
-                        WHERE table_name = 'self_growth_discoveries'
-                    )
-                """)
-                table_exists = cur.fetchone()[0]
-                
-                if not table_exists:
-                    return jsonify({
-                        'discoveries': [],
-                        'total': 0,
-                        'message': 'Self-growth discoveries table not yet created. Run /api/admin/init-database first.'
-                    }), 200
-                
-                cur.execute("""
-                    SELECT 
-                        name, source_company, discovery_type, confidence,
-                        context, url, promoted_to_seed, discovered_at
-                    FROM self_growth_discoveries
-                    WHERE confidence >= %s
-                    ORDER BY discovered_at DESC
-                    LIMIT %s
-                """, (min_confidence, limit))
-                
-                columns = [desc[0] for desc in cur.description]
-                discoveries = [dict(zip(columns, row)) for row in cur.fetchall()]
-                
-                cur.execute("SELECT COUNT(*) FROM self_growth_discoveries WHERE confidence >= %s", (min_confidence,))
-                total = cur.fetchone()[0]
-                
-                return jsonify({
-                    'discoveries': discoveries,
-                    'total': total,
-                    'limit': limit,
-                    'min_confidence': min_confidence
-                }), 200
-                
-    except Exception as e:
-        logger.error(f"Error getting discoveries: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+    """Get self-growth discoveries info"""
+    return jsonify({
+        'message': 'Self-growth discoveries are logged to console and promoted directly to seed_companies table',
+        'note': 'Check server logs for discovery details, or query seed_companies WHERE source LIKE \'self_growth_%\'',
+        'query_example': "SELECT * FROM seed_companies WHERE source LIKE 'self_growth_%' ORDER BY created_at DESC LIMIT 50"
+    }), 200
 
 
 @app.route('/api/stats/enhanced')
@@ -2268,71 +2208,10 @@ def run_migrations_endpoint():
                 cur.execute("ALTER TABLE seed_companies ADD COLUMN IF NOT EXISTS success_rate DECIMAL(5,2) DEFAULT 0")
                 cur.execute("ALTER TABLE seed_companies ADD COLUMN IF NOT EXISTS is_blacklisted BOOLEAN DEFAULT FALSE")
                 
-                # =============================================================
-                # UPGRADE MODULE SCHEMA ADDITIONS
-                # =============================================================
-                logger.info("Adding upgrade module schema...")
-                
-                # Seed company enhancements for self-growth
-                cur.execute("ALTER TABLE seed_companies ADD COLUMN IF NOT EXISTS discovery_source VARCHAR(100)")
-                cur.execute("ALTER TABLE seed_companies ADD COLUMN IF NOT EXISTS discovery_confidence DECIMAL(3,2)")
-                cur.execute("ALTER TABLE seed_companies ADD COLUMN IF NOT EXISTS discovered_from VARCHAR(255)")
-                
-                # ATS predictions table
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS ats_predictions (
-                        id SERIAL PRIMARY KEY,
-                        company_name VARCHAR(255),
-                        predicted_ats VARCHAR(50),
-                        actual_ats VARCHAR(50),
-                        confidence DECIMAL(3,2),
-                        correct BOOLEAN,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
-                
-                # Self-growth discoveries table
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS self_growth_discoveries (
-                        id SERIAL PRIMARY KEY,
-                        name VARCHAR(255),
-                        source_company VARCHAR(255),
-                        discovery_type VARCHAR(50),
-                        confidence DECIMAL(3,2),
-                        context TEXT,
-                        url VARCHAR(500),
-                        promoted_to_seed BOOLEAN DEFAULT FALSE,
-                        discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
-                
-                # Discovery runs table
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS discovery_runs (
-                        id SERIAL PRIMARY KEY,
-                        run_type VARCHAR(50),
-                        started_at TIMESTAMP,
-                        completed_at TIMESTAMP,
-                        seeds_tested INTEGER,
-                        companies_found INTEGER,
-                        jobs_found INTEGER,
-                        errors INTEGER,
-                        ats_breakdown JSONB,
-                        notes TEXT
-                    )
-                """)
-                
-                # Indexes for upgrade tables
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_seed_tier ON seed_companies(tier)")
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_seed_source ON seed_companies(discovery_source)")
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_seed_tested ON seed_companies(last_tested_at)")
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_discovery_type ON self_growth_discoveries(discovery_type)")
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_discovery_confidence ON self_growth_discoveries(confidence)")
-                
                 conn.commit()
-                logger.info("✅ All migrations complete (including upgrade schema)!")
+                logger.info("✅ All migrations complete!")
         
-        return jsonify({'success': True, 'message': 'Database migrations completed (including upgrade schema)'}), 200
+        return jsonify({'success': True, 'message': 'Database migrations completed'}), 200
     except Exception as e:
         logger.error(f"Migration failed: {e}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -2382,15 +2261,9 @@ if os.getenv('RUN_DB_INIT', 'false').lower() == 'true':
     init_database_once()
 
 # ============================================================================
-# REGISTER INTEGRATION ROUTES (if available)
+# NOTE: integration.py routes NOT registered - upgrade endpoints are built 
+# directly into app.py above. integration.py is kept for reference only.
 # ============================================================================
-if INTEGRATION_AVAILABLE:
-    try:
-        db = get_db()
-        register_upgrade_routes(app, db, limiter)
-        logger.info("✅ Upgrade routes registered from integration.py")
-    except Exception as e:
-        logger.error(f"Failed to register upgrade routes: {e}")
 
 # ============================================================================
 # APPLICATION STARTUP
@@ -2412,7 +2285,6 @@ if __name__ == '__main__':
     logger.info(f"   - Collector V7: {'✅ Available' if COLLECTOR_V7_AVAILABLE else '❌ Not found'}")
     logger.info(f"   - Mega Expander: {'✅ Available' if MEGA_EXPANDER_AVAILABLE else '❌ Not found'}")
     logger.info(f"   - Self-Growth: {'✅ Available' if SELF_GROWTH_AVAILABLE else '❌ Not found'}")
-    logger.info(f"   - Integration: {'✅ Available' if INTEGRATION_AVAILABLE else '❌ Not found'}")
     logger.info("=" * 80)
     
     scheduler.start()
