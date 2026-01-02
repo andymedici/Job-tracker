@@ -442,9 +442,10 @@ class GreenhouseScraper(ATSScraper):
         'national', 'journey', 'commons', 'door', 'alarm',
         'link', 'ess', 'nmi', 'canvas', 'united', 'facility', 'industrial',
         'best', 'friend', 'finance', 'goody', 'garage', 'doors',
-        # NEW: More generic words from latest run
         'edge', 'elite', 'clear', 'builder', 'bloom', 'archrival', 'bold',
-        'sonja',  # Keeps appearing incorrectly
+        'sonja',
+        # More recurring false positives
+        'relai', 'founders',
     }
     
     async def check_token(self, token: str) -> Optional[CompanyJobBoard]:
@@ -517,6 +518,8 @@ class LeverScraper(ATSScraper):
         'adaptive', 'sesame', 'teller', 'rigetti', 'maya', 'rupa', 'finch',
         'mega', 'brilliant', 'belong',
         'blue', 'relay', 'true', 'spring', 'bright',
+        # More generic words
+        'sure', 'bloom',
     }
     
     async def check_token(self, token: str) -> Optional[CompanyJobBoard]:
@@ -857,6 +860,8 @@ class RecruiteeScraper(ATSScraper):
         'bob', 'john', 'mike', 'david', 'mark', 'chris', 'steve', 'paul',
         'james', 'tom', 'dan', 'jim', 'joe', 'bill', 'scott', 'brian',
         'ryan', 'kevin', 'jeff', 'greg', 'eric', 'peter', 'jason', 'andrew',
+        # More generic words
+        'jump',
     }
     
     async def check_token(self, token: str) -> Optional[CompanyJobBoard]:
@@ -920,6 +925,8 @@ class SmartRecruitersScraper(ATSScraper):
         # Years and generic words
         '1979', '1980', '1990', '2000', '2010', '2020', '2021', '2022', '2023', '2024', '2025',
         'illicopro', 'stories', 'hibob',
+        # More tokens
+        'light', 'a-light', 'talent',
     }
     
     async def check_token(self, token: str) -> Optional[CompanyJobBoard]:
@@ -992,7 +999,7 @@ class BreezyScraper(ATSScraper):
         # Numbers and numeric patterns
         '1001', '2020', '2021', '2022', '2023', '2024', '2025',
         # More tokens
-        'researchhub', 'msh', 'solugen',
+        'researchhub', 'msh', 'solugen', 'brilliant',
     }
     
     async def check_token(self, token: str) -> Optional[CompanyJobBoard]:
@@ -1154,10 +1161,13 @@ class JobIntelCollectorV7:
                                 continue
                             
                             # Skip duplicates (same company found via different token variants)
-                            company_key = f"{company.token}:{company.ats_type}"
-                            if company_key in seen_companies:
+                            # Use both token and company_name to catch more duplicates
+                            company_key = f"{company.token.lower()}:{company.ats_type}"
+                            company_name_key = f"{company.company_name.lower()}:{company.ats_type}"
+                            if company_key in seen_companies or company_name_key in seen_companies:
                                 continue
                             seen_companies.add(company_key)
+                            seen_companies.add(company_name_key)
                                 
                             stats.companies_found += 1
                             stats.jobs_found += company.job_count
@@ -1590,6 +1600,10 @@ async def run_discovery(db=None, max_seeds: int = 500) -> Dict:
                         'Tidewater Eye Centers', 'CGS Immersive', 'AQR India',
                         'Alpha FMC - Insurance Consulting', 'Founders Green Animal Hospital',
                         'Archrival Agents || Bloom Sampling Program',
+                        # More false positives
+                        'Jump', 'Sure', 'A Light', 'Relai ', 'Relai  ',
+                        'Talent HR Networks', 'General Assembly Remote Jobs',
+                        'Flatiron Health Technical Opportunities',
                     ]
                     
                     for name in ambiguous_company_names:
