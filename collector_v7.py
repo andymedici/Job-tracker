@@ -439,14 +439,18 @@ class GreenhouseScraper(ATSScraper):
         'kiosk', 'talent', 'general', 'interest', 'future', 'seed', 'company',
         'jobs', 'careers', 'team', 'work', 'hire', 'the', 'and', 'for', 'app',
         'li', 'linkedin',
-        # Generic words that produce false positives
         'national', 'journey', 'commons', 'door', 'alarm',
+        'link', 'ess', 'nmi', 'canvas', 'united', 'facility', 'industrial',
+        'best', 'friend', 'finance', 'goody', 'garage', 'doors',
+        # NEW: More generic words from latest run
+        'edge', 'elite', 'clear', 'builder', 'bloom', 'archrival', 'bold',
+        'sonja',  # Keeps appearing incorrectly
     }
     
     async def check_token(self, token: str) -> Optional[CompanyJobBoard]:
         """Check if a Greenhouse token is valid and fetch jobs"""
         # Skip short or blacklisted tokens
-        if len(token) < 3 or token.lower() in self.BLACKLISTED_TOKENS:
+        if len(token) < 3 or token.lower().strip() in self.BLACKLISTED_TOKENS:
             return None
         
         url = f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs"
@@ -511,8 +515,8 @@ class LeverScraper(ATSScraper):
         'the', 'and', 'for', 'with', 'about', 'home', 'main', 'app', 'web',
         'life', 'capital', 'form', 'artificial', 'crypto', 'anomaly', 'hexa',
         'adaptive', 'sesame', 'teller', 'rigetti', 'maya', 'rupa', 'finch',
-        # NEW: More generic words from recent logs
         'mega', 'brilliant', 'belong',
+        'blue', 'relay', 'true', 'spring', 'bright',
     }
     
     async def check_token(self, token: str) -> Optional[CompanyJobBoard]:
@@ -839,12 +843,20 @@ class RecruiteeScraper(ATSScraper):
         'the', 'and', 'for', 'with', 'from', 'about', 'home', 'main', 'info',
         'people', 'chaos', 'vertical', 'enterprise', 'data', 'experience',
         'legal', 'flawless', 'aa',
-        # NEW: More generic words and names from recent logs
         'moore', 'alex', 'jay', 'rha', 'assist', 'automation', 'origin',
         'healthcare', 'advanced', 'google', 'incognia', 'charles', 'national',
         'journey', 'belong', 'mega', 'brilliant', 'media', 'solutions',
         'global', 'group', 'services', 'digital', 'marketing', 'design',
         'creative', 'studio', 'agency', 'partners', 'consulting', 'labs',
+        # NEW: More generic words and names from latest run
+        'company', 'talent', 'true', 'bright', 'matt', 'spring', 'what',
+        'illicopro', 'avantarte',
+        # More generic words and first names
+        'code', 'invision', 'stories', 'edge', 'elite', 'clear', 'builder',
+        # Common first names
+        'bob', 'john', 'mike', 'david', 'mark', 'chris', 'steve', 'paul',
+        'james', 'tom', 'dan', 'jim', 'joe', 'bill', 'scott', 'brian',
+        'ryan', 'kevin', 'jeff', 'greg', 'eric', 'peter', 'jason', 'andrew',
     }
     
     async def check_token(self, token: str) -> Optional[CompanyJobBoard]:
@@ -904,14 +916,16 @@ class SmartRecruitersScraper(ATSScraper):
     BLACKLISTED_TOKENS = {
         'entropik', '2019', 'test', 'demo', 'jobs', 'careers', 'team', 'work',
         'the', 'and', 'for', 'with', 'about', 'home', 'main', 'app', 'web', 'api',
-        # NEW: More generic words
         'healthcare', 'health', 'medical', 'national', 'global', 'digital',
+        # Years and generic words
+        '1979', '1980', '1990', '2000', '2010', '2020', '2021', '2022', '2023', '2024', '2025',
+        'illicopro', 'stories', 'hibob',
     }
     
     async def check_token(self, token: str) -> Optional[CompanyJobBoard]:
         """Check SmartRecruiters API"""
-        # Skip short or blacklisted tokens
-        if len(token) < 4 or token.lower() in self.BLACKLISTED_TOKENS:
+        # Skip short, blacklisted, or all-numeric tokens
+        if len(token) < 4 or token.lower() in self.BLACKLISTED_TOKENS or token.isdigit():
             return None
             
         url = f"https://api.smartrecruiters.com/v1/companies/{token}/postings"
@@ -977,12 +991,14 @@ class BreezyScraper(ATSScraper):
         'the', 'and', 'for', 'with', 'about', 'home', 'main', 'app', 'hr',
         # Numbers and numeric patterns
         '1001', '2020', '2021', '2022', '2023', '2024', '2025',
+        # More tokens
+        'researchhub', 'msh', 'solugen',
     }
     
     async def check_token(self, token: str) -> Optional[CompanyJobBoard]:
         """Check Breezy HR"""
         # Skip short or blacklisted tokens, and all-numeric tokens
-        if len(token) < 3 or token.lower() in self.BLACKLISTED_TOKENS or token.isdigit():
+        if len(token) < 3 or token.lower().strip() in self.BLACKLISTED_TOKENS or token.isdigit():
             return None
             
         url = f"https://{token}.breezy.hr/json"
@@ -1107,6 +1123,9 @@ class JobIntelCollectorV7:
         stats = DiscoveryStats()
         start_time = datetime.now()
         
+        # Track discovered companies to avoid duplicates within this run
+        seen_companies: Set[str] = set()
+        
         connector = aiohttp.TCPConnector(limit=50, limit_per_host=10)
         async with aiohttp.ClientSession(connector=connector) as session:
             await self.init_scrapers(session)
@@ -1133,6 +1152,12 @@ class JobIntelCollectorV7:
                             # Skip 0-job false positives
                             if company.job_count == 0:
                                 continue
+                            
+                            # Skip duplicates (same company found via different token variants)
+                            company_key = f"{company.token}:{company.ats_type}"
+                            if company_key in seen_companies:
+                                continue
+                            seen_companies.add(company_key)
                                 
                             stats.companies_found += 1
                             stats.jobs_found += company.job_count
@@ -1457,6 +1482,62 @@ async def run_discovery(db=None, max_seeds: int = 500) -> Dict:
                         '%stem cell%manufacturing%',
                         '%air capture%',
                         '%healthcare predictions%',
+                        # NEW: More garbage patterns from latest run
+                        '%rfc %',
+                        '%slide from%',
+                        '%view more%',
+                        '%view all%',
+                        '%view portfolio%',
+                        '%all companies%',
+                        '%skip to%',
+                        '%close%window%',
+                        '%continue to%',
+                        '%continue reading%',
+                        '%go to%',
+                        '%visit website%',
+                        '%sign in%',
+                        '%login%',
+                        '%about us%',
+                        '%contact%',
+                        '%see more%',
+                        '%accept%cookies%',
+                        '%reject%cookies%',
+                        '%cookie%notice%',
+                        '%privacy%disclosures%',
+                        '%terms%conditions%',
+                        '%contribution%guidelines%',
+                        '%anti-portfolio%',
+                        '%investor%login%',
+                        '%portfolio%jobs%',
+                        '%join%',
+                        '%subscribe%',
+                        '%newsletter%',
+                        '%feedback%',
+                        '%accessibility%',
+                        '%philosophy%',
+                        '%mission%principles%',
+                        '%where we invest%',
+                        '%what we work%',
+                        '%news%content%',
+                        '%legal%disclaimer%',
+                        '%modern slavery%',
+                        '%california%privacy%',
+                        '%eu sfdr%',
+                        # Tech/code patterns
+                        '%openssl%',
+                        '%configuration file%',
+                        '%example%configuration%',
+                        '%google%webfonts%',
+                        # Event/article patterns
+                        '%enterprise edition%',
+                        '%virtual reality%',
+                        '%coming soon%',
+                        '%cold start%',
+                        '%reverse interview%',
+                        '%interview%guide%',
+                        '%leadership%interview%',
+                        '%101%',
+                        '%forecasting%',
                     ]
                     
                     total_garbage_deleted = 0
@@ -1486,14 +1567,11 @@ async def run_discovery(db=None, max_seeds: int = 500) -> Dict:
                         'Inc', 'Tech', 'Blue', 'Flow', 'Pay', 'Max', 'Test', 'Demo',  # Generic words
                         'Library', 'Manual', 'Onboarding', 'Securing', 'Developer',  # Random word matches
                         '2019', '2020', '2021', '2022', '2023', '2024', '2025',  # Years
-                        # More ambiguous names from recent logs
                         'Life', 'Capital', 'Path', 'System', 'People', 'Chaos',
                         'Vertical', 'Enterprise', 'Data', 'Experience', 'Legal',
                         'Form', 'Sim', 'IE', 'Original', 'Artificial', 'Magic',
                         'Anomaly', 'Hexa', 'Adaptive', 'Crypto',
-                        # Test/demo companies
                         'LI Test Company', 'Test Company', 'Demo Company',
-                        # NEW: More false positives from latest run
                         'Moore', 'Alex', 'Jay', 'Rha', 'Assist', 'Automation',
                         'Origin', 'Healthcare', 'Advanced', 'Google', 'NATIONAL',
                         'Journey', 'Belong', 'Mega', 'Brilliant', '1001',
@@ -1501,6 +1579,17 @@ async def run_discovery(db=None, max_seeds: int = 500) -> Dict:
                         'Group', 'Services', 'Digital', 'Marketing', 'Design',
                         'Creative', 'Studio', 'Agency', 'Partners', 'Consulting',
                         'Labs', 'Commons', 'Door', 'Alarm',
+                        'Company', 'Talent', 'True', 'Bright', 'Matt', 'Spring', 'What',
+                        'LINK', 'ESS', 'NMI', 'Canvas', 'United', 'Relay', '1979',
+                        'Industrial Door Company', 'Facility Door Solutions',
+                        'Best Friend Finance', 'Goody Garage Doors',
+                        # NEW: More false positives from latest run
+                        'Code', 'Edge', 'Elite', 'Clear', 'Builder', 'Bloom', 'Bold',
+                        'Sonja Inc.', 'Msh', 'Stories', 'Invision', 'Researchhub',
+                        'Elite Physical Therapy', 'Columbus Ophthalmology Associates',
+                        'Tidewater Eye Centers', 'CGS Immersive', 'AQR India',
+                        'Alpha FMC - Insurance Consulting', 'Founders Green Animal Hospital',
+                        'Archrival Agents || Bloom Sampling Program',
                     ]
                     
                     for name in ambiguous_company_names:
